@@ -49,6 +49,7 @@
 #include "../utils/mixed_radix.hpp"
 #include "../utils/stopwatch.hpp"
 #include "../utils/truth_table_cache.hpp"
+#include "../utils/eq_classes.hpp"
 
 namespace mockturtle
 {
@@ -124,6 +125,9 @@ struct network_cuts;
 template<typename Ntk, bool ComputeTruth = false, typename CutData = empty_cut_data>
 network_cuts<Ntk, ComputeTruth, CutData> cut_enumeration( Ntk const& ntk, cut_enumeration_params const& ps = {}, cut_enumeration_stats * pst = nullptr );
 
+template<typename Ntk, bool ComputeTruth = false, typename CutData = empty_cut_data>
+network_cuts<Ntk, ComputeTruth, CutData> cut_enumeration_eqclasses( Ntk const& ntk, eq_classes<Ntk> const * eqclasses, cut_enumeration_params const& ps = {}, cut_enumeration_stats * pst = nullptr );
+
 /* function to update a cut */
 template<typename CutData>
 struct cut_enumeration_update_cut
@@ -142,7 +146,11 @@ namespace detail
 {
 template<typename Ntk, bool ComputeTruth, typename CutData>
 class cut_enumeration_impl;
+
+template<typename Ntk, bool ComputeTruth, typename CutData>
+class cut_enumeration_eqclasses_impl;
 }
+
 /*! \endcond */
 
 /*! \brief Cut database for a network.
@@ -242,9 +250,14 @@ public:
 private:
   template<typename _Ntk, bool _ComputeTruth, typename _CutData>
   friend class detail::cut_enumeration_impl;
+  template<typename _Ntk, bool _ComputeTruth, typename _CutData>
+  friend class detail::cut_enumeration_eqclasses_impl;
 
   template<typename _Ntk, bool _ComputeTruth, typename _CutData>
   friend network_cuts<_Ntk, _ComputeTruth, _CutData> cut_enumeration( _Ntk const& ntk, cut_enumeration_params const& ps, cut_enumeration_stats * pst );
+
+  template<typename _Ntk, bool _ComputeTruth, typename _CutData>
+  friend network_cuts<_Ntk, _ComputeTruth, _CutData> cut_enumeration_eqclasses( _Ntk const& ntk, eq_classes<_Ntk> const * eqclasses, cut_enumeration_params const& ps, cut_enumeration_stats * pst );
 
 private:
   void add_zero_cut( uint32_t index )
@@ -527,6 +540,321 @@ private:
 
   std::array<cut_set_t*, Ntk::max_fanin_size + 1> lcuts;
 };
+
+
+template<typename Ntk, bool ComputeTruth, typename CutData>
+class cut_enumeration_eqclasses_impl
+{
+public:
+  using cut_t = typename network_cuts<Ntk, ComputeTruth, CutData>::cut_t;
+  using cut_set_t = typename network_cuts<Ntk, ComputeTruth, CutData>::cut_set_t;
+  using node = typename Ntk::node;
+
+  explicit cut_enumeration_eqclasses_impl( Ntk const& ntk, eq_classes<Ntk> const& eqclasses, cut_enumeration_params const& ps, cut_enumeration_stats& st, network_cuts<Ntk, ComputeTruth, CutData>& cuts )
+      : ntk( ntk ),
+        ps( ps ),
+        st( st ),
+        cuts( cuts ),
+        eqclasses( eqclasses )
+  {
+  }
+
+public:
+  void run()
+  {
+    stopwatch t( st.time_total );
+
+    ntk.foreach_node( [this]( auto node ) {
+      const auto index = ntk.node_to_index( node );
+
+      if ( ps.very_verbose )
+      {
+        std::cout << fmt::format( "[i] compute cut for node at index {}\n", index );
+      }
+
+      if ( ntk.is_constant( node ) )
+      {
+        cuts.add_zero_cut( index );
+      }
+      else if ( ntk.is_pi( node ) )
+      {
+        cuts.add_unit_cut( index );
+      }
+      else if ( eqclasses.is_eqrepr( node ) )
+      {
+        if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+        {
+          merge_eqcuts2( index );
+        }
+        else
+        {
+          merge_eqcuts( node );
+        }
+      }
+    } );
+  }
+
+private:
+  uint32_t compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
+  {
+    stopwatch t( st.time_truth_table );
+
+    std::vector<kitty::dynamic_truth_table> tt( vcuts.size() );
+    auto i = 0;
+    for ( auto const& cut : vcuts )
+    {
+      tt[i] = kitty::extend_to( cuts._truth_tables[( *cut )->func_id], res.size() );
+      const auto supp = cuts.compute_truth_table_support( *cut, res );
+      kitty::expand_inplace( tt[i], supp );
+      ++i;
+    }
+
+    auto tt_res = ntk.compute( ntk.index_to_node( index ), tt.begin(), tt.end() );
+
+    if ( ps.minimize_truth_table )
+    {
+      const auto support = kitty::min_base_inplace( tt_res );
+      if ( support.size() != res.size() )
+      {
+        auto tt_res_shrink = shrink_to( tt_res, static_cast<unsigned>( support.size() ) );
+        std::vector<uint32_t> leaves_before( res.begin(), res.end() );
+        std::vector<uint32_t> leaves_after( support.size() );
+
+        auto it_support = support.begin();
+        auto it_leaves = leaves_after.begin();
+        while ( it_support != support.end() )
+        {
+          *it_leaves++ = leaves_before[*it_support++];
+        }
+        res.set_leaves( leaves_after.begin(), leaves_after.end() );
+        return cuts._truth_tables.insert( tt_res_shrink );
+      }
+    }
+
+    return cuts._truth_tables.insert( tt_res );
+  }
+
+  void merge_eqcuts2( node const& repr )
+  {
+    uint32_t pairs{1};
+    auto repr_index = ntk.node_to_index( repr );
+    auto repr_cuts = &cuts.cuts( repr_index );
+    bool eligible = true;
+    const auto fanin = 2;
+
+    /* compute the cuts for all the choices and merge them */
+    eqclasses.foreach_node_in_eqclass( repr, [&]( auto const& n ) {
+      auto index = ntk.node_to_index( n );
+      uint32_t pairs{1};
+      ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &eligible]( auto child, auto i ) {
+        lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
+        if ( static_cast<uint32_t>( lcuts[i]->size() ) == 0 ) {
+          /* node fanins have not been explored yet, don't consider */
+          eligible = false;
+          return false;
+        }
+        pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+      } );
+
+      if ( !eligible ) {
+        /* if not eligible, go to the next choice node */
+        return true;
+      }
+
+      lcuts[2] = &cuts.cuts( index );
+      auto& rcuts = *lcuts[fanin];
+      rcuts.clear();
+
+      cut_t new_cut;
+
+      std::vector<cut_t const*> vcuts( fanin );
+
+      cuts._total_tuples += pairs;
+      for ( auto const& c1 : *lcuts[0] )
+      {
+        for ( auto const& c2 : *lcuts[1] )
+        {
+          if ( !c1->merge( *c2, new_cut, ps.cut_size ) )
+          {
+            continue;
+          }
+
+          if ( rcuts.is_dominated( new_cut ) )
+          {
+            continue;
+          }
+
+          if constexpr ( ComputeTruth )
+          {
+            vcuts[0] = c1;
+            vcuts[1] = c2;
+            new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, index );
+
+          rcuts.insert( new_cut );
+        }
+      }
+
+      /* limit the maximum number of cuts */
+      rcuts.limit( ps.cut_limit - 1 );
+
+      /* merge rcuts to cuts of the representative */
+      if ( index != repr_index ) {
+        //std::cout << "Merging cuts " << repr_index << ": " << repr_cuts->size() << "/";
+        for ( auto const& cut : rcuts ) {
+          if ( !repr_cuts->is_dominated( *cut ) ) {
+            repr_cuts->insert( *cut );
+          }
+        }
+        //std::cout << repr_cuts->size() << std::endl;
+      }
+
+      return true;
+    } );
+
+    cuts._total_cuts += static_cast<uint32_t>( repr_cuts->size() );
+
+    if ( repr_cuts.size() > 1 || ( *repr_cuts.begin() )->size() > 1 )
+    {
+      cuts.add_unit_cut( repr_index );
+    }
+  }
+
+  void merge_eqcuts( node const& repr )
+  {
+    auto repr_index = ntk.node_to_index( repr );
+    auto repr_cuts = &cuts.cuts( repr_index );
+    bool eligible = true;
+
+    /* compute the cuts for all the choices and merge them */
+    eqclasses.foreach_node_in_eqclass( repr, [&]( auto const& n ) {
+      auto index = ntk.node_to_index( n );
+      std::vector<uint32_t> cut_sizes;
+      uint32_t pairs{1};
+
+      ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &cut_sizes, &eligible]( auto child, auto i ) {
+        lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
+        if ( static_cast<uint32_t>( lcuts[i]->size() ) == 0 ) {
+          /* node fanins have not been explored yet, don't consider */
+          eligible = false;
+          return false;
+        }
+        cut_sizes.push_back( static_cast<uint32_t>( lcuts[i]->size() ) );
+        pairs *= cut_sizes.back();
+        return true;
+      } );
+
+      if ( !eligible ) {
+        /* if not eligible, go to the next choice node */
+        return true;
+      }
+
+      const auto fanin = cut_sizes.size();
+      lcuts[fanin] = &cuts.cuts( index );
+
+      auto& rcuts = *lcuts[fanin];
+
+      if ( fanin > 1 && fanin <= ps.fanin_limit )
+      {
+        rcuts.clear();
+
+        cut_t new_cut, tmp_cut;
+
+        std::vector<cut_t const*> vcuts( fanin );
+
+        cuts._total_tuples += pairs;
+        foreach_mixed_radix_tuple( cut_sizes.begin(), cut_sizes.end(), [&]( auto begin, auto end ) {
+          auto it = vcuts.begin();
+          auto i = 0u;
+          while ( begin != end )
+          {
+            *it++ = &( ( *lcuts[i++] )[*begin++] );
+          }
+
+          if ( !vcuts[0]->merge( *vcuts[1], new_cut, ps.cut_size ) )
+          {
+            return true; /* continue */
+          }
+
+          for ( i = 2; i < fanin; ++i )
+          {
+            tmp_cut = new_cut;
+            if ( !vcuts[i]->merge( tmp_cut, new_cut, ps.cut_size ) )
+            {
+              return true; /* continue */
+            }
+          }
+
+          if ( rcuts.is_dominated( new_cut ) )
+          {
+            return true; /* continue */
+          }
+
+          if constexpr ( ComputeTruth )
+          {
+            new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, ntk.index_to_node( index ) );
+
+          rcuts.insert( new_cut );
+
+          return true;
+        } );
+
+        /* limit the maximum number of cuts */
+        rcuts.limit( ps.cut_limit - 1 );
+      } else if ( fanin == 1 ) {
+        rcuts.clear();
+
+        for ( auto const& cut : *lcuts[0] ) {
+          cut_t new_cut = *cut;
+
+          if constexpr ( ComputeTruth )
+          {
+            new_cut->func_id = compute_truth_table( index, {cut}, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, ntk.index_to_node( index ) );
+
+          rcuts.insert( new_cut );
+        }
+
+        /* limit the maximum number of cuts */
+        rcuts.limit( ps.cut_limit - 1 );
+      }
+
+      /* merge rcuts to cuts of the representative */
+      if ( index != repr_index ) {
+        //std::cout << "Merging cuts " << repr_index << ": " << repr_cuts->size() << "/";
+        for ( auto const& cut : rcuts ) {
+          if ( !repr_cuts->is_dominated( *cut ) ) {
+            repr_cuts->insert( *cut );
+          }
+        }
+        //std::cout << repr_cuts->size() << std::endl;
+      }
+
+      return true;
+    } );
+
+    repr_cuts->limit( ps.cut_limit - 1 );
+    cuts.add_unit_cut( repr_index );
+
+    cuts._total_cuts += static_cast<uint32_t>( repr_cuts->size() );
+  }
+
+private:
+  Ntk const& ntk;
+  cut_enumeration_params const& ps;
+  cut_enumeration_stats& st;
+  network_cuts<Ntk, ComputeTruth, CutData>& cuts;
+  eq_classes<Ntk> const& eqclasses;
+
+  std::array<cut_set_t*, Ntk::max_fanin_size + 1> lcuts;
+};
 } /* namespace detail */
 /*! \endcond */
 
@@ -592,6 +920,41 @@ network_cuts<Ntk, ComputeTruth, CutData> cut_enumeration( Ntk const& ntk, cut_en
   cut_enumeration_stats st;
   network_cuts<Ntk, ComputeTruth, CutData> res( ntk.size() );
   detail::cut_enumeration_impl<Ntk, ComputeTruth, CutData> p( ntk, ps, st, res );
+  p.run();
+
+  if ( ps.verbose )
+  {
+    st.report();
+  }
+  if ( pst )
+  {
+    *pst = st;
+  }
+
+  return res;
+}
+
+
+template<typename Ntk, bool ComputeTruth, typename CutData>
+network_cuts<Ntk, ComputeTruth, CutData> cut_enumeration_eqclasses( Ntk const& ntk, eq_classes<Ntk> const * eqclasses, cut_enumeration_params const& ps, cut_enumeration_stats * pst )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( !ComputeTruth || has_compute_v<Ntk, kitty::dynamic_truth_table>, "Ntk does not implement the compute method for kitty::dynamic_truth_table" );
+
+  if ( !eqclasses ) {
+    return cut_enumeration<Ntk, true, CutData>( ntk, ps, pst );
+  }
+
+  cut_enumeration_stats st;
+  network_cuts<Ntk, ComputeTruth, CutData> res( ntk.size() );
+  detail::cut_enumeration_eqclasses_impl<Ntk, ComputeTruth, CutData> p( ntk, *eqclasses, ps, st, res );
   p.run();
 
   if ( ps.verbose )

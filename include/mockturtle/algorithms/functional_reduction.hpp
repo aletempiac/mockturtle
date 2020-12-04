@@ -34,6 +34,7 @@
 
 #include "../utils/progress_bar.hpp"
 #include "../utils/stopwatch.hpp"
+#include "../utils/eq_classes.hpp"
 #include "../views/fanout_view.hpp"
 
 #include <bill/sat/interface/abc_bsat2.hpp>
@@ -56,6 +57,8 @@ struct functional_reduction_params
 
   /*! \brief Whether to repeat until no further improvement can be found. */
   bool saturation{false};
+
+  bool compute_equivalence_classes{false};
 
   /*! \brief Whether to use pre-generated patterns stored in a file.
    * If not, by default, 256 random patterns will be used.
@@ -125,7 +128,7 @@ struct functional_reduction_stats
 
 namespace detail
 {
-template<typename Ntk, typename validator_t = circuit_validator<Ntk, bill::solvers::bsat2>>
+template<typename Ntk, typename EcNtk, typename validator_t = circuit_validator<Ntk, bill::solvers::bsat2>>
 class functional_reduction_impl
 {
 public:
@@ -133,8 +136,8 @@ public:
   using signal = typename Ntk::signal;
   using TT = unordered_node_map<kitty::partial_truth_table, Ntk>;
 
-  explicit functional_reduction_impl( Ntk& ntk, functional_reduction_params const& ps, validator_params const& vps, functional_reduction_stats& st )
-      : ntk( ntk ), ps( ps ), st( st ), tts( ntk ),
+  explicit functional_reduction_impl( Ntk& ntk, functional_reduction_params const& ps, validator_params const& vps, functional_reduction_stats& st, eq_classes<EcNtk>& eqclass )
+      : ntk( ntk ), ps( ps ), st( st ), tts( ntk ), eqclass( eqclass ),
         sim( ps.pattern_filename ? partial_simulator( *ps.pattern_filename ) : partial_simulator( ntk.num_pis(), 256 ) ), validator( ntk, vps )
   {
     static_assert( !validator_t::use_odc_, "`circuit_validator::use_odc` flag should be turned off." );
@@ -250,8 +253,8 @@ private:
         {
           return false;
         }
-        
-        keep_trying = try_node( tt, ntt, root, n );
+
+        keep_trying = try_node( tt, ntt, root, n, false );
         return keep_trying;
       } );
 
@@ -296,7 +299,7 @@ private:
             ntk.set_visited( p, ntk.trav_id() );
 
             check_tts( p );
-            keep_trying = try_node( tt, ntt, root, p );
+            keep_trying = try_node( tt, ntt, root, p, true );
             return keep_trying;
           } );
         }
@@ -306,7 +309,7 @@ private:
     } );
   }
 
-  bool try_node( kitty::partial_truth_table& tt, kitty::partial_truth_table& ntt, node const& root, node const& n )
+  bool try_node( kitty::partial_truth_table& tt, kitty::partial_truth_table& ntt, node const& root, node const& n, bool add_eqclass )
   {
     signal g;
     if ( tt == tts[n] )
@@ -346,7 +349,24 @@ private:
       ++st.num_reduction;
       ++st.num_equ_accepts;
       /* update network */
-      ntk.substitute_node( root, g );
+      if ( ps.compute_equivalence_classes ) {
+        if ( add_eqclass ) {
+          /* keep as a choice, substitute root with its representative */
+          eqclass.create_repr( root, g );
+          auto sub_sig = eqclass.get_eqrepr_signal( root );
+          if ( ntk.get_node( sub_sig ) != root ) {
+            ntk.substitute_node( root, sub_sig );
+          } else {
+            ntk.substitute_node( ntk.get_node( g ), sub_sig ^ ntk.is_complemented( g ) );
+          }
+        } else {
+          /* don't keep as a choice, substitute root with g's representative */
+          auto sub_sig = eqclass.get_eqrepr_signal( g );
+          ntk.substitute_node( root, sub_sig );
+        }
+      } else {
+        ntk.substitute_node( root, g );
+      }
       return false; /* break `foreach_transitive_fanin` */
     }
   }
@@ -409,6 +429,7 @@ private:
 
 private:
   Ntk& ntk;
+  mockturtle::eq_classes<EcNtk>& eqclass;
   functional_reduction_params const& ps;
   functional_reduction_stats& st;
 
@@ -449,8 +470,10 @@ void functional_reduction( Ntk& ntk, functional_reduction_params const& ps = {},
   using fanout_view_t = fanout_view<Ntk>;
   fanout_view_t fanout_view{ntk};
 
+  eq_classes<Ntk> eqclass{ntk};
+
   functional_reduction_stats st;
-  detail::functional_reduction_impl p( fanout_view, ps, vps, st );
+  detail::functional_reduction_impl p( fanout_view, ps, vps, st, eqclass );
   p.run();
 
   if ( ps.verbose )
@@ -462,6 +485,50 @@ void functional_reduction( Ntk& ntk, functional_reduction_params const& ps = {},
   {
     *pst = st;
   }
+}
+
+
+template<class Ntk>
+eq_classes<Ntk> functional_reduction_eqclasses( Ntk& ntk, functional_reduction_params const& ps = {}, functional_reduction_stats* pst = nullptr )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
+  static_assert( has_foreach_gate_v<Ntk>, "Ntk does not implement the foreach_gate method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_make_signal_v<Ntk>, "Ntk does not implement the make_signal method" );
+  static_assert( has_set_visited_v<Ntk>, "Ntk does not implement the set_visited method" );
+  static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
+  static_assert( has_substitute_node_v<Ntk>, "Ntk does not implement the substitute_node method" );
+  static_assert( has_visited_v<Ntk>, "Ntk does not implement the visited method" );
+
+  validator_params vps;
+  vps.max_clauses = ps.max_clauses;
+  vps.conflict_limit = ps.conflict_limit;
+
+  using fanout_view_t = fanout_view<Ntk>;
+  fanout_view_t fanout_view{ntk};
+
+  eq_classes<Ntk> eqclass{ntk};
+
+  functional_reduction_stats st;
+  detail::functional_reduction_impl p( fanout_view, ps, vps, st, eqclass );
+  p.run();
+
+  if ( ps.verbose )
+  {
+    st.report();
+  }
+
+  if ( pst )
+  {
+    *pst = st;
+  }
+
+  return eqclass;
 }
 
 } /* namespace mockturtle */
