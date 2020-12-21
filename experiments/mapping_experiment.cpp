@@ -21,9 +21,10 @@
 #include <mockturtle/algorithms/node_resynthesis/mig4_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
-#include <mockturtle/views/fanout_limit_view.hpp>
+// #include <mockturtle/views/fanout_limit_view.hpp>
 #include <mockturtle/views/topo_view.hpp>
-#include <mockturtle/utils/eq_classes.hpp>
+#include <mockturtle/views/choice_view.hpp>
+#include <mockturtle/utils/choice_utils.hpp>
 
 
 std::vector<std::string> local_benchmarks = {
@@ -171,7 +172,7 @@ void synthesis()
     printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
             imig.num_pis(), imig.num_pos(), imig.size() - imig.num_pis() - 1, imig.size(), imig_d.depth() );
 
-    auto klut = lut_map( imig, 4u );
+    // auto klut = lut_map( imig, 4u );
 
     mockturtle::mig_network mig;
     //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_resyn );
@@ -181,41 +182,65 @@ void synthesis()
     mockturtle::functional_reduction_stats st;
     frp.compute_equivalence_classes = true;
 
+    mockturtle::choice_view_params cps;
+
     /* compute the equivalence classes and substitute representatives in the net */
-    auto eqclasses_init = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    // auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    // mockturtle::choice_view cmig{mig};
+    //eqclasses.print_eqclasses();
+    //mockturtle::functional_reduction( mig, frp, &st );
+    //mig = cleanup_dangling( mig );
+    //std::cout << "size: " << mig.size() << " ";
+    //mockturtle::choice_view<mockturtle::mig_network> cv{mig};
+    // mockturtle::choice_network<mockturtle::mig_network>( cmig, eqclasses );
+    //std::cout << mig.size() << std::endl;
+    //eqclasses.print_eqclasses();
 
     mockturtle::cut_rewriting_params psc;
     psc.cut_enumeration_ps.cut_size = 4;
 
-    auto opt_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig, eqclasses_init, mig_resyn, psc );
-    opt_mig = cleanup_dangling( opt_mig );
+    int i = 0;
+    while ( i++ < 10 )
+    {
+      mockturtle::mig_network new_mig;
+      auto const mig_gates_before = mig.num_gates();
 
-    if ( opt_mig.size() < imig.size() ) {
-      mig = opt_mig;
-      int i = 0;
-      while ( i++ < 20 )
-      {
-        mockturtle::mig_network new_mig;
-        mockturtle::depth_view depth_mig{mig};
-        auto const mig_depth_before = depth_mig.depth();
-        auto const mig_size_before = mig.size();
+      auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+      // mig = cleanup_dangling( mig );
+      mockturtle::choice_view cmig( mig, cps );
+      mockturtle::reduce_choice_network( cmig, eqpairs );
+      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::cleanup_choice_network( cmig );
+      // cmig.print_choice_classes();
 
-        auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+      //mockturtle::topo_view mig_topo{ mig };
+      //new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig, eqclasses, mig_resyn, psc );
+      //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
+      // std::cout << "to cut-rewriting" << std::endl;
+      new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( cmig2, mig_resyn, psc );
+      new_mig = cleanup_dangling( new_mig );
 
-        mockturtle::topo_view mig_topo{ mig };
-        new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig_topo, eqclasses, mig_resyn, psc );
-        //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
-        //new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
-        new_mig = cleanup_dangling( new_mig );
-
-        mockturtle::depth_view depth_mig_new{new_mig};
-
-        if ( new_mig.size() >= mig_size_before ) {
-          break;
-        }
-        mig = new_mig;
+      if ( new_mig.num_gates() > mig.num_gates() ) {
+        new_mig = cleanup_dangling( mig );
       }
+      std::cout << "i: " << i << "; gates size " << new_mig.num_gates() << "/" << mig.num_gates() << std::endl;
+      //eqclasses.print_eqclasses();
+      //mockturtle::functional_reduction( new_mig, frp, &st );
+
+      //auto clean_new_mig = cleanup_dangling( new_mig );
+      //new_mig = cleanup_dangling( new_mig );
+
+      //mockturtle::depth_view depth_mig_new{new_mig};
+
+      if ( new_mig.num_gates() >= mig_gates_before ) {
+        break;
+      }
+      mig = new_mig;
+      std::cout << i;
     }
+    std::cout << std::endl;
+    mig = cleanup_dangling( mig );
+    //mockturtle::functional_reduction( mig, frp, &st );
+    //mig = cleanup_dangling( mig );
 
     mockturtle::depth_view mig_d{mig};
 
@@ -280,42 +305,52 @@ void synthesis_iwls()
     mockturtle::functional_reduction_params frp;
     mockturtle::functional_reduction_stats st;
     frp.compute_equivalence_classes = true;
-    auto eqclasses_init = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
     //eqclasses_init.print_eqclasses();
     //mig = cleanup_dangling( mig );
 
     mockturtle::cut_rewriting_params psc;
     psc.cut_enumeration_ps.cut_size = 4;
 
-    auto opt_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig, eqclasses_init, mig_resyn, psc );
-    opt_mig = cleanup_dangling( opt_mig );
+    // auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    //eqclasses.print_eqclasses();
+    // mockturtle::choice_network( mig, eqclasses );
+    //eqclasses.print_eqclasses();
 
-    if ( opt_mig.size() < imig.size() ) {
-      mig = opt_mig;
+    int i = 0;
+    while ( i++ < 10 )
+    {
+      mockturtle::mig_network new_mig;
+      auto const mig_gates_before = mig.num_gates();
 
-      int i = 0;
-      while ( i++ < 20 )
-      {
-        mockturtle::mig_network new_mig;
-        mockturtle::depth_view depth_mig{mig};
-        auto const mig_depth_before = depth_mig.depth();
-        auto const mig_size_before = mig.size();
+      auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+      //mig = cleanup_dangling( mig );
+      mockturtle::choice_view cmig{mig};
+      mockturtle::reduce_choice_network( cmig, eqpairs );
+      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::cleanup_choice_network( cmig );
 
-        auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
 
-        mockturtle::topo_view mig_topo{ mig };
-        new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig_topo, eqclasses, mig_resyn, psc );
-        //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
-        //new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
-        new_mig = cleanup_dangling( new_mig );
+      // cmig.print_choice_classes();
+      //mockturtle::topo_view mig_topo{ mig };
+      //new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig_topo, eqclasses, mig_resyn, psc );
+      //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
+      new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( cmig2, mig_resyn, psc );
 
-        mockturtle::depth_view depth_mig_new{new_mig};
-
-        if ( new_mig.size() >= mig_size_before ) {
-          break;
-        }
-        mig = new_mig;
+      if ( new_mig.num_gates() > mig.num_gates() ) {
+        new_mig = cleanup_dangling( mig );
       }
+
+      std::cout << "i: " << i << "; gates size " << new_mig.num_gates() << "/" << mig.num_gates() << std::endl;
+
+
+      // eqclasses = mockturtle::functional_reduction_eqclasses( new_mig, frp, &st );
+      // mockturtle::choice_network( new_mig, eqclasses );
+
+      //mockturtle::depth_view depth_mig_new{new_mig};
+
+      if ( new_mig.num_gates() >= mig_gates_before ) {
+        break;
+      }
+      mig = new_mig;
     }
 
     mockturtle::depth_view mig_d{mig};
@@ -346,7 +381,7 @@ void synthesis_iwls()
 int main()
 {
   //create_database();
-  synthesis();
-  //synthesis_iwls();
+  // synthesis();
+  synthesis_iwls();
   return 0;
 }

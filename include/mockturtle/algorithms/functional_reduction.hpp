@@ -34,7 +34,6 @@
 
 #include "../utils/progress_bar.hpp"
 #include "../utils/stopwatch.hpp"
-#include "../utils/eq_classes.hpp"
 #include "../views/fanout_view.hpp"
 
 #include <bill/sat/interface/abc_bsat2.hpp>
@@ -128,16 +127,17 @@ struct functional_reduction_stats
 
 namespace detail
 {
-template<typename Ntk, typename EcNtk, typename validator_t = circuit_validator<Ntk, bill::solvers::bsat2>>
+template<typename Ntk, typename validator_t = circuit_validator<Ntk, bill::solvers::bsat2>>
 class functional_reduction_impl
 {
 public:
   using node = typename Ntk::node;
   using signal = typename Ntk::signal;
   using TT = unordered_node_map<kitty::partial_truth_table, Ntk>;
+  using eqclass = std::vector<std::pair<node, signal>>;
 
-  explicit functional_reduction_impl( Ntk& ntk, functional_reduction_params const& ps, validator_params const& vps, functional_reduction_stats& st, eq_classes<EcNtk>& eqclass )
-      : ntk( ntk ), ps( ps ), st( st ), tts( ntk ), eqclass( eqclass ),
+  explicit functional_reduction_impl( Ntk& ntk, functional_reduction_params const& ps, validator_params const& vps, functional_reduction_stats& st, eqclass * equivalences = nullptr )
+      : ntk( ntk ), equivalences( equivalences ), ps( ps ), st( st ), tts( ntk ),
         sim( ps.pattern_filename ? partial_simulator( *ps.pattern_filename ) : partial_simulator( ntk.num_pis(), 256 ) ), validator( ntk, vps )
   {
     static_assert( !validator_t::use_odc_, "`circuit_validator::use_odc` flag should be turned off." );
@@ -350,19 +350,12 @@ private:
       ++st.num_equ_accepts;
       /* update network */
       if ( ps.compute_equivalence_classes ) {
-        if ( add_eqclass ) {
-          /* keep as a choice, substitute root with its representative */
-          eqclass.create_repr( root, g );
-          auto sub_sig = eqclass.get_eqrepr_signal( root );
-          if ( ntk.get_node( sub_sig ) != root ) {
-            ntk.substitute_node( root, sub_sig );
-          } else {
-            ntk.substitute_node( ntk.get_node( g ), sub_sig ^ ntk.is_complemented( g ) );
-          }
+        //std::cout << "repr: " << root << "_" << ntk.get_node( g ) << std::endl;
+        if ( add_eqclass && equivalences ) {
+          equivalences->push_back( std::make_pair( root, g ) );
+          // ntk.substitute_node( root, g );
         } else {
-          /* don't keep as a choice, substitute root with g's representative */
-          auto sub_sig = eqclass.get_eqrepr_signal( g );
-          ntk.substitute_node( root, sub_sig );
+          ntk.substitute_node( root, g );
         }
       } else {
         ntk.substitute_node( root, g );
@@ -429,7 +422,7 @@ private:
 
 private:
   Ntk& ntk;
-  mockturtle::eq_classes<EcNtk>& eqclass;
+  eqclass * equivalences;
   functional_reduction_params const& ps;
   functional_reduction_stats& st;
 
@@ -470,10 +463,8 @@ void functional_reduction( Ntk& ntk, functional_reduction_params const& ps = {},
   using fanout_view_t = fanout_view<Ntk>;
   fanout_view_t fanout_view{ntk};
 
-  eq_classes<Ntk> eqclass{ntk};
-
   functional_reduction_stats st;
-  detail::functional_reduction_impl p( fanout_view, ps, vps, st, eqclass );
+  detail::functional_reduction_impl p( fanout_view, ps, vps, st );
   p.run();
 
   if ( ps.verbose )
@@ -489,7 +480,8 @@ void functional_reduction( Ntk& ntk, functional_reduction_params const& ps = {},
 
 
 template<class Ntk>
-eq_classes<Ntk> functional_reduction_eqclasses( Ntk& ntk, functional_reduction_params const& ps = {}, functional_reduction_stats* pst = nullptr )
+std::vector<std::pair<node<Ntk>, signal<Ntk>>>
+functional_reduction_eqclasses( Ntk& ntk, functional_reduction_params const& ps = {}, functional_reduction_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
@@ -510,12 +502,15 @@ eq_classes<Ntk> functional_reduction_eqclasses( Ntk& ntk, functional_reduction_p
   vps.conflict_limit = ps.conflict_limit;
 
   using fanout_view_t = fanout_view<Ntk>;
+  using node = typename Ntk::node;
+  using signal = typename Ntk::signal;
+
   fanout_view_t fanout_view{ntk};
 
-  eq_classes<Ntk> eqclass{ntk};
+  std::vector<std::pair<node, signal>> equivalences;
 
   functional_reduction_stats st;
-  detail::functional_reduction_impl p( fanout_view, ps, vps, st, eqclass );
+  detail::functional_reduction_impl p( fanout_view, ps, vps, st, &equivalences );
   p.run();
 
   if ( ps.verbose )
@@ -528,7 +523,7 @@ eq_classes<Ntk> functional_reduction_eqclasses( Ntk& ntk, functional_reduction_p
     *pst = st;
   }
 
-  return eqclass;
+  return equivalences;
 }
 
 } /* namespace mockturtle */

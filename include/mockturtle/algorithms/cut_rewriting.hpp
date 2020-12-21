@@ -54,7 +54,6 @@
 #include "cut_enumeration.hpp"
 #include "detail/mffc_utils.hpp"
 #include "dont_cares.hpp"
-#include "../utils/eq_classes.hpp"
 
 #include <fmt/format.h>
 #include <kitty/print.hpp>
@@ -679,12 +678,11 @@ namespace detail
 template<class NtkDest, class Ntk, class RewritingFn, class NodeCostFn>
 struct cut_rewriting_impl
 {
-  cut_rewriting_impl( Ntk const& ntk, RewritingFn const& rewriting_fn, cut_rewriting_params const& ps, cut_rewriting_stats& st, eq_classes<Ntk> const * eqclasses = nullptr )
+  cut_rewriting_impl( Ntk const& ntk, RewritingFn const& rewriting_fn, cut_rewriting_params const& ps, cut_rewriting_stats& st )
       : ntk_( ntk ),
         rewriting_fn_( rewriting_fn ),
         ps_( ps ),
-        st_( st ),
-        eqclasses( eqclasses ) {}
+        st_( st ) {}
 
   NtkDest run()
   {
@@ -703,7 +701,7 @@ struct cut_rewriting_impl
     } );
 
     /* enumerate cuts */
-    const auto cuts = call_with_stopwatch( st_.time_cuts, [&]() { return cut_enumeration_eqclasses<Ntk, true, cut_enumeration_cut_rewriting_cut>( ntk_, eqclasses, ps_.cut_enumeration_ps ); } );
+    const auto cuts = call_with_stopwatch( st_.time_cuts, [&]() { return cut_enumeration_eqclasses<Ntk, true, cut_enumeration_cut_rewriting_cut>( ntk_, ps_.cut_enumeration_ps ); } );
 
     /* for cost estimation we use reference counters initialized by the fanout size */
     initialize_values_with_fanout( ntk_ );
@@ -713,7 +711,13 @@ struct cut_rewriting_impl
 
     progress_bar pbar{ntk_.num_gates(), "cut_rewriting |{0}| node = {1:>4} / " + std::to_string( ntk_.num_gates() ) + "   original cost = " + std::to_string( orig_cost ), ps_.progress};
     ntk_.foreach_gate( [&]( auto const& n, auto i ) {
+    // for ( auto i = 1; i < ntk_.size(); i++ ) {
+      // auto const& n = ntk_.index_to_node( i );
       pbar( i, i );
+
+      if ( ntk_.is_ci( n ) )
+        return;
+        // continue;
 
       /* nothing to optimize? */
       int32_t value = mffc_size<Ntk, NodeCostFn>( ntk_, n );
@@ -790,8 +794,11 @@ struct cut_rewriting_impl
         }
       }
 
-      recursive_ref<Ntk, NodeCostFn>( res, res.get_node( old2new[n] ) );
+      if ( !ntk_.is_dead( n ) ) {
+        recursive_ref<Ntk, NodeCostFn>( res, res.get_node( old2new[n] ) );
+      }
     } );
+    // }
 
     /* create POs */
     ntk_.foreach_po( [&]( auto const& f ) {
@@ -809,7 +816,6 @@ private:
   RewritingFn const& rewriting_fn_;
   cut_rewriting_params const& ps_;
   cut_rewriting_stats& st_;
-  eq_classes<Ntk> const * eqclasses;
 };
 
 
@@ -821,7 +827,7 @@ struct cut_rewriting_area_flow_impl
   using cut_set_t = typename network_cuts<Ntk, true, cut_enumeration_cut_rewriting_cut>::cut_set_t;
   using net_cuts = network_cuts<Ntk, true, cut_enumeration_cut_rewriting_cut>;
 
-  cut_rewriting_area_flow_impl( Ntk const& ntk, RewritingFn const& rewriting_fn, cut_rewriting_params const& ps, cut_rewriting_stats& st, bool area_depth = false )
+  cut_rewriting_area_flow_impl( choice_view<Ntk> const& ntk, RewritingFn const& rewriting_fn, cut_rewriting_params const& ps, cut_rewriting_stats& st, bool area_depth = false )
       : ntk_( ntk ),
         rewriting_fn_( rewriting_fn ),
         ps_( ps ),
@@ -838,7 +844,8 @@ struct cut_rewriting_area_flow_impl
     auto old2new = p.second;
 
     /* enumerate cuts */
-    auto cuts = call_with_stopwatch( st_.time_cuts, [&]() { return cut_enumeration<Ntk, true, cut_enumeration_cut_rewriting_cut>( ntk_, ps_.cut_enumeration_ps ); } );
+    //auto cuts = call_with_stopwatch( st_.time_cuts, [&]() { return cut_enumeration<Ntk, true, cut_enumeration_cut_rewriting_cut>( ntk_, ps_.cut_enumeration_ps ); } );
+    auto cuts = call_with_stopwatch( st_.time_cuts, [&]() { return cut_enumeration_eqclasses<Ntk, true, cut_enumeration_cut_rewriting_cut>( ntk_, ps_.cut_enumeration_ps ); } );
 
     if ( area_depth_ ) {
       best_cut_depth( cuts );
@@ -846,6 +853,8 @@ struct cut_rewriting_area_flow_impl
       best_cut_area( cuts );
     }
     build_cover_area( cuts );
+
+    std::cout << "#LUT: " << compute_cover_size() << std::endl;
 
     if ( ps_.cut_enumeration_ps.cut_size == 6 )
       return ntk_;
@@ -855,11 +864,15 @@ struct cut_rewriting_area_flow_impl
 
     progress_bar pbar{ntk_.num_gates(), "cut_rewriting |{0}| node = {1:>4} / " + std::to_string( ntk_.num_gates() ) + "   original cost = " + std::to_string( orig_cost ), ps_.progress};
     ntk_.foreach_node( [&]( auto const& n, auto i ) {
+    // for ( auto i = 1; i < ntk_.size(); i++ ) {
+      // auto const& n = ntk_.index_to_node( i );
       pbar( i, i );
 
-      if ( ntk_.value( n ) && !ntk_.is_pi( n ) && !ntk_.is_constant( n ) ) {
-        //exact cover
+      if ( ntk_.is_ci( n ) )
+        return;
 
+      if ( ntk_.value( n ) ) {
+        //exact cover
         const auto& cut = cuts.cuts( ntk_.node_to_index( n ) ).best();
         signal<Ntk> best_signal;
 
@@ -884,6 +897,7 @@ struct cut_rewriting_area_flow_impl
         old2new[n] = best_signal;
       }
     } );
+    // }
 
     /* create POs */
     ntk_.foreach_po( [&]( auto const& f ) {
@@ -893,7 +907,8 @@ struct cut_rewriting_area_flow_impl
     res = cleanup_dangling( res );
 
     /* new costs */
-    return costs<Ntk, NodeCostFn>( res ) > orig_cost ? ntk_ : res;
+    // return costs<Ntk, NodeCostFn>( res ) > orig_cost ? ntk_ : res;
+    return res;
   }
 
 private:
@@ -902,8 +917,21 @@ private:
   {
     float _res = 1;
     for( auto _node : _cut ) {
-      _res += _area_flows.at( _node ) / ntk_.fanout_size( ntk_.index_to_node( _node ) );
-      //_res += _area_flows.at( _node );
+      float fanout_size = 1.0;
+      auto id = ntk_.index_to_node( _node );
+      if ( ntk_.fanout_size( id ) > 0 ) {
+        fanout_size = static_cast<float>( ntk_.fanout_size( id ) );
+      } else if ( !ntk_.is_choice_repr( id ) ) {
+        fanout_size = static_cast<float>( ntk_.fanout_size( ntk_.get_choice_repr( id ) ) );
+      } else {
+        fanout_size = 1.0;
+      }
+      // if ( fanout_size == 0 ) {
+      //   fanout_size = 1.0;
+      // }
+      assert( fanout_size != 0 );
+      _res += _area_flows.at( _node ) / fanout_size;
+      // _res += _area_flows.at( _node );
     }
 
     return _res;
@@ -928,11 +956,13 @@ private:
     std::vector<float> best_area( ntk_.size() );
 
     ntk_.foreach_node( [&]( auto const& n ) {
+    // for ( auto node_index = 0u; node_index < ntk_.size(); node_index++ ) {
+      // auto const& n = ntk_.index_to_node( node_index );
       auto node_index = ntk_.node_to_index( n );
 
       if ( ntk_.is_pi( n ) || ntk_.is_constant( n ) ) {
         best_area[node_index] = 0u;
-      } else {
+      } else if ( ntk_.is_choice_repr( n ) ) {
         uint32_t best_cut_index = 0u;
         auto best_aflow = std::numeric_limits<float>::max();
         auto best_size = std::numeric_limits<unsigned>::max();
@@ -954,6 +984,7 @@ private:
         best_area[node_index] = best_aflow;
       }
     } );
+    // }
   }
 
 
@@ -964,12 +995,14 @@ private:
     std::vector<unsigned int> best_depth( ntk_.size() );
 
     ntk_.foreach_node( [&]( auto const& n ) {
+    // for ( auto node_index = 0u; node_index < ntk_.size(); node_index++ ) {
+      // auto const& n = ntk_.index_to_node( node_index );
       auto node_index = ntk_.node_to_index( n );
 
       if ( ntk_.is_pi( n ) || ntk_.is_constant( n ) ) {
         best_area[node_index] = 0u;
         best_depth[node_index] = 0u;
-      } else {
+      } else if ( ntk_.is_choice_repr( n ) ) {
         uint32_t best_cut_index = 0u;
         auto best_aflow = std::numeric_limits<float>::max();
         auto best_dflow = std::numeric_limits<unsigned>::max();
@@ -993,6 +1026,7 @@ private:
         best_depth[node_index] = best_dflow;
       }
     } );
+    // }
   }
 
 
@@ -1000,12 +1034,15 @@ private:
   compute_cover_size()
   {
     unsigned int _res = 0u;
+    // for ( auto i = 0; i < ntk_.size(); i++ ) {
+      // auto const& n = ntk_.index_to_node( i );
     ntk_.foreach_node( [&]( auto const& n ) {
       if ( !ntk_.is_pi( n ) && !ntk_.is_constant( n ) && ntk_.value( n ) ) {
         _res++;
       }
       //std::cout << ntk_.value( n ) << " ";
     } );
+    // }
     //std::cout << std::endl;
 
     return _res;
@@ -1023,10 +1060,12 @@ private:
 
     //create the cover
     auto i = cuts.nodes_size();
+    assert( i == ntk_.size() );
     while ( i-- > 0 ) {
-      if ( !ntk_.is_pi( ntk_.index_to_node( i ) ) &&  ntk_.value( ntk_.index_to_node( i ) ) ) {
+      if ( !ntk_.is_pi( ntk_.index_to_node( i ) ) && ntk_.value( ntk_.index_to_node( i ) ) ) {
         //select leaf cuts
         for ( auto const& node_index : cuts.cuts( i ).best() ) {
+          assert( ntk_.is_choice_repr( ntk_.index_to_node( node_index ) ) );
           ntk_.incr_value( ntk_.index_to_node( node_index ) );
         }
       }
@@ -1038,7 +1077,9 @@ private:
       std::vector<uint32_t> new_best( cuts.nodes_size(), 0u );
       //try to improve the cover
       ntk_.foreach_node( [&]( auto const node ) {
-        if ( !ntk_.is_pi( node ) && !ntk_.is_constant( node ) ) {
+      // for ( auto node_index = 0u; node_index < ntk_.size(); node_index++ ) {
+        // auto const& node = ntk_.index_to_node( node_index );
+        if ( !ntk_.is_pi( node ) && !ntk_.is_constant( node ) && ntk_.is_choice_repr( node ) ) {
           auto node_index = ntk_.node_to_index( node );
 
           if ( ntk_.value( node ) ) {
@@ -1056,6 +1097,9 @@ private:
             new_best[node_index] = i;
             auto area1 = recursive_select( node, cuts, new_best );
             auto area2 = recursive_deselect( node, cuts, new_best );
+            if ( area1 != area2 ) {
+              std::cout << area1 << "/" << area2 <<std::endl;
+            }
             assert( area1 == area2 );
 
             if ( area1 <= best_area ) {
@@ -1072,11 +1116,12 @@ private:
           }
         }
       } );
+      // }
 
       //compute the new size
       auto new_size = compute_cover_size();
 
-      //std::cout << size << "/" << ntk_.size() << std::endl;
+      // std::cout << size << "/" << ntk_.size() << std::endl;
 
       if ( new_size >= size ) {
         assert( new_size == size );
@@ -1097,7 +1142,12 @@ private:
 
     auto value = 1u;
 
-    for ( auto& n : cuts.cuts( ntk_.node_to_index( node ) )[best[ntk_.node_to_index( node )]] ) {
+    for ( auto& n : cuts.cuts( ntk_.get_choice_repr( ntk_.node_to_index( node ) ) )[best[ntk_.get_choice_repr( ntk_.node_to_index( node ) )]] ) {
+      assert( n < ntk_.size() );
+      if ( n == ntk_.node_to_index( node ) ) {
+        return std::numeric_limits<unsigned>::max();
+        // continue;
+      }
       if ( ntk_.decr_value( ntk_.index_to_node( n ) ) == 0 ) {
         value += recursive_deselect( ntk_.index_to_node( n ), cuts, best );
       }
@@ -1115,7 +1165,12 @@ private:
 
     auto value = 1u;
 
-    for ( auto& n : cuts.cuts( ntk_.node_to_index( node ) )[best[ntk_.node_to_index( node )]] ) {
+    for ( auto& n : cuts.cuts( ntk_.get_choice_repr( ntk_.node_to_index( node ) ) )[best[ntk_.get_choice_repr( ntk_.node_to_index( node ) )]] ) {
+      assert( n < ntk_.size() );
+      if ( n == ntk_.node_to_index( node ) ) {
+        return std::numeric_limits<unsigned>::max();
+        // continue;
+      }
       if ( ntk_.incr_value( ntk_.index_to_node( n ) ) == 0 ) {
         value += recursive_select( ntk_.index_to_node( n ), cuts, best );
       }
@@ -1124,7 +1179,8 @@ private:
   }
 
 private:
-  Ntk const& ntk_;
+  // Ntk const& ntk_;
+  choice_view<Ntk> const& ntk_;
   RewritingFn const& rewriting_fn_;
   cut_rewriting_params const& ps_;
   cut_rewriting_stats& st_;
@@ -1187,35 +1243,7 @@ Ntk cut_rewriting( Ntk const& ntk, RewritingFn const& rewriting_fn = {}, cut_rew
 
 
 template<class Ntk, class RewritingFn, class NodeCostFn = unit_cost<Ntk>>
-Ntk cut_rewriting_eqclasses( Ntk const& ntk, eq_classes<Ntk> const& eqclasses, RewritingFn const& rewriting_fn = {}, cut_rewriting_params const& ps = {}, cut_rewriting_stats* pst = nullptr )
-{
-  cut_rewriting_stats st;
-  const auto result = [&]() {
-    if ( ps.preserve_depth )
-    {
-      depth_view<Ntk, NodeCostFn> depth_ntk{ntk};
-      return detail::cut_rewriting_impl<Ntk, depth_view<Ntk, NodeCostFn>, RewritingFn, NodeCostFn>( depth_ntk, rewriting_fn, ps, st ).run();
-    }
-    else
-    {
-      return detail::cut_rewriting_impl<Ntk, Ntk, RewritingFn, NodeCostFn>( ntk, rewriting_fn, ps, st, &eqclasses ).run();
-    }
-  }();
-
-  if ( ps.verbose )
-  {
-    st.report( false );
-  }
-  if ( pst )
-  {
-    *pst = st;
-  }
-  return result;
-}
-
-
-template<class Ntk, class RewritingFn, class NodeCostFn = unit_cost<Ntk>>
-Ntk cut_rewriting_area_flow( Ntk const& ntk, RewritingFn const& rewriting_fn = {}, cut_rewriting_params const& ps = {}, cut_rewriting_stats* pst = nullptr, bool area_depth = false )
+Ntk cut_rewriting_area_flow( choice_view<Ntk> const& ntk, RewritingFn const& rewriting_fn = {}, cut_rewriting_params const& ps = {}, cut_rewriting_stats* pst = nullptr, bool area_depth = false )
 {
   cut_rewriting_stats st;
   const auto result = detail::cut_rewriting_area_flow_impl<Ntk, RewritingFn, NodeCostFn>( ntk, rewriting_fn, ps, st, area_depth ).run();

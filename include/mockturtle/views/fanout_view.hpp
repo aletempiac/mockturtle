@@ -176,6 +176,24 @@ public:
     }
   }
 
+  ~fanout_view()
+  {
+    if ( _ps.update_on_add )
+    {
+      Ntk::events().on_add.clear();
+    }
+
+    if ( _ps.update_on_modified )
+    {
+      Ntk::events().on_modified.clear();
+    }
+
+    if ( _ps.update_on_delete )
+    {
+      Ntk::events().on_delete.clear();
+    }
+  }
+
   template<typename Fn>
   void foreach_fanout( node const& n, Fn&& fn ) const
   {

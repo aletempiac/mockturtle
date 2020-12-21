@@ -168,7 +168,7 @@ public:
 
     signal<DatabaseNtk> best_cand;
     unsigned best = 100;
-    unsigned best_b = 100;
+    int best_b = 100;
     for ( auto const& cand : it->second )
     {
       if ( ( !ps.multiple_depth ) && ( !ps.multiple_if ) )
@@ -317,6 +317,7 @@ private:
         return true;
       else
         compute_buffers_local( s, ntk, buffers, node_buffers);
+      return true;
     } );
     return;
   }
