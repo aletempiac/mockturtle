@@ -21,9 +21,12 @@
 #include <mockturtle/algorithms/node_resynthesis/mig4_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
+#include <mockturtle/algorithms/mig_algebraic_rewriting.hpp>
 // #include <mockturtle/views/fanout_limit_view.hpp>
 #include <mockturtle/views/topo_view.hpp>
 #include <mockturtle/views/choice_view.hpp>
+#include <mockturtle/views/depth_view.hpp>
+#include <mockturtle/views/depth_choice_view.hpp>
 #include <mockturtle/utils/choice_utils.hpp>
 
 
@@ -31,7 +34,7 @@ std::vector<std::string> local_benchmarks = {
   "adder",
   "bar",
   "div",
-  "hyp",
+  // "hyp",
   "log2",
   "max",
   "multiplier",
@@ -68,7 +71,7 @@ template<class Ntk>
 bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
 {
   mockturtle::write_bench( ntk, "/tmp/test.bench" );
-  std::string command = fmt::format( "../../abc/abc -q \"cec -n {} /tmp/test.bench\"", benchmark );
+  std::string command = fmt::format( "../../abc -q \"cec -n {} /tmp/test.bench\"", benchmark );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -90,7 +93,7 @@ template<typename Ntk>
 mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4 )
 {
   mockturtle::write_verilog( ntk, "/tmp/network.v" );
-  system( fmt::format( "../../abc/abc -q \"/tmp/network.v; &get; &if -a -K {}; &put; write_blif /tmp/output.blif\"", k ).c_str() );
+  system( fmt::format( "../../abc -q \"/tmp/network.v; &get; &if -a -K {}; &put; write_blif /tmp/output.blif\"", k ).c_str() );
   mockturtle::klut_network klut;
   if ( lorina::read_blif( "/tmp/output.blif", mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
   {
@@ -209,14 +212,16 @@ void synthesis()
       // mig = cleanup_dangling( mig );
       mockturtle::choice_view cmig( mig, cps );
       mockturtle::reduce_choice_network( cmig, eqpairs );
-      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::cleanup_choice_network( cmig );
+      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::levelize_choice_network( cmig );
+      mockturtle::improve_representatives( cmig2 );
+
       // cmig.print_choice_classes();
 
-      //mockturtle::topo_view mig_topo{ mig };
-      //new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig, eqclasses, mig_resyn, psc );
-      //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
+      // mockturtle::topo_view mig_topo{ mig };
+      new_mig = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig2, mig_resyn, psc );
+      // new_mig = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig, mig_resyn, psc );
       // std::cout << "to cut-rewriting" << std::endl;
-      new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( cmig2, mig_resyn, psc );
+      // new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( cmig2, mig_resyn, psc );
       new_mig = cleanup_dangling( new_mig );
 
       if ( new_mig.num_gates() > mig.num_gates() ) {
@@ -255,12 +260,12 @@ void synthesis()
 
     /* abc ceq */
     //if ( counter > 3 ) {
-      //auto result = abc_cec_benchmark( mig, filename );
-      //assert( result );
+      auto result = abc_cec_benchmark( mig, filename );
+      assert( result );
     //}
 
     /* run ABC print_stats for double checking and to see depth information for the mapped network */
-    //std::string const shell_command = "../../abc/abc -c \"" + out_filename + "; print_stats;\"";
+    //std::string const shell_command = "../../abc -c \"" + out_filename + "; print_stats;\"";
     //system( shell_command.c_str() );
     counter++;
   }
@@ -310,6 +315,10 @@ void synthesis_iwls()
 
     mockturtle::cut_rewriting_params psc;
     psc.cut_enumeration_ps.cut_size = 4;
+    psc.preserve_depth = true;
+
+    mockturtle::mig_algebraic_depth_rewriting_params adr;
+    adr.allow_area_increase = false;
 
     // auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
     //eqclasses.print_eqclasses();
@@ -323,15 +332,23 @@ void synthesis_iwls()
       auto const mig_gates_before = mig.num_gates();
 
       auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
-      //mig = cleanup_dangling( mig );
+      // mig = cleanup_dangling( mig );
       mockturtle::choice_view cmig{mig};
       mockturtle::reduce_choice_network( cmig, eqpairs );
-      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::cleanup_choice_network( cmig );
+      mockturtle::depth_choice_view<mockturtle::choice_view<mockturtle::mig_network>> dmig{cmig};
+      // mockturtle::depth_view<mockturtle::mig_network> dmig{mig};
+      mig_algebraic_depth_rewriting( dmig, adr );
+      // mig = cleanup_dangling( mig );
 
+      // mockturtle::choice_view cmig{mig};
+
+      //mockturtle::improve_representatives( cmig );
+      mockturtle::update_representatives( cmig );
+      mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::levelize_choice_network( cmig );
 
       // cmig.print_choice_classes();
       //mockturtle::topo_view mig_topo{ mig };
-      //new_mig = mockturtle::cut_rewriting_eqclasses<mockturtle::mig_network>( mig_topo, eqclasses, mig_resyn, psc );
+      // new_mig = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig2, mig_resyn, psc );
       //new_mig = mockturtle::cut_rewriting<mockturtle::mig_network>( mig_topo, mig_resyn, psc );
       new_mig = mockturtle::cut_rewriting_area_flow<mockturtle::mig_network>( cmig2, mig_resyn, psc );
 
@@ -366,14 +383,173 @@ void synthesis_iwls()
 
     /* abc ceq */
     //if ( counter > 3 ) {
-      //auto result = abc_cec_benchmark( mig, filename );
-      //assert( result );
+      auto result = abc_cec_benchmark( mig, filename );
+      assert( result );
     //}
 
     /* run ABC print_stats for double checking and to see depth information for the mapped network */
-    //std::string const shell_command = "../../abc/abc -c \"" + out_filename + "; print_stats;\"";
+    //std::string const shell_command = "../../abc -c \"" + out_filename + "; print_stats;\"";
     //system( shell_command.c_str() );
     counter++;
+  }
+}
+
+
+void synthesis_choice()
+{
+  mockturtle::mig_network mig_db;
+  read_verilog( "db.v", mockturtle::verilog_reader( mig_db ) );
+
+  mockturtle::mig4_npn_resynthesis_params ps;
+  //ps.multiple_depth = true;
+  mockturtle::mig4_npn_resynthesis<mockturtle::mig_network> mig_resyn( mockturtle::detail::to_index_list( mig_db ), ps );
+
+  for ( const auto& b : local_benchmarks )
+  {
+    std::string filename{"../test/assets/"};
+    filename = filename + b + ".v";
+
+    mockturtle::mig_network imig;
+    if ( lorina::read_verilog( filename, mockturtle::verilog_reader( imig ) ) != lorina::return_code::success )
+    {
+      std::cout << "ERROR IN" << std::endl;
+      std::abort();
+      return;
+    }
+
+    mockturtle::depth_view imig_d{imig};
+    printf( "###################################################\n");
+    printf( "[i] read_benchmark %s\n", filename.c_str() );
+
+    printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
+            imig.num_pis(), imig.num_pos(), imig.size() - imig.num_pis() - 1, imig.size(), imig_d.depth() );
+
+    mockturtle::mig_network mig1, mig2;
+    mig1 = cleanup_dangling( imig );
+
+    mockturtle::cut_rewriting_params psc;
+    psc.cut_enumeration_ps.cut_size = 4;
+    psc.preserve_depth = false;
+
+    mockturtle::mig_algebraic_depth_rewriting_params adr;
+    adr.allow_area_increase = true;
+
+    mockturtle::functional_reduction_params frp;
+    mockturtle::functional_reduction_stats st;
+
+    mockturtle::depth_view<mockturtle::mig_network> dmig{mig1};
+    mig_algebraic_depth_rewriting( dmig, adr );
+    mig1 = cleanup_dangling( mig1 );
+    mockturtle::functional_reduction( mig1, frp, &st );
+    mig1 = cleanup_dangling( mig1 );
+    mig2 = cleanup_dangling( mig1 );
+
+    mockturtle::choice_view cmig2{mig2};
+    mig2 = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig2, mig_resyn, psc );
+    mockturtle::functional_reduction( mig2, frp, &st );
+    mig2 = cleanup_dangling( mig2 );
+
+    auto choice = mockturtle::create_choice_network( mig1, mig2 );
+
+    mockturtle::improve_representatives( choice );
+
+    choice = cleanup_dangling( choice );
+
+    mockturtle::depth_view mig_d1{mig1};
+    mockturtle::depth_view mig_d2{mig2};
+    mockturtle::depth_view choice_d{choice};
+    printf( "[i] MIG1: i/o = %d / %d n = %d / %d depth = %d\n",
+            mig1.num_pis(), mig1.num_pos(), mig1.size() - mig1.num_pis() - 1, mig1.size(), mig_d1.depth() );
+    printf( "[i] MIG2: i/o = %d / %d n = %d / %d depth = %d\n",
+            mig2.num_pis(), mig2.num_pos(), mig2.size() - mig2.num_pis() - 1, mig2.size(), mig_d2.depth() );
+
+    printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
+            choice.num_pis(), choice.num_pos(), choice.size() - choice.num_pis() - 1, choice.size(), choice_d.depth() );
+
+    auto result = abc_cec_benchmark( choice, filename );
+    assert( result );
+  }
+}
+
+void synthesis_choice_iwls()
+{
+  mockturtle::mig_network mig_db;
+  read_verilog( "db.v", mockturtle::verilog_reader( mig_db ) );
+
+  mockturtle::mig4_npn_resynthesis_params ps;
+  //ps.multiple_depth = true;
+  mockturtle::mig4_npn_resynthesis<mockturtle::mig_network> mig_resyn( mockturtle::detail::to_index_list( mig_db ), ps );
+
+  for ( const auto& b : local_benchmarks_iwls )
+  {
+    std::string filename{"../test/assets/"};
+    filename = filename + b + ".aig";
+
+    mockturtle::mig_network imig;
+    if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
+    {
+      std::cout << "ERROR IN" << std::endl;
+      std::abort();
+      return;
+    }
+
+    mockturtle::depth_view imig_d{imig};
+    printf( "###################################################\n");
+    printf( "[i] read_benchmark %s\n", filename.c_str() );
+
+    printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
+            imig.num_pis(), imig.num_pos(), imig.size() - imig.num_pis() - 1, imig.size(), imig_d.depth() );
+
+    mockturtle::mig_network mig1, mig2;
+    mig1 = cleanup_dangling( imig );
+
+    mockturtle::cut_rewriting_params psc;
+    psc.cut_enumeration_ps.cut_size = 4;
+    psc.preserve_depth = false;
+
+    mockturtle::mig_algebraic_depth_rewriting_params adr;
+    adr.allow_area_increase = true;
+
+    mockturtle::functional_reduction_params frp;
+    mockturtle::functional_reduction_stats st;
+
+    mockturtle::depth_view<mockturtle::mig_network> dmig{mig1};
+    mig_algebraic_depth_rewriting( dmig, adr );
+    mig1 = cleanup_dangling( mig1 );
+    mockturtle::functional_reduction( mig1, frp, &st );
+    mig1 = cleanup_dangling( mig1 );
+    mig2 = cleanup_dangling( mig1 );
+
+    mockturtle::choice_view cmig2{mig2};
+    mig2 = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig2, mig_resyn, psc );
+    mockturtle::functional_reduction( mig2, frp, &st );
+    mig2 = cleanup_dangling( mig2 );
+
+    mockturtle::depth_view dmig1{mig1};
+    mockturtle::depth_view dmig2{mig2};
+    auto choice = [&]() {
+      if ( dmig1.depth() <= dmig2.depth() )
+        return mockturtle::create_choice_network( mig1, mig2 );
+      else
+        return mockturtle::create_choice_network( mig2, mig1 );
+    }();
+
+    mockturtle::improve_representatives( choice );
+    choice = cleanup_dangling( choice );
+
+    mockturtle::depth_view mig_d1{mig1};
+    mockturtle::depth_view mig_d2{mig2};
+    mockturtle::depth_view choice_d{choice};
+    printf( "[i] MIG1: i/o = %d / %d n = %d / %d depth = %d\n",
+            mig1.num_pis(), mig1.num_pos(), mig1.size() - mig1.num_pis() - 1, mig1.size(), mig_d1.depth() );
+    printf( "[i] MIG2: i/o = %d / %d n = %d / %d depth = %d\n",
+            mig2.num_pis(), mig2.num_pos(), mig2.size() - mig2.num_pis() - 1, mig2.size(), mig_d2.depth() );
+
+    printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
+            choice.num_pis(), choice.num_pos(), choice.size() - choice.num_pis() - 1, choice.size(), choice_d.depth() );
+
+    auto result = abc_cec_benchmark( choice, filename );
+    assert( result );
   }
 }
 
@@ -382,6 +558,8 @@ int main()
 {
   //create_database();
   // synthesis();
-  synthesis_iwls();
+  // synthesis_iwls();
+  synthesis_choice();
+  synthesis_choice_iwls();
   return 0;
 }

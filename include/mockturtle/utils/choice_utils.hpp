@@ -36,15 +36,19 @@
 #include <vector>
 #include <iostream>
 
+#include "../algorithms/cleanup.hpp"
+#include "../algorithms/functional_reduction.hpp"
+#include "../algorithms/detail/mffc_utils.hpp"
 #include "../networks/detail/foreach.hpp"
 #include "../utils/node_map.hpp"
 #include "../views/depth_choice_view.hpp"
 #include "../views/choice_view.hpp"
-#include "../algorithms/detail/mffc_utils.hpp"
+#include "../views/topo_view.hpp"
 #include "../traits.hpp"
 
 namespace mockturtle::detail
 {
+
 template<typename Ntk>
 bool check_choice_in_tfi_rec( choice_view<Ntk> const& ntk, node<Ntk> const& n, node<Ntk> const& choice )
 {
@@ -78,8 +82,13 @@ bool check_choice_in_tfi_rec( choice_view<Ntk> const& ntk, node<Ntk> const& n, n
  * transitive fainin cone.
  */
 template<typename Ntk>
-void remove_choices_in_tfi( choice_view<Ntk>& ntk )
+void remove_choices_in_tfi( Ntk& ntk )
 {
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
+  static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
+
   ntk.foreach_node( [&]( auto const& n ) {
     if ( ntk.is_ci( n ) )
       return;
@@ -103,6 +112,12 @@ void remove_choices_in_tfi( choice_view<Ntk>& ntk )
 template<typename Ntk>
 void check_consistency( choice_view<Ntk> const& ntk )
 {
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
+  static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
+  static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
+
   ntk.foreach_node( [&] ( const auto& n ) {
     if ( ntk.is_ci( n ) )
       return;
@@ -132,23 +147,108 @@ void check_consistency( choice_view<Ntk> const& ntk )
  * representative in the network.
  */
 template<typename Ntk>
-void replace_choices_by_repr( choice_view<Ntk>& ntk )
+void replace_choices_by_repr( Ntk& ntk )
 {
-  // bool convergency = false;
-  // while( !convergency )
-  // {
-    // convergency = true;
-    ntk.foreach_node( [&]( auto const& n ) {
-      if ( ntk.is_ci( n ) )
-        return;
-      if ( !ntk.is_choice_repr( n ) && !ntk.is_choice( n ) ) {
-        auto g = ntk.get_choice_repr_signal( n );
-        ntk.substitute_node( n, g );
-        // convergency = false;
-      }
-    } );
-  // }
-  // check_consistency( ntk );
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
+  static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
+
+  ntk.foreach_node( [&]( auto const& n ) {
+    if ( ntk.is_ci( n ) )
+      return;
+    if ( !ntk.is_choice_repr( n ) && !ntk.is_choice( n ) ) {
+      auto g = ntk.get_choice_repr_signal( n );
+      ntk.substitute_node( n, g );
+    }
+  } );
+}
+
+
+/*! \brief Recursive deferencing for choice networks
+ *
+ * Recursive deferencing on the class representative
+ */
+template<typename Ntk>
+uint32_t choice_recursive_deref( Ntk const& ntk, node<Ntk> const& n )
+{
+  /* terminate? */
+  if ( ntk.is_ci( n ) )
+    return 0;
+
+  /* recursively collect nodes */
+  uint32_t value = 1u;
+  ntk.foreach_fanin( n, [&]( auto const& child ) {
+    auto s = ntk.get_choice_repr( ntk.get_node( child ) );
+    if ( ntk.decr_value( s ) == 0 )
+    {
+      value += choice_recursive_deref<Ntk>( ntk, s );
+    }
+  } );
+  return value;
+}
+
+
+/*! \brief Recursive referencing for choice networks
+ *
+ * Recursive referencing on the class representative
+ */
+template<typename Ntk>
+uint32_t choice_recursive_ref( Ntk const& ntk, node<Ntk> const& n )
+{
+  /* terminate? */
+  if ( ntk.is_ci( n ) )
+    return 0;
+
+  /* recursively collect nodes */
+  uint32_t value = 1u;
+  ntk.foreach_fanin( n, [&]( auto const& child ) {
+    auto s = ntk.get_choice_repr( ntk.get_node( child ) );
+    if ( ntk.incr_value( s ) == 0 )
+    {
+      value += choice_recursive_ref<Ntk>( ntk, s );
+    }
+  } );
+  return value;
+}
+
+
+/*! \brief Compute the required time in a choice network
+ *
+ * Compute the required time in a choice network given a max
+ * required depth value
+ */
+template<typename Ntk>
+std::vector<int32_t> compute_required( Ntk const& ntk, uint32_t depth )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
+  static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
+
+  std::vector<int32_t> required( ntk.size(), depth );
+
+  auto i = ntk.size();
+  while( i-- > 0 )
+  {
+    auto n = ntk.index_to_node( i );
+    if ( ntk.is_ci( n ) )
+      continue;
+    // if ( ntk.is_choice_repr( n ) )
+    if ( ntk.value( n ) && ntk.is_choice_repr( n ) )
+    {
+      ntk.foreach_fanin( n, [&]( auto const& child ) {
+        auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
+        required[child_repr] = std::min( required[child_repr], required[i] - 1 );
+      } );
+      ntk.foreach_choice( n, [&]( auto const& c ) {
+        required[ntk.node_to_index( c )] = required[i];
+        return true;
+      } );
+    }
+  }
+  return required;
 }
 
 
@@ -221,25 +321,55 @@ void levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const&
   } );
 }
 
-
+/*! \brief Compute area flow in a choice network
+ *
+ * Area flow, node based, for a choice network
+ */
 template<typename Ntk>
-inline float area_flow( choice_view<Ntk> _ntk, node<Ntk> const& _root, std::vector<float> const& _area )
+inline float area_flow( Ntk _ntk, node<Ntk> const& _root, std::vector<float> const& _area )
 {
-  float _res = 1;
+  float _res = 1.0;
   _ntk.foreach_fanin( _root, [&]( const auto sig ) {
     auto _node = _ntk.get_node( sig );
-    float fanout_size = 1.0;
-    if ( _ntk.fanout_size( _node ) > 0 ) {
-      fanout_size = static_cast<float>( _ntk.fanout_size( _node ) );
-    } else if ( !_ntk.is_choice_repr( _node ) ) {
-      fanout_size = static_cast<float>( _ntk.fanout_size( _ntk.get_choice_repr( _node ) ) );
-    }
+    float fanout_size = ( float ) _ntk.value( _node );
 
-    assert( fanout_size != 0 );
+    if ( fanout_size == 0.0 )
+      fanout_size = 1.0;
+
     _res += _area.at( _ntk.node_to_index( _node ) ) / fanout_size;
   } );
 
   return _res;
+}
+
+/*! \brief Initialize values with fanout size
+ *
+ * Initialize values in equivalence classes based on
+ * the fanout size of the representative
+ */
+template<typename Ntk>
+void init_value_with_fanout( Ntk& ntk )
+{
+  ntk.foreach_node( [&]( auto const& n ) {
+      if ( ntk.is_choice_repr( n ) ) {
+        ntk.set_value( n, ntk.fanout_size( n ) );
+      } else {
+        ntk.set_value( n, ntk.fanout_size( ntk.get_choice_repr( n ) ) );
+      }
+    } );
+}
+
+/*! \brief Update values w.r.t representatives
+ *
+ * Update values in classes w.r.t choice representatives
+ */
+template<typename Ntk>
+void update_value_with_repr( Ntk& ntk )
+{
+  ntk.foreach_node( [&]( auto const& n ) {
+    if ( !ntk.is_choice_repr( n ) )
+      ntk.set_value( n, ntk.value( ntk.get_choice_repr( n ) ) );
+  } );
 }
 
 } /* namespace mockturtle::detail */
@@ -254,7 +384,7 @@ namespace mockturtle
  */
 template<typename Ntk>
 void insert_equivalences( choice_view<Ntk>& ntk, std::vector<std::pair<node<Ntk>, signal<Ntk>>> const& equivalences )
-{
+{  
   for ( auto const& pair : equivalences )
   {
     ntk.add_choice( std::get<0>( pair ), std::get<1>( pair ) );
@@ -262,6 +392,11 @@ void insert_equivalences( choice_view<Ntk>& ntk, std::vector<std::pair<node<Ntk>
 }
 
 
+/*! \brief Reduce choice network given node equivalences
+ *
+ * Reduce a choice network given node equivalences:
+ * replaces choices nodes by the class representative
+ */
 template<typename Ntk>
 void reduce_choice_network( choice_view<Ntk>& ntk, std::vector<std::pair<node<Ntk>, signal<Ntk>>> const& equivalences )
 {
@@ -285,38 +420,83 @@ void reduce_choice_network( choice_view<Ntk>& ntk, std::vector<std::pair<node<Nt
   detail::remove_choices_in_tfi( ntk );
 }
 
+
 // template<typename Ntk>
 // choice_view<Ntk> cleanup_choice_network( Ntk& src, choice_view<Ntk> const& choice_src, node_map<signal<Ntk>, choice_view<Ntk> choice_map )
 
 
+/*! \brief Update representatives using the choices currently used in the network.
+ *
+ * The representative in each class is updated with the choice currently
+ * in use in the network. If more choices are in use, the one with the
+ * highest index is used (last nodes added).
+ */
 template<typename Ntk>
-void improve_representatives( choice_view<Ntk>& ntk )
+void update_representatives( Ntk& ntk )
 {
-  depth_choice_view depth_ntk{ntk};
-
-  ntk.foreach_node( [&]( auto const& n ) {
-    if ( ntk.is_choice_repr( n ) ) {
-      ntk.set_value( n, ntk.fanout_size( n ) );
-    } else {
-      ntk.set_value( n, ntk.fanout_size( ntk.get_choice_repr( n ) ) );
-    }
-    if ( ntk.value( n ) == 0u )
-      ntk.incr_value( n );
-  } );
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
 
   ntk.foreach_node( [&]( auto const& n ) {
     if ( ntk.is_ci( n ) )
       return;
+    if ( !ntk.is_choice_repr( n ) && !ntk.is_choice( n ) )
+    {
+      ntk.update_choice_repr( n );
+    }
+  } );
+  detail::replace_choices_by_repr( ntk );
+  detail::remove_choices_in_tfi( ntk );
+}
+
+
+/*! \brief Improves the representative with a depth optimization strategy
+ *
+ * Improves the representative with a depth optimization strategy:
+ * - depth optimization
+ * - area recovery
+ */
+template<typename Ntk>
+void improve_representatives( choice_view<Ntk>& ntk )
+{
+  std::vector<uint32_t> arrival( ntk.size(), 0 );
+  uint32_t depth = 0u;
+
+  detail::init_value_with_fanout( ntk );
+
+  /* improve level */
+  ntk.foreach_node( [&]( auto const& n ) {
+    if ( ntk.is_ci( n ) )
+      return;
+    ntk.foreach_fanin( n, [&]( auto const& child ) {
+      auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
+      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + 1 );
+    } );
     if ( ntk.is_choice_repr( n ) )
     {
       uint32_t min_level = UINT32_MAX;
       uint32_t min_mffc = UINT32_MAX;
       auto repr = n;
+
+      if ( ntk.value( n ) )
+        detail::choice_recursive_deref( ntk, n );
+
       ntk.foreach_choice( n, [&]( auto const& g ) {
-        auto level = depth_ntk.level( g );
-        auto mffc = detail::mffc_size( ntk, g );
+        if ( arrival[ntk.node_to_index( g )] == 0u )
+        {
+          ntk.foreach_fanin( g, [&]( auto const& child ) {
+            auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
+            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + 1 );
+          } );
+        }
+        auto level = arrival[ntk.node_to_index( g )];
+        auto mffc = detail::choice_recursive_ref( ntk, g );
+        auto v2 = detail::choice_recursive_deref( ntk, g );
+        assert( mffc == v2 );
         if ( level < min_level || ( level == min_level && mffc < min_mffc ) )
-        // if ( mffc < min_mffc || ( mffc == min_mffc && level < min_level ) )
         {
           min_level = level;
           min_mffc = mffc;
@@ -324,6 +504,65 @@ void improve_representatives( choice_view<Ntk>& ntk )
         }
         return true;
       } );
+
+      if ( ntk.value( n ) )
+        detail::choice_recursive_ref( ntk, repr );
+
+      ntk.update_choice_repr( repr );
+    }
+  } );
+
+  ntk.foreach_po( [&]( auto const& po ) {
+    depth = std::max( arrival[ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( po ) ) )], depth );
+  } );
+
+  for ( auto i = 0u; i < ntk.size(); arrival[i++] = 0u );
+
+  detail::update_value_with_repr( ntk );
+  auto const required = detail::compute_required( ntk, depth );
+
+  /* area recovery */
+  ntk.foreach_node( [&]( auto const& n ) {
+    if ( ntk.is_ci( n ) )
+      return;
+    ntk.foreach_fanin( n, [&]( auto const& child ) {
+      auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
+      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + 1 );
+    } );
+    if ( ntk.is_choice_repr( n ) )
+    {
+      uint32_t min_mffc = UINT32_MAX;
+      auto repr = n;
+
+      if ( ntk.value( n ) )
+        detail::choice_recursive_deref( ntk, n );
+
+      ntk.foreach_choice( n, [&]( auto const& g ) {
+        if ( arrival[ntk.node_to_index( g )] == 0u )
+        {
+          ntk.foreach_fanin( g, [&]( auto const& child ) {
+            auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
+            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + 1 );
+          } );
+        }
+
+        if ( required[ntk.node_to_index( g )] >= (int) arrival[ntk.node_to_index( g )] )
+        {
+          auto mffc = detail::choice_recursive_ref( ntk, g );
+          auto v2 = detail::choice_recursive_deref( ntk, g );
+          assert( mffc == v2 );
+          if ( mffc < min_mffc )
+          {
+            min_mffc = mffc;
+            repr = g;
+          }
+        }
+        return true;
+      } );
+
+      if ( ntk.value( n ) )
+        detail::choice_recursive_ref( ntk, repr );
+
       ntk.update_choice_repr( repr );
     }
   } );
@@ -332,34 +571,51 @@ void improve_representatives( choice_view<Ntk>& ntk )
 }
 
 
+/*! \brief Improves the representative using an area optimization strategy
+ *
+ * Improves the representative using an area optimization strategy
+ */
 template<typename Ntk>
 void improve_representatives_area( choice_view<Ntk>& ntk )
 {
-  std::vector<float> best_area( ntk.size() );
+  // std::vector<float> best_area( ntk.size() );
+  ntk.clear_values();
+
+  detail::init_value_with_fanout( ntk );
 
   ntk.foreach_node( [&]( auto const& n ) {
-    auto node_index = ntk.node_to_index( n );
+    // auto node_index = ntk.node_to_index( n );
     if ( ntk.is_ci( n ) )
     {
-      best_area[node_index] = 0u;
+      // best_area[node_index] = 0u;
     }
     else if ( ntk.is_choice_repr( n ) )
     {
-      float min_aflow = std::numeric_limits<float>::max();
+      // float min_aflow = std::numeric_limits<float>::max();
       uint32_t min_mffc = UINT32_MAX;
       auto repr = n;
+
+      if ( ntk.value( n ) )
+        detail::choice_recursive_deref( ntk, n );
+
       ntk.foreach_choice( n, [&]( auto const& g ) {
-        auto aflow = detail::area_flow( ntk, g, best_area );
-        auto mffc = detail::mffc_size( ntk, g );
-        if ( aflow < min_aflow || ( aflow == min_aflow && mffc < min_mffc ) )
+        // auto aflow = detail::area_flow( ntk, g, best_area );
+        auto mffc = detail::choice_recursive_ref( ntk, g );
+        auto v2 = detail::choice_recursive_deref( ntk, g );
+        assert( mffc == v2 );
+        // if ( aflow < min_aflow || ( aflow == min_aflow && mffc < min_mffc ) )
+        if ( mffc < min_mffc )
         {
-          min_aflow = aflow;
+          // min_aflow = aflow;
           min_mffc = mffc;
           repr = g;
         }
         return true;
       } );
-      best_area[node_index] = min_aflow;
+      // best_area[node_index] = min_aflow;
+      if ( ntk.value( n ) )
+        detail::choice_recursive_ref( ntk, repr );
+
       ntk.update_choice_repr( repr );
     }
   } );
@@ -368,6 +624,13 @@ void improve_representatives_area( choice_view<Ntk>& ntk )
 }
 
 
+/*! \brief Levelize and cleanup a choice network
+ *
+ * Rebuilds a choice network in a topological order levelizing
+ * equivalence nodes. All the nodes in the equivalence class are
+ * stored in the indices following the representative.
+ * It cleans the dead nodes
+ */
 template<typename Ntk, class NtkDest = Ntk>
 choice_view<NtkDest> levelize_choice_network( choice_view<Ntk> const& src )
 {
@@ -445,6 +708,88 @@ choice_view<NtkDest> levelize_choice_network( choice_view<Ntk> const& src )
   } );
 
   return choice_net;
+}
+
+
+/*! \brief Creates a choice network starting from two equivalent networks
+ *
+ * Creates a choice networks starting from src1, it adds src2 nodes and
+ * runs functional_reduction to find equivalent nodes.
+ * A final levelized choice network is returned
+ */
+template<typename Ntk>
+choice_view<Ntk> create_choice_network( Ntk const& src1, Ntk const& src2 )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
+  static_assert( has_pi_at_v<Ntk>, "Ntk does not implement the pi_at method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
+  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_clone_node_v<Ntk>, "Ntk does not implement the clone_node method" );
+  static_assert( has_create_pi_v<Ntk>, "Ntk does not implement the create_pi method" );
+  static_assert( has_create_po_v<Ntk>, "Ntk does not implement the create_po method" );
+  static_assert( has_create_not_v<Ntk>, "Ntk does not implement the create_not method" );
+  static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
+
+  assert( src1.num_pis() == src2.num_pis() );
+  Ntk dest = cleanup_dangling( src1 );
+
+  node_map<signal<Ntk>, Ntk> old_to_new( src2 );
+
+  old_to_new[src2.get_constant( false )] = dest.get_constant( false );
+
+  if ( src2.get_node( src2.get_constant( true ) ) != src2.get_node( src2.get_constant( false ) ) )
+  {
+    old_to_new[src2.get_constant( true )] = dest.get_constant( true );
+  }
+
+  src2.foreach_pi( [&]( auto const& n, auto i ) {
+    old_to_new[n] = dest.make_signal( dest.pi_at( i ) );
+  } );
+
+  topo_view topo{src2};
+  topo.foreach_node( [&]( auto const& n ) {
+    if ( src2.is_constant( n ) || src2.is_pi( n ) )
+      return;
+
+    std::vector<signal<Ntk>> children;
+    src2.foreach_fanin( n, [&]( auto child, auto ) {
+      const auto f = old_to_new[child];
+
+      if ( src2.is_complemented( child ) )
+      {
+        children.push_back( dest.create_not( f ) );
+      }
+      else
+      {
+        children.push_back( f );
+      }
+    } );
+    old_to_new[n] = dest.clone_node( src2, n, children );
+  } );
+
+  functional_reduction_params ps;
+  functional_reduction_stats st;
+  ps.compute_equivalence_classes = true;
+  auto eqpairs = functional_reduction_eqclasses( dest, ps, &st );
+
+  choice_view<Ntk> choice_dest{dest};
+
+  /* create outputs in same order */
+  src2.foreach_po( [&]( auto const& po, auto i ) {
+    const auto f = old_to_new[po];
+    bool inv = dest.is_complemented( dest.po_at( i ) ) ^ src2.is_complemented( po );
+    choice_dest.add_choice( dest.get_node( dest.po_at( i ) ), f ^ inv );
+  } );
+
+  reduce_choice_network( choice_dest, eqpairs );
+  
+  return levelize_choice_network( choice_dest );
 }
 
 } // namespace mockturtle

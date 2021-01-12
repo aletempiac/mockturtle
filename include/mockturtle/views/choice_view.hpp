@@ -45,7 +45,7 @@ namespace mockturtle
 
 struct choice_view_params
 {
-  bool add_choices_on_substitute{true};
+  bool add_choices_on_substitute{false};
   bool update_on_add{true};
 };
 
@@ -158,18 +158,18 @@ public:
   }
 
 
-  choice_view( choice_view const& choice_ntk )
-    : Ntk( choice_ntk )
-    , _choice_repr( choice_ntk._choice_repr )
-    , _choice_phase( choice_ntk._choice_phase )
-    , _ps( choice_ntk._ps )
-  {
-    if ( _ps.update_on_add )
-    {
-      _event_index = Ntk::events().on_add.size();
-      Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
-    }
-  }
+  // choice_view( choice_view const& choice_ntk )
+  //   : Ntk( choice_ntk )
+  //   , _choice_repr( choice_ntk._choice_repr )
+  //   , _choice_phase( choice_ntk._choice_phase )
+  //   , _ps( choice_ntk._ps )
+  // {
+  //   if ( _ps.update_on_add )
+  //   {
+  //     _event_index = Ntk::events().on_add.size();
+  //     Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
+  //   }
+  // }
 
 
   choice_view& operator=( choice_view const& choice_ntk )
@@ -191,7 +191,7 @@ public:
 
   ~choice_view()
   {
-    if ( _ps.update_on_add )
+    if ( _ps.update_on_add && _choice_repr.use_count() == 1 )
     {
       Ntk::events().on_add.erase( Ntk::events().on_add.begin() + _event_index );
     }
@@ -495,6 +495,7 @@ public:
       {
         add_choice( _old, _new );
       }
+      //TODO: add replace choice mode
 
       for ( auto idx = 1u; idx < Ntk::_storage->nodes.size(); ++idx )
       {
