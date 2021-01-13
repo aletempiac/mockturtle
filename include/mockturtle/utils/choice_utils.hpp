@@ -38,7 +38,7 @@
 
 #include "../algorithms/cleanup.hpp"
 #include "../algorithms/functional_reduction.hpp"
-#include "../algorithms/detail/mffc_utils.hpp"
+#include "cost_functions.hpp"
 #include "../networks/detail/foreach.hpp"
 #include "../utils/node_map.hpp"
 #include "../views/depth_choice_view.hpp"
@@ -63,7 +63,7 @@ bool check_choice_in_tfi_rec( choice_view<Ntk> const& ntk, node<Ntk> const& n, n
     {
       return true;
     }
-    if ( ntk.get_node( f ) == choice )
+    if ( ntk.get_choice_repr( ntk.get_node( f ) ) == choice )
     {
       found = true;
       return false;
@@ -94,7 +94,6 @@ void remove_choices_in_tfi( Ntk& ntk )
       return;
     if ( !ntk.is_choice_repr( n ) ) {
       ntk.incr_trav_id();
-      ntk.set_visited( n, ntk.trav_id() );
       auto const& repr = ntk.get_choice_repr( n );
       if ( check_choice_in_tfi_rec( ntk, n, repr ) )
       {
@@ -169,7 +168,7 @@ void replace_choices_by_repr( Ntk& ntk )
  *
  * Recursive deferencing on the class representative
  */
-template<typename Ntk>
+template<typename Ntk, class NodeCostFn = unit_cost<Ntk>>
 uint32_t choice_recursive_deref( Ntk const& ntk, node<Ntk> const& n )
 {
   /* terminate? */
@@ -177,7 +176,7 @@ uint32_t choice_recursive_deref( Ntk const& ntk, node<Ntk> const& n )
     return 0;
 
   /* recursively collect nodes */
-  uint32_t value = 1u;
+  uint32_t value = NodeCostFn{}( ntk, n );
   ntk.foreach_fanin( n, [&]( auto const& child ) {
     auto s = ntk.get_choice_repr( ntk.get_node( child ) );
     if ( ntk.decr_value( s ) == 0 )
@@ -193,7 +192,7 @@ uint32_t choice_recursive_deref( Ntk const& ntk, node<Ntk> const& n )
  *
  * Recursive referencing on the class representative
  */
-template<typename Ntk>
+template<typename Ntk, class NodeCostFn = unit_cost<Ntk>>
 uint32_t choice_recursive_ref( Ntk const& ntk, node<Ntk> const& n )
 {
   /* terminate? */
@@ -201,7 +200,7 @@ uint32_t choice_recursive_ref( Ntk const& ntk, node<Ntk> const& n )
     return 0;
 
   /* recursively collect nodes */
-  uint32_t value = 1u;
+  uint32_t value = NodeCostFn{}( ntk, n );
   ntk.foreach_fanin( n, [&]( auto const& child ) {
     auto s = ntk.get_choice_repr( ntk.get_node( child ) );
     if ( ntk.incr_value( s ) == 0 )
@@ -218,7 +217,7 @@ uint32_t choice_recursive_ref( Ntk const& ntk, node<Ntk> const& n )
  * Compute the required time in a choice network given a max
  * required depth value
  */
-template<typename Ntk>
+template<typename Ntk, class DepthCostFn = unit_cost<Ntk>>
 std::vector<int32_t> compute_required( Ntk const& ntk, uint32_t depth )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -240,7 +239,8 @@ std::vector<int32_t> compute_required( Ntk const& ntk, uint32_t depth )
     {
       ntk.foreach_fanin( n, [&]( auto const& child ) {
         auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-        required[child_repr] = std::min( required[child_repr], required[i] - 1 );
+        int32_t cost = static_cast<int32_t>( DepthCostFn{}( ntk, child_repr ) );
+        required[child_repr] = std::min( required[child_repr], required[i] - cost );
       } );
       ntk.foreach_choice( n, [&]( auto const& c ) {
         required[ntk.node_to_index( c )] = required[i];
@@ -387,7 +387,9 @@ void insert_equivalences( choice_view<Ntk>& ntk, std::vector<std::pair<node<Ntk>
 {  
   for ( auto const& pair : equivalences )
   {
-    ntk.add_choice( std::get<0>( pair ), std::get<1>( pair ) );
+    /* filter out possible dead nodes */
+    if ( !( ntk.is_dead( std::get<0>( pair ) ) || ntk.is_dead( ntk.get_node( std::get<1>( pair ) ) ) ) )
+      ntk.add_choice( std::get<0>( pair ), std::get<1>( pair ) );
   }
 }
 
@@ -459,7 +461,7 @@ void update_representatives( Ntk& ntk )
  * - depth optimization
  * - area recovery
  */
-template<typename Ntk>
+template<typename Ntk, class DepthCostFn = unit_cost<Ntk>, class NodeCostFn = unit_cost<Ntk>>
 void improve_representatives( choice_view<Ntk>& ntk )
 {
   std::vector<uint32_t> arrival( ntk.size(), 0 );
@@ -473,7 +475,7 @@ void improve_representatives( choice_view<Ntk>& ntk )
       return;
     ntk.foreach_fanin( n, [&]( auto const& child ) {
       auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + 1 );
+      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
     } );
     if ( ntk.is_choice_repr( n ) )
     {
@@ -482,19 +484,19 @@ void improve_representatives( choice_view<Ntk>& ntk )
       auto repr = n;
 
       if ( ntk.value( n ) )
-        detail::choice_recursive_deref( ntk, n );
+        detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, n );
 
       ntk.foreach_choice( n, [&]( auto const& g ) {
         if ( arrival[ntk.node_to_index( g )] == 0u )
         {
           ntk.foreach_fanin( g, [&]( auto const& child ) {
             auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + 1 );
+            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
           } );
         }
         auto level = arrival[ntk.node_to_index( g )];
-        auto mffc = detail::choice_recursive_ref( ntk, g );
-        auto v2 = detail::choice_recursive_deref( ntk, g );
+        auto mffc = detail::choice_recursive_ref<choice_view<Ntk>, NodeCostFn>( ntk, g );
+        auto v2 = detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, g );
         assert( mffc == v2 );
         if ( level < min_level || ( level == min_level && mffc < min_mffc ) )
         {
@@ -506,7 +508,7 @@ void improve_representatives( choice_view<Ntk>& ntk )
       } );
 
       if ( ntk.value( n ) )
-        detail::choice_recursive_ref( ntk, repr );
+        detail::choice_recursive_ref<choice_view<Ntk>, NodeCostFn>( ntk, repr );
 
       ntk.update_choice_repr( repr );
     }
@@ -519,7 +521,7 @@ void improve_representatives( choice_view<Ntk>& ntk )
   for ( auto i = 0u; i < ntk.size(); arrival[i++] = 0u );
 
   detail::update_value_with_repr( ntk );
-  auto const required = detail::compute_required( ntk, depth );
+  auto const required = detail::compute_required<choice_view<Ntk>, DepthCostFn>( ntk, depth );
 
   /* area recovery */
   ntk.foreach_node( [&]( auto const& n ) {
@@ -527,7 +529,7 @@ void improve_representatives( choice_view<Ntk>& ntk )
       return;
     ntk.foreach_fanin( n, [&]( auto const& child ) {
       auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + 1 );
+      arrival[ntk.node_to_index( n )] = std::max( arrival[ntk.node_to_index( n )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
     } );
     if ( ntk.is_choice_repr( n ) )
     {
@@ -535,21 +537,21 @@ void improve_representatives( choice_view<Ntk>& ntk )
       auto repr = n;
 
       if ( ntk.value( n ) )
-        detail::choice_recursive_deref( ntk, n );
+        detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, n );
 
       ntk.foreach_choice( n, [&]( auto const& g ) {
         if ( arrival[ntk.node_to_index( g )] == 0u )
         {
           ntk.foreach_fanin( g, [&]( auto const& child ) {
             auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + 1 );
+            arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
           } );
         }
 
         if ( required[ntk.node_to_index( g )] >= (int) arrival[ntk.node_to_index( g )] )
         {
-          auto mffc = detail::choice_recursive_ref( ntk, g );
-          auto v2 = detail::choice_recursive_deref( ntk, g );
+          auto mffc = detail::choice_recursive_ref<choice_view<Ntk>, NodeCostFn>( ntk, g );
+          auto v2 = detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, g );
           assert( mffc == v2 );
           if ( mffc < min_mffc )
           {
@@ -561,7 +563,7 @@ void improve_representatives( choice_view<Ntk>& ntk )
       } );
 
       if ( ntk.value( n ) )
-        detail::choice_recursive_ref( ntk, repr );
+        detail::choice_recursive_ref<choice_view<Ntk>, NodeCostFn>( ntk, repr );
 
       ntk.update_choice_repr( repr );
     }
@@ -736,7 +738,8 @@ choice_view<Ntk> create_choice_network( Ntk const& src1, Ntk const& src2 )
   static_assert( has_create_not_v<Ntk>, "Ntk does not implement the create_not method" );
   static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
 
-  assert( src1.num_pis() == src2.num_pis() );
+  assert( src1.num_pis() == src2.num_pis() && src1.num_pos() == src2.num_pos() );
+
   Ntk dest = cleanup_dangling( src1 );
 
   node_map<signal<Ntk>, Ntk> old_to_new( src2 );

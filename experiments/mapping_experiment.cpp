@@ -403,6 +403,8 @@ void synthesis_choice()
   mockturtle::mig4_npn_resynthesis_params ps;
   //ps.multiple_depth = true;
   mockturtle::mig4_npn_resynthesis<mockturtle::mig_network> mig_resyn( mockturtle::detail::to_index_list( mig_db ), ps );
+  // mockturtle::mig_npn_resynthesis mig_resyn{true};
+
 
   for ( const auto& b : local_benchmarks )
   {
@@ -516,14 +518,14 @@ void synthesis_choice_iwls()
     mockturtle::depth_view<mockturtle::mig_network> dmig{mig1};
     mig_algebraic_depth_rewriting( dmig, adr );
     mig1 = cleanup_dangling( mig1 );
-    mockturtle::functional_reduction( mig1, frp, &st );
-    mig1 = cleanup_dangling( mig1 );
+    // mockturtle::functional_reduction( mig1, frp, &st );
+    // mig1 = cleanup_dangling( mig1 );
     mig2 = cleanup_dangling( mig1 );
 
     mockturtle::choice_view cmig2{mig2};
     mig2 = mockturtle::cut_rewriting_choices<mockturtle::mig_network>( cmig2, mig_resyn, psc );
-    mockturtle::functional_reduction( mig2, frp, &st );
-    mig2 = cleanup_dangling( mig2 );
+    // mockturtle::functional_reduction( mig2, frp, &st );
+    // mig2 = cleanup_dangling( mig2 );
 
     mockturtle::depth_view dmig1{mig1};
     mockturtle::depth_view dmig2{mig2};
