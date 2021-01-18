@@ -165,7 +165,7 @@ public:
   //depth_view<Ntk> operator=( depth_view<Ntk> const& ) = delete;
   ~depth_choice_view()
   {
-    // Ntk::events().on_add.erase( Ntk::events().on_add.begin() + _event_index );
+      // Ntk::events().on_add.erase( Ntk::events().on_add.begin() + _event_index );
   }
 
   uint32_t depth() const

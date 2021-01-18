@@ -63,13 +63,14 @@ bool check_choice_in_tfi_rec( choice_view<Ntk> const& ntk, node<Ntk> const& n, n
     {
       return true;
     }
-    if ( ntk.get_choice_repr( ntk.get_node( f ) ) == choice )
+    auto repr = ntk.get_choice_repr( ntk.get_node( f ) );
+    if ( repr == choice )
     {
       found = true;
       return false;
     }
 
-    found = check_choice_in_tfi_rec( ntk, ntk.get_node( f ), choice );
+    found = check_choice_in_tfi_rec( ntk, repr, choice );
     return !found;
   } );
   return found;
@@ -89,10 +90,18 @@ void remove_choices_in_tfi( Ntk& ntk )
   static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
   static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
 
-  ntk.foreach_node( [&]( auto const& n ) {
+  // ntk.foreach_node( [&]( auto const& n ) {
+  for ( auto i = 0u; i < ntk.size(); i++ )
+  {
+    auto n = ntk.index_to_node( i );
     if ( ntk.is_ci( n ) )
-      return;
+      continue;
     if ( !ntk.is_choice_repr( n ) ) {
+      if ( ntk.is_dead( n ) )
+      {
+        ntk.remove_choice( n );
+        continue;
+      }
       ntk.incr_trav_id();
       auto const& repr = ntk.get_choice_repr( n );
       if ( check_choice_in_tfi_rec( ntk, n, repr ) )
@@ -100,7 +109,7 @@ void remove_choices_in_tfi( Ntk& ntk )
         ntk.remove_choice( n );
       }
     }
-  } );
+  }
 }
 
 
@@ -253,11 +262,15 @@ std::vector<int32_t> compute_required( Ntk const& ntk, uint32_t depth )
 
 
 template<typename Ntk, class NtkDest = Ntk>
-void levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const& src, choice_view<NtkDest>& dest, node_map<signal<NtkDest>, Ntk>& old_to_new )
+bool levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const& src, choice_view<NtkDest>& dest, node_map<signal<NtkDest>, Ntk>& old_to_new )
 {
   /* is permanently marked? */
   if ( src.visited( root ) == src.trav_id() )
-    return;
+    return true;
+
+  /* node is temporarily marked: crossing choices or choices in TFI, return error */
+  if ( src.visited( root ) == src.trav_id() - 1 || src.visited( root ) == UINT32_MAX )
+    return false;
 
   assert( src.is_choice_repr( root ) );
 
@@ -273,10 +286,21 @@ void levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const&
     src.set_visited( n, src.trav_id() - 1 );
 
     /* mark children */
+    bool error_mark = false;
     src.foreach_fanin( n, [&]( auto const& child ) {
       auto const& repr = src.get_choice_repr( src.get_node( child ) );
-      levelize_choice_network_rec( repr, src, dest, old_to_new );
+      error_mark = levelize_choice_network_rec( repr, src, dest, old_to_new );
+      if ( error_mark == false )
+        return false;
+      else
+        return true;
     } );
+
+    if ( error_mark == false )
+    {
+      /* Mark node to not be considered */
+      src.set_visited( n, UINT32_MAX );
+    }
     return true;
   } );
 
@@ -284,7 +308,7 @@ void levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const&
 
   src.foreach_choice( root, [&]( auto const& n ) {
     /* mark node n permanently */
-    if ( src.visited( n ) == src.trav_id() )
+    if ( src.visited( n ) == src.trav_id() || src.visited( n ) == UINT32_MAX )
       return true;
 
     src.set_visited( n, src.trav_id() );
@@ -319,6 +343,8 @@ void levelize_choice_network_rec( node<Ntk> const& root, choice_view<Ntk> const&
     }
     return true;
   } );
+
+  return true;
 }
 
 /*! \brief Compute area flow in a choice network
@@ -468,10 +494,11 @@ void improve_representatives( choice_view<Ntk>& ntk )
   uint32_t depth = 0u;
 
   detail::init_value_with_fanout( ntk );
+  ntk.incr_trav_id();
 
   /* improve level */
   ntk.foreach_node( [&]( auto const& n ) {
-    if ( ntk.is_ci( n ) )
+    if ( ntk.is_ci( n ) || ntk.visited( n ) == ntk.trav_id() )
       return;
     ntk.foreach_fanin( n, [&]( auto const& child ) {
       auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
@@ -487,12 +514,13 @@ void improve_representatives( choice_view<Ntk>& ntk )
         detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, n );
 
       ntk.foreach_choice( n, [&]( auto const& g ) {
-        if ( arrival[ntk.node_to_index( g )] == 0u )
+        if ( ntk.visited( g ) != ntk.trav_id() )
         {
           ntk.foreach_fanin( g, [&]( auto const& child ) {
             auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
             arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
           } );
+          ntk.set_visited( g, ntk.trav_id() );
         }
         auto level = arrival[ntk.node_to_index( g )];
         auto mffc = detail::choice_recursive_ref<choice_view<Ntk>, NodeCostFn>( ntk, g );
@@ -522,10 +550,11 @@ void improve_representatives( choice_view<Ntk>& ntk )
 
   detail::update_value_with_repr( ntk );
   auto const required = detail::compute_required<choice_view<Ntk>, DepthCostFn>( ntk, depth );
+  ntk.incr_trav_id();
 
   /* area recovery */
   ntk.foreach_node( [&]( auto const& n ) {
-    if ( ntk.is_ci( n ) )
+    if ( ntk.is_ci( n ) || ntk.visited( n ) == ntk.trav_id() )
       return;
     ntk.foreach_fanin( n, [&]( auto const& child ) {
       auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
@@ -540,12 +569,13 @@ void improve_representatives( choice_view<Ntk>& ntk )
         detail::choice_recursive_deref<choice_view<Ntk>, NodeCostFn>( ntk, n );
 
       ntk.foreach_choice( n, [&]( auto const& g ) {
-        if ( arrival[ntk.node_to_index( g )] == 0u )
+        if ( ntk.visited( g ) != ntk.trav_id() )
         {
           ntk.foreach_fanin( g, [&]( auto const& child ) {
             auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
             arrival[ntk.node_to_index( g )] = std::max( arrival[ntk.node_to_index( g )], arrival[child_repr] + DepthCostFn{}( ntk, child_repr ) );
           } );
+          ntk.set_visited( g, ntk.trav_id() );
         }
 
         if ( required[ntk.node_to_index( g )] >= (int) arrival[ntk.node_to_index( g )] )
@@ -657,6 +687,12 @@ choice_view<NtkDest> levelize_choice_network( choice_view<Ntk> const& src )
 
   src.incr_trav_id();
   src.incr_trav_id();
+
+  if ( src.trav_id() == UINT32_MAX || src.trav_id() == UINT32_MAX - 1 )
+  {
+    src.incr_trav_id();
+    src.incr_trav_id();
+  }
   
   const auto c0 = src.get_node( src.get_constant( false ) );
   src.set_visited( c0, src.trav_id() );

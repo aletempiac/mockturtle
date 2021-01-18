@@ -45,7 +45,7 @@ namespace mockturtle
 
 struct choice_view_params
 {
-  bool add_choices_on_substitute{false};
+  bool add_choices_on_substitute{true};
   bool update_on_add{true};
 };
 
