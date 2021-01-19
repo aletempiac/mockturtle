@@ -63,30 +63,23 @@ struct mapping_params
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut size is 6, the default cut limit is 8.
+   * The default cut size is 4, the default cut limit is 12.
    */
   cut_enumeration_params cut_enumeration_ps{};
 
-  /*! \brief Number of rounds for area flow optimization.
-   *
-   * The first round is used for delay optimization.
-   */
-  uint32_t rounds{2u};
+  /*! \brief Required time for delay optimization. */
+  float required_time{0.0f};
+
+  /*! \brief Number of rounds for area flow optimization. */
+  uint32_t area_flow_rounds{1u};
 
 
   /*! \brief Number of rounds for exact area optimization. */
-  uint32_t rounds_ela{1u};
+  uint32_t ela_rounds{1u};
 
   /*! \brief Be verbose. */
   bool verbose{false};
 };
-
-// template<typename Ntk>
-// struct mapping_storage<Ntk>
-// {
-//   node_map<std::vector<signal<Ntk>>, Ntk> best_gates( ntk );
-//   uint32_t mapping_size{0};
-// };
 
 /*! \brief Statistics for mapper.
  *
@@ -133,7 +126,7 @@ public:
         ps( ps ),
         st( st ),
         flow_refs( ntk.size() ),
-        map_refs( ntk.size(), 0 ),
+        map_refs( ntk.size(), 0u ),
         flows( ntk.size() ),
         arrival( ntk.size() ),
         required( ntk.size() ),
@@ -171,11 +164,21 @@ public:
     depth_view<NtkDest, DelayCostFn> res_depth{res};
     /* compute mapping delay */
     compute_mapping<false>( res_depth, old2new );
-
     compute_required_time( res_depth, old2new );
 
     /* compute mapping area flow */
-    compute_mapping<true>( res_depth, old2new );
+    while ( iteration < ps.area_flow_rounds + 1 )
+    {
+      compute_mapping<true>( res_depth, old2new );
+      compute_required_time( res_depth, old2new );
+    }
+
+    /* compute mapping exact area */
+    while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
+    {
+      compute_exact_area( res_depth, old2new );
+      // compute_required_time( res_depth, old2new );
+    }
 
     /* create POs */
     ntk.foreach_po( [&]( auto const& f ) {
@@ -186,11 +189,6 @@ public:
   }
 
 private:
-  // uint32_t cut_area( cut_t const& cut ) const
-  // {
-  //   return static_cast<uint32_t>( cut->data.cost );
-  // }
-
   void init_nodes()
   {
     ntk.foreach_node( [this]( auto n, auto ) {
@@ -226,7 +224,6 @@ private:
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
         continue;
-      /* foreach cut */
       signal<NtkDest> best_signal;
       uint32_t best_arrival = UINT32_MAX;
       uint32_t best_size = UINT32_MAX;
@@ -234,6 +231,8 @@ private:
       float best_area = 0.0f;
       float best_area_flow = std::numeric_limits<float>::max();
       uint8_t cut_index = 0u;
+
+      /* foreach cut */
       for ( auto& cut : cuts.cuts( ntk.node_to_index( n ) ) )
       {
         /* trivial cuts */
@@ -292,22 +291,92 @@ private:
     set_mapping_refs();
   }
 
-  // template<bool ELA>
-  // void compute_mapping()
-  // {
-  //   for ( auto const& n : top_order )
-  //   {
-  //     if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
-  //       continue;
-  //     compute_best_cut<ELA>( ntk.node_to_index( n ) );
-  //   }
-  //   set_mapping_refs<ELA>();
-  //   //print_state();
-  // }
+
+  void compute_exact_area( depth_view<NtkDest>& res, node_map<signal<NtkDest>, Ntk>& old2new )
+  {
+    for ( auto i = 0u; i < res.size(); i++ )
+    {
+      res.set_value( res.index_to_node( i ), 0u );
+    }
+
+    for ( auto const& n : top_order )
+    {
+      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+        continue;
+      
+      signal<NtkDest> best_signal;
+      uint32_t best_arrival = UINT32_MAX;
+      uint32_t best_size = UINT32_MAX;
+      uint8_t best_cut = 0u;
+      float best_area = std::numeric_limits<float>::max();
+      uint8_t cut_index = 0u;
+
+      if ( map_refs[ntk.node_to_index( n )] )
+      {
+        cut_deref( cuts.cuts( ntk.node_to_index( n ) ).best(), n );
+      }
+      /* foreach cut */
+      for ( auto& cut : cuts.cuts( ntk.node_to_index( n ) ) )
+      {
+        /* trivial cuts */
+        if ( cut->size() == 1 )
+          continue;
+
+        const auto tt = cuts.truth_table( *cut );
+        assert( cut->size() == static_cast<unsigned>( tt.num_vars() ) );
+
+        std::vector<signal<NtkDest>> children( cut->size() );
+
+        auto ctr = 0u;
+        for ( auto l : *cut )
+        {
+          children[ctr++] = old2new[ntk.index_to_node( l )];
+        }
+
+        const auto on_signal = [&]( auto const& f_new ) {
+          cut_area[n] = recursive_ref<NtkDest, AreaCostFn>( res, res.get_node( f_new ) );
+          recursive_deref<NtkDest, AreaCostFn>( res, res.get_node( f_new ) );
+          auto area_local = cut_ref( *cut, n );
+          cut_deref( *cut, n );
+
+          if ( res.level( res.get_node( f_new ) ) > required[ntk.node_to_index( n )] )
+            return true;
+
+          if ( compare_map<true>( res.level( res.get_node( f_new ) ), best_arrival, area_local, best_area, cut->size(), best_size ) )
+          {
+            best_signal = f_new;
+            best_arrival = res.level( res.get_node( f_new ) );
+            best_area = area_local;
+            best_size = cut->size();
+            best_cut = cut_index;
+          }
+          return true;
+        };
+
+        rewriting_fn( res, cuts.truth_table( *cut ), children.begin(), children.end(), on_signal );
+        cut_index++;
+      }
+      old2new[n] = best_signal;
+      recursive_ref<NtkDest, AreaCostFn>( res, res.get_node( best_signal ) );
+      arrival[ntk.index_to_node( n )] = best_arrival;
+      cut_area[ntk.index_to_node( n )] = best_area;
+      if ( best_cut != 0 )
+      {
+        cuts.cuts( ntk.index_to_node( n ) ).update_best( best_cut );
+      }
+      if ( map_refs[ntk.node_to_index( n )] )
+      {
+        cut_ref( cuts.cuts( ntk.node_to_index( n ) ).best(), n );
+      }
+    }
+    set_mapping_refs();
+  }
 
   void set_mapping_refs()
   {
     const auto coef = 1.0f / ( 1.0f + ( iteration + 1 ) * ( iteration + 1 ) );
+
+    std::fill( map_refs.begin(), map_refs.end(), 0u );
 
     /* compute current delay and update mapping refs */
     delay = 0.0f;
@@ -329,7 +398,7 @@ private:
       if ( map_refs[index] == 0 )
         continue;
 
-      for ( auto leaf : cuts.cuts( index )[0] )
+      for ( auto leaf : cuts.cuts( index ).best() )
       {
         map_refs[leaf]++;
       }
@@ -346,20 +415,6 @@ private:
     ++iteration;
   }
 
-  // std::pair<float, uint32_t> cut_flow( cut_t const& cut )
-  // {
-  //   uint32_t time{0u};
-  //   float flow{0.0f};
-
-  //   for ( auto leaf : cut )
-  //   {
-  //     time = std::max( time, delays[leaf] );
-  //     flow += flows[leaf];
-  //   }
-
-  //   return {flow + cut_area( cut ), time + 1u};
-  // }
-
   void compute_required_time( NtkDest& res, node_map<signal<NtkDest>, Ntk>& old2new )
   {
     std::vector<float> required_res( res.size(), std::numeric_limits<float>::max() );
@@ -367,8 +422,16 @@ private:
     ntk.foreach_po( [&]( auto const& s ) {
       const auto index = ntk.node_to_index( ntk.get_node( s ) );
       const auto index_res = res.node_to_index( res.get_node( old2new[s] ) );
-      required[index] = delay; /*TODO add required time from input */
-      required_res[index_res] = delay;
+      if ( ps.required_time == 0.0f )
+      {
+        required[index] = delay;
+        required_res[index_res] = delay;
+      }
+      else
+      {
+        required[index] = ps.required_time;
+        required_res[index_res] = ps.required_time;
+      }
     } );
 
     auto i = res.size();
@@ -402,182 +465,37 @@ private:
     return flow;
   }
 
-  /* reference cut:
-   *   adds cut to current mapping and recursively adds best cuts of leaf
-   *   nodes, if they are not part of the current mapping.
-   */
-  uint32_t cut_ref( cut_t const& cut )
+  float cut_ref( cut_t const& cut, node<Ntk> const& n )
   {
-    uint32_t count = cut_area( cut );
+    float count = cut_area[n];
     for ( auto leaf : cut )
     {
       if ( ntk.is_constant( ntk.index_to_node( leaf ) ) || ntk.is_pi( ntk.index_to_node( leaf ) ) )
         continue;
 
-      if ( map_refs[leaf]++ == 0 )
+      if ( map_refs[leaf]++ == 0u )
       {
-        count += cut_ref( cuts.cuts( leaf )[0] );
+        count += cut_ref( cuts.cuts( leaf ).best(), ntk.index_to_node( leaf ) );
       }
     }
     return count;
   }
 
-  /* dereference cut:
-   *   removes cut from current mapping and recursively removes best cuts of
-   *   leaf nodes, if they are part of the current mapping.
-   *   (this is the inverse operation to cut_ref)
-   */
-  uint32_t cut_deref( cut_t const& cut )
+  float cut_deref( cut_t const& cut, node<Ntk> const& n )
   {
-    uint32_t count = cut_area( cut );
+    float count = cut_area[n];
     for ( auto leaf : cut )
     {
       if ( ntk.is_constant( ntk.index_to_node( leaf ) ) || ntk.is_pi( ntk.index_to_node( leaf ) ) )
         continue;
 
-      if ( --map_refs[leaf] == 0 )
+      if ( --map_refs[leaf] == 0u )
       {
-        count += cut_deref( cuts.cuts( leaf ).best() );
+        count += cut_deref( cuts.cuts( leaf ).best(), ntk.index_to_node( leaf ) );
       }
     }
     return count;
   }
-
-  /* reference cut (special version):
-   *   this special version of cut_ref does two additional things:
-   *   1. it stops recursing if it has found `limit` cuts
-   *   2. it remembers all cuts for which the reference count increases in the
-   *      vector `tmp_area`.
-   */
-  // uint32_t cut_ref_limit_save( cut_t const& cut, uint32_t limit )
-  // {
-  //   uint32_t count = cut_area( cut );
-  //   if ( limit == 0 )
-  //     return count;
-
-  //   for ( auto leaf : cut )
-  //   {
-  //     if ( ntk.is_constant( ntk.index_to_node( leaf ) ) || ntk.is_pi( ntk.index_to_node( leaf ) ) )
-  //       continue;
-
-  //     tmp_area.push_back( leaf );
-  //     if ( map_refs[leaf]++ == 0 )
-  //     {
-  //       count += cut_ref_limit_save( cuts.cuts( leaf ).best(), limit - 1 );
-  //     }
-  //   }
-  //   return count;
-  // }
-
-  /* estimates the cost of adding this cut to the mapping:
-   *   This algorithm references cuts recursively to estimate how many cuts
-   *   would be needed to add to the mapping if `cut` were to be added.  It
-   *   temporarily modifies the reference counters but reverts them eventually.
-   */
-  // uint32_t cut_area_estimation( cut_t const& cut )
-  // {
-  //   tmp_area.clear();
-  //   const auto count = cut_ref_limit_save( cut, 8 );
-  //   for ( auto const& n : tmp_area )
-  //   {
-  //     map_refs[n]--;
-  //   }
-  //   return count;
-  // }
-
-  // template<bool ELA>
-  // void compute_best_cut( uint32_t index )
-  // {
-  //   constexpr auto mf_eps{0.005f};
-
-  //   float flow;
-  //   uint32_t time{0};
-  //   int32_t best_cut{-1};
-  //   float best_flow{std::numeric_limits<float>::max()};
-  //   uint32_t best_time{std::numeric_limits<uint32_t>::max()};
-  //   int32_t cut_index{-1};
-
-  //   if constexpr ( ELA )
-  //   {
-  //     if ( map_refs[index] > 0 )
-  //     {
-  //       cut_deref( cuts.cuts( index )[0] );
-  //     }
-  //   }
-
-  //   for ( auto* cut : cuts.cuts( index ) )
-  //   {
-  //     ++cut_index;
-  //     if ( cut->size() == 1 )
-  //       continue;
-
-  //     if constexpr ( ELA )
-  //     {
-  //       flow = static_cast<float>( cut_area_estimation( *cut ) );
-  //     }
-  //     else
-  //     {
-  //       std::tie( flow, time ) = cut_flow( *cut );
-  //     }
-
-  //     if ( best_cut == -1 || best_flow > flow + mf_eps || ( best_flow > flow - mf_eps && best_time > time ) )
-  //     {
-  //       best_cut = cut_index;
-  //       best_flow = flow;
-  //       best_time = time;
-  //     }
-  //   }
-
-  //   if ( best_cut == -1 )
-  //     return;
-
-  //   if constexpr ( ELA )
-  //   {
-  //     if ( map_refs[index] > 0 )
-  //     {
-  //       cut_ref( cuts.cuts( index )[best_cut] );
-  //     }
-  //   }
-  //   else
-  //   {
-  //     map_refs[index] = 0;
-  //   }
-  //   if constexpr ( ELA )
-  //   {
-  //     best_time = cut_flow( cuts.cuts( index )[best_cut] ).second;
-  //   }
-  //   delays[index] = best_time;
-  //   flows[index] = best_flow / flow_refs[index];
-
-  //   if ( best_cut != 0 )
-  //   {
-  //     cuts.cuts( index ).update_best( best_cut );
-  //   }
-  // }
-
-  // void derive_mapping()
-  // {
-  //   ntk.clear_mapping();
-
-  //   for ( auto const& n : top_order )
-  //   {
-  //     if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
-  //       continue;
-
-  //     const auto index = ntk.node_to_index( n );
-  //     if ( map_refs[index] == 0 )
-  //       continue;
-
-  //     std::vector<node<Ntk>> nodes;
-  //     for ( auto const& l : cuts.cuts( index ).best() )
-  //     {
-  //       nodes.push_back( ntk.index_to_node( l ) );
-  //     }
-  //     ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
-
-  //     ntk.set_cell_function( n, cuts.truth_table( cuts.cuts( index ).best() ) );
-  //   }
-  // }
 
   template<bool DO_AREA>
   inline bool compare_map( uint32_t arrival, uint32_t best_arrival, float area_flow, float best_area_flow, uint32_t size, uint32_t best_size )
@@ -640,7 +558,6 @@ private:
   float delay{0.0f};     /* current delay of the mapping */
   float area{0.0f};      /* current area of the mapping */
   const float epsilon{0.005f}; /* epsilon */
-  //bool ela{false};       /* compute exact area */
 
   std::vector<node<Ntk>> top_order;
   std::vector<float> flow_refs;
