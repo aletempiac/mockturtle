@@ -35,7 +35,7 @@ std::vector<std::string> local_benchmarks = {
   "adder",
   "bar",
   "div",
-  // "hyp",
+  "hyp",
   "log2",
   "max",
   "multiplier",
@@ -599,8 +599,8 @@ void map()
     printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
             res.num_pis(), res.num_pos(), res.size() - res.num_pis() - 1, res.size(), res_d.depth() );
 
-    auto result = abc_cec_benchmark( res, filename );
-    assert( result );
+    // auto result = abc_cec_benchmark( res, filename );
+    // assert( result );
   }
 }
 
@@ -640,8 +640,8 @@ void map_iwls()
     printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
             res.num_pis(), res.num_pos(), res.size() - res.num_pis() - 1, res.size(), res_d.depth() );
 
-    auto result = abc_cec_benchmark( res, filename );
-    assert( result );
+    // auto result = abc_cec_benchmark( res, filename );
+    // assert( result );
   }
 }
 
@@ -653,7 +653,7 @@ int main()
   // synthesis_iwls();
   // synthesis_choice();
   // synthesis_choice_iwls();
-  // map();
+  map();
   map_iwls();
   return 0;
 }

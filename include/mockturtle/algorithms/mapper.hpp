@@ -58,12 +58,13 @@ struct mapping_params
   mapping_params()
   {
     cut_enumeration_ps.cut_size = 4;
-    cut_enumeration_ps.cut_limit = 12;
+    cut_enumeration_ps.cut_limit = 8;
+    cut_enumeration_ps.minimize_truth_table = true;
   }
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut size is 4, the default cut limit is 12.
+   * The default cut size is 4, the default cut limit is 8.
    */
   cut_enumeration_params cut_enumeration_ps{};
 
@@ -72,7 +73,6 @@ struct mapping_params
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{1u};
-
 
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{1u};
