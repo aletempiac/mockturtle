@@ -246,9 +246,9 @@ std::vector<int32_t> compute_required( Ntk const& ntk, uint32_t depth )
     // if ( ntk.is_choice_repr( n ) )
     if ( ntk.value( n ) && ntk.is_choice_repr( n ) )
     {
+      int32_t const cost = static_cast<int32_t>( DepthCostFn{}( ntk, n ) );
       ntk.foreach_fanin( n, [&]( auto const& child ) {
         auto child_repr = ntk.node_to_index( ntk.get_choice_repr( ntk.get_node( child ) ) );
-        int32_t cost = static_cast<int32_t>( DepthCostFn{}( ntk, child_repr ) );
         required[child_repr] = std::min( required[child_repr], required[i] - cost );
       } );
       ntk.foreach_choice( n, [&]( auto const& c ) {

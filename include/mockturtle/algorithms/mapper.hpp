@@ -77,6 +77,9 @@ struct mapping_params
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{1u};
 
+  /*! \brief Use structural choices. */
+  bool choices{false};
+
   /*! \brief Be verbose. */
   bool verbose{false};
 };
@@ -157,27 +160,24 @@ public:
       top_order.push_back( n );
     } );
 
-    // node_map<std::vector<signal<Ntk>>, Ntk> best_gates( ntk );
-
     init_nodes();
 
     depth_view<NtkDest, DelayCostFn> res_depth{res};
     /* compute mapping delay */
     compute_mapping<false>( res_depth, old2new );
-    compute_required_time( res_depth, old2new );
 
-    /* compute mapping area flow */
+    /* compute mapping global area flow */
     while ( iteration < ps.area_flow_rounds + 1 )
     {
-      compute_mapping<true>( res_depth, old2new );
       compute_required_time( res_depth, old2new );
+      compute_mapping<true>( res_depth, old2new );
     }
 
-    /* compute mapping exact area */
+    /* compute mapping local exact area */
     while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
     {
+      compute_required_time( res_depth, old2new );
       compute_exact_area( res_depth, old2new );
-      // compute_required_time( res_depth, old2new );
     }
 
     /* create POs */
@@ -191,7 +191,7 @@ public:
 private:
   void init_nodes()
   {
-    ntk.foreach_node( [this]( auto n, auto ) {
+    ntk.foreach_node( [this]( auto const& n, auto ) {
       const auto index = ntk.node_to_index( n );
 
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
@@ -374,7 +374,7 @@ private:
 
   void set_mapping_refs()
   {
-    const auto coef = 1.0f / ( 1.0f + ( iteration + 1 ) * ( iteration + 1 ) );
+    const auto coef = 1.0f / ( 2.0f + ( iteration + 1 ) * ( iteration + 1 ) );
 
     std::fill( map_refs.begin(), map_refs.end(), 0u );
 
@@ -406,7 +406,7 @@ private:
       area += cut_area[index];
     }
 
-    /* blend flow referenes */
+    /* blend flow references */
     for ( auto i = 0u; i < ntk.size(); ++i )
     {
       flow_refs[i] = coef * flow_refs[i] + ( 1.0f - coef ) * std::max( 1.0f, static_cast<float>( map_refs[i] ) );
@@ -440,9 +440,9 @@ private:
       const auto n = res.index_to_node( i );
       if ( res.is_pi( n ) || res.is_constant( n ) )
         break;
+      const auto cost = static_cast<float>( DelayCostFn{}( res, n ) );
       res.foreach_fanin( n, [&]( const auto& child ) {
         const auto child_index = res.node_to_index( res.get_node( child ) );
-        const auto cost = static_cast<float>( DelayCostFn{}( res, res.get_node( child ) ) );
         required_res[child_index] = std::min( required_res[child_index], required_res[i] - cost );
       } );
     }
@@ -514,12 +514,20 @@ private:
       {
         return true;
       }
+      else if ( arrival > best_arrival )
+      {
+        return false;
+      }
     }
     else
     {
       if ( arrival < best_arrival )
       {
         return true;
+      }
+      else if ( arrival > best_arrival )
+      {
+        return false;
       }
       else if ( area_flow < best_area_flow - epsilon )
       {
@@ -644,5 +652,39 @@ NtkDest mapping( Ntk& ntk, RewritingFn const& rewriting_fn = {}, mapping_params 
 
   return res;
 }
+
+
+// template<class Ntk, class NtkDest = Ntk, class RewritingFn, class DelayCostFn = unit_cost<NtkDest>, class AreaCostFn = unit_cost<NtkDest>, typename CutData = cut_enumeration_mf_cut>
+// NtkDest mapping_choices( Ntk& ntk, RewritingFn const& rewriting_fn = {}, mapping_params const& ps = {}, mapping_stats* pst = nullptr )
+// {
+//   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+//   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
+//   static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+//   static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+//   static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+//   static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
+//   static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+//   static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
+//   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+//   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
+//   static_assert( has_foreach_choice_v<Ntk>, "Ntk does not implement the foreach_choice method" );
+//   // static_assert( has_clear_mapping_v<Ntk>, "Ntk does not implement the clear_mapping method" );
+//   // static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
+
+//   mapping_stats st;
+//   detail::mapping_impl<NtkDest, Ntk, RewritingFn, DelayCostFn, AreaCostFn, CutData> p( ntk, rewriting_fn, ps, st );
+//   auto res = p.run();
+//   if ( ps.verbose )
+//   {
+//     st.report();
+//   }
+
+//   if ( pst )
+//   {
+//     *pst = st;
+//   }
+
+//   return res;
+// }
 
 } /* namespace mockturtle */
