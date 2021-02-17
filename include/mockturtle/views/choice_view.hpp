@@ -1,5 +1,5 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2020  EPFL
+ * Copyright (C) 2018-2021  EPFL
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -56,8 +56,8 @@ struct choice_view_params
  *
  * This class manages equivalent nodes keeping them saved as alternatives in
  * the network. Each node belongs to an equivalence class in which a node,
- * by construction the one with the lowest index, is the class representative.
- * Equivalence classes are saved as linked list. The `_choice_prer` vector,
+ * by default the one with the lowest index, is the class representative.
+ * Equivalence classes are saved as linked list. The `_choice_repr` vector,
  * associate to each node the next node in the linked list, the one closer
  * to the representative. The representatives "points" itself. The `_choice_phase`
  * vector is used to save the polarity of each node in the class with respect to
@@ -68,25 +68,9 @@ struct choice_view_params
  * - `get_node`
  * - `size`
  * - `node_to_index`
+ * - `index_to_node`
  * - `is_complemented`
  * - `make_signal`
- * - `foreach_gate`
- *
- * Example
- *
-   \verbatim embed:rst
-
-   .. code-block:: c++
-
-      // create network somehow; aig may not be in topological order
-      aig_network aig = ...;
-
-      // create a topological view on the network
-      topo_view aig_topo{aig};
-
-      // call algorithm that requires topological order
-      cut_enumeration( aig_topo );
-   \endverbatim
  */
 template<typename Ntk, bool has_choice_interface = has_foreach_choice_v<Ntk>>
 class choice_view
@@ -120,9 +104,9 @@ public:
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
     static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-    static_assert( has_foreach_gate_v<Ntk>, "Ntk does not implement the foreach_pi method" );
     static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
     static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+    static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
     static_assert( has_make_signal_v<Ntk>, "Ntk does not implement the make_signal method" );
 
     init_choice_classes();
@@ -142,11 +126,10 @@ public:
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
     static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-    static_assert( has_foreach_gate_v<Ntk>, "Ntk does not implement the foreach_pi method" );
     static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
     static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+    static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
     static_assert( has_make_signal_v<Ntk>, "Ntk does not implement the make_signal method" );
-
 
     init_choice_classes();
 
@@ -156,20 +139,6 @@ public:
       Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
     }
   }
-
-
-  // choice_view( choice_view const& choice_ntk )
-  //   : Ntk( choice_ntk )
-  //   , _choice_repr( choice_ntk._choice_repr )
-  //   , _choice_phase( choice_ntk._choice_phase )
-  //   , _ps( choice_ntk._ps )
-  // {
-  //   if ( _ps.update_on_add )
-  //   {
-  //     _event_index = Ntk::events().on_add.size();
-  //     Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
-  //   }
-  // }
 
 
   choice_view& operator=( choice_view const& choice_ntk )
@@ -208,8 +177,8 @@ public:
       return;
     }
 
-    auto rep1 = get_choice_repr( n1 );
-    auto rep2 = get_choice_repr( n2 );
+    auto rep1 = get_choice_representative( n1 );
+    auto rep2 = get_choice_representative( n2 );
 
     auto idrep1 = Ntk::node_to_index( rep1 );
     auto idrep2 = Ntk::node_to_index( rep2 );
@@ -240,15 +209,13 @@ public:
     auto const id1 = Ntk::node_to_index( n1 );
     auto const id2 = Ntk::node_to_index( n2 );
 
-    //std::cout << Ntk::is_complemented( s2 ) << std::endl;
-
     if ( id1 == id2 ) {
       /* same node */
       return;
     }
 
-    auto rep1 = get_choice_repr( n1 );
-    auto rep2 = get_choice_repr( n2 );
+    auto rep1 = get_choice_representative( n1 );
+    auto rep2 = get_choice_representative( n2 );
 
     auto idrep1 = Ntk::node_to_index( rep1 );
     auto idrep2 = Ntk::node_to_index( rep2 );
@@ -281,12 +248,13 @@ public:
     _choice_phase->at( idrep2 ) = Ntk::make_signal( rep2 ) ^ inv;
   }
 
+
   /* Set sig as an equivalence representative of n without including n in the choice list */
-  void set_repr( node const& n, signal const& sig )
+  void set_representative( node const& n, signal const& sig )
   {
     /* TODO: TEST */
     auto nsig = Ntk::get_node( sig );
-    auto repr = get_choice_repr( nsig );
+    auto repr = get_choice_representative( nsig );
     bool c = false;
 
     if ( repr != nsig ) {
@@ -297,15 +265,15 @@ public:
   }
 
 
-  void update_choice_repr( node const& n )
+  void update_choice_representative( node const& n )
   {
     assert( Ntk::node_to_index( n ) < Ntk::size() );
 
-    if ( is_choice_repr( n ) )
+    if ( is_choice_representative( n ) )
       return;
 
     bool inv = Ntk::is_complemented( _choice_phase->at( Ntk::node_to_index( n ) ) );
-    auto repr = get_choice_repr( n );
+    auto repr = get_choice_representative( n );
     _choice_phase->at( Ntk::node_to_index( n ) ) = Ntk::make_signal( _choice_repr->at( Ntk::node_to_index( n ) ) );
     _choice_repr->at( Ntk::node_to_index( n ) ) = n;
     _choice_repr->at( Ntk::node_to_index( repr ) ) = Ntk::get_node( _choice_phase->at( Ntk::node_to_index( repr ) ) );
@@ -322,11 +290,12 @@ public:
     assert( Ntk::node_to_index( n ) < Ntk::size() );
 
     auto next = Ntk::node_to_index( _choice_repr->at( Ntk::node_to_index( n ) ) );
-    auto repr = Ntk::node_to_index( get_choice_repr( next ) );
+    auto repr = Ntk::node_to_index( get_choice_representative( next ) );
     auto tail = Ntk::node_to_index( Ntk::get_node( _choice_phase->at( Ntk::node_to_index( repr ) ) ) );
 
     /* if n is a representative, recompute the representative of the new class */
-    if ( repr ==  Ntk::node_to_index( n ) && tail != Ntk::node_to_index( n ) ) {
+    if ( repr ==  Ntk::node_to_index( n ) && tail != Ntk::node_to_index( n ) )
+    {
       auto new_repr = tail;
       node pred = tail;
       foreach_choice( tail, [&]( auto const& g ) {
@@ -347,9 +316,13 @@ public:
         invert_phases_in_class( new_repr );
       }
       return;
-    } else if ( tail == n ) {
+    }
+    else if ( tail == n )
+    {
       _choice_phase->at( Ntk::node_to_index( repr ) ) = Ntk::make_signal( next );
-    } else {
+    }
+    else
+    {
       while ( Ntk::node_to_index( _choice_repr->at( tail ) ) != Ntk::node_to_index( n ) ) {
         tail = Ntk::node_to_index( _choice_repr->at( tail ) );
       }
@@ -374,7 +347,7 @@ public:
   }
 
 
-  node get_choice_repr( node const& n ) const
+  node get_choice_representative( node const& n ) const
   {
     assert( Ntk::node_to_index( n ) < Ntk::size() );
 
@@ -386,16 +359,16 @@ public:
   }
 
 
-  bool is_choice_repr( node const& n ) const
+  bool is_choice_representative( node const& n ) const
   {
     assert( Ntk::node_to_index( n ) < Ntk::size() );
     return _choice_repr->at( Ntk::node_to_index( n ) ) == n;
   }
 
 
-  signal get_choice_repr_signal( node const& n ) const
+  signal get_choice_representative_signal( node const& n ) const
   {
-    auto repr = Ntk::make_signal( get_choice_repr( n ) );
+    auto repr = Ntk::make_signal( get_choice_representative( n ) );
 
     if ( Ntk::get_node( repr ) == n ) {
       return repr;
@@ -405,10 +378,10 @@ public:
   }
 
 
-  signal get_choice_repr_signal( signal const& sig ) const
+  signal get_choice_representative_signal( signal const& sig ) const
   {
     auto n = Ntk::get_node( sig );
-    auto repr = get_choice_repr( n );
+    auto repr = get_choice_representative( n );
 
     if ( repr == n ) {
       return sig;
@@ -434,26 +407,6 @@ public:
       p = _choice_repr->at( Ntk::node_to_index( p ) );
     }
     return size;
-  }
-
-
-  void print_choice_classes( std::ostream& os = std::cout ) const
-  {
-    Ntk::foreach_gate( [&]( auto const& n ) {
-      if ( is_choice_repr( n ) ) {
-        auto p = Ntk::get_node( _choice_phase->at( Ntk::node_to_index( n ) ) );
-        if ( p == n ) {
-          return;
-        }
-        os << n << "(" << is_choice( n ) << ", " << fanout_size( n ) << "); ";
-        while ( Ntk::node_to_index( p ) != Ntk::node_to_index( n ) ) {
-          os << p << "(" << is_choice( p ) << ", " << Ntk::is_complemented( _choice_phase->at( p ) ) << ", " << fanout_size( p ) << "); ";
-          p = _choice_repr->at( Ntk::node_to_index( p ) );
-        }
-        os << std::endl;
-        fflush(stdout);
-      }
-    } );
   }
 
 
@@ -522,6 +475,7 @@ public:
     }
   }
 
+
   void take_out_choice( node const& n )
   {
     /* we cannot delete CIs or constants */
@@ -546,6 +500,7 @@ public:
     }
   }
 
+
   void take_in_choice( node const& n )
   {
     /* we cannot delete CIs or constants */
@@ -566,27 +521,30 @@ public:
     }
   }
 
+
   /* redefine methods for choice flag: storage h1 = dead(31), choice(30), fanout_size(29 to 0) */
   uint32_t fanout_size( node const& n ) const
   {
     return Ntk::_storage->nodes[n].data[0].h1 & UINT32_C( 0x3FFFFFFF );
   }
 
+
   uint32_t incr_fanout_size( node const& n ) const
   {
     return Ntk::_storage->nodes[n].data[0].h1++ & UINT32_C( 0x3FFFFFFF );
   }
+
 
   uint32_t decr_fanout_size( node const& n ) const
   {
     return --Ntk::_storage->nodes[n].data[0].h1 & UINT32_C( 0x3FFFFFFF );
   }
 
+
   inline bool is_choice( node const& n ) const
   {
     return ( Ntk::_storage->nodes[n].data[0].h1 >> 30 ) & 1;
   }
-
 
 private:
   inline void set_choice_flag( node const& n ) const
@@ -615,7 +573,7 @@ private:
   void invert_phases_in_class( node const& rep )
   {
     assert( Ntk::node_to_index( rep ) < Ntk::size() );
-    assert( is_choice_repr( rep ) );
+    assert( is_choice_representative( rep ) );
 
     auto p = Ntk::get_node( _choice_phase->at( rep ) );
 
@@ -624,6 +582,7 @@ private:
       p = _choice_repr->at( Ntk::node_to_index( p ) );
     }
   }
+
 
   void on_add( node const& n )
   {

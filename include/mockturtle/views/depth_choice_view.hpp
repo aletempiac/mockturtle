@@ -230,9 +230,9 @@ private:
 
     uint32_t level{0};
     this->foreach_fanin( n, [&]( auto const& f ) {
-      if ( !this->is_choice_repr( this->get_node( f ) ) )
+      if ( !this->is_choice_representative( this->get_node( f ) ) )
       {
-        auto repr = this->get_choice_repr_signal( f );
+        auto repr = this->get_choice_representative_signal( f );
         auto clevel = compute_levels( this->get_node( repr ) );
         if ( _ps.count_complements && this->is_complemented( repr ) )
         {
@@ -253,7 +253,7 @@ private:
 
     _levels[n] = level + _cost_fn( *this, n );
 
-    if ( this->is_choice_repr( n ) )
+    if ( this->is_choice_representative( n ) )
     {
       this->foreach_choice( n, [&]( auto const& choice ) {
         if ( choice != n )

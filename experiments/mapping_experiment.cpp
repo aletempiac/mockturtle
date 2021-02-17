@@ -17,10 +17,13 @@
 #include <mockturtle/algorithms/lut_mapping.hpp>
 #include <mockturtle/algorithms/cut_rewriting.hpp>
 #include <mockturtle/algorithms/mapper.hpp>
+#include <mockturtle/algorithms/mapper_sce.hpp>
 #include <mockturtle/algorithms/node_resynthesis.hpp>
 #include <mockturtle/algorithms/node_resynthesis/exact.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig4_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
 #include <mockturtle/algorithms/mig_algebraic_rewriting.hpp>
 // #include <mockturtle/views/fanout_limit_view.hpp>
@@ -28,7 +31,11 @@
 #include <mockturtle/views/choice_view.hpp>
 #include <mockturtle/views/depth_view.hpp>
 #include <mockturtle/views/depth_choice_view.hpp>
+#include <mockturtle/views/aqfp_view.hpp>
+#include <mockturtle/views/fanout_limit_view.hpp>
 #include <mockturtle/utils/choice_utils.hpp>
+#include <mockturtle/utils/stopwatch.hpp>
+
 
 
 std::vector<std::string> local_benchmarks = {
@@ -41,7 +48,7 @@ std::vector<std::string> local_benchmarks = {
   "multiplier",
   "sin",
   "sqrt",
-  "square",
+  "square"
 };
 
 
@@ -561,15 +568,92 @@ void synthesis_choice_iwls()
   }
 }
 
-void map()
+template<class Ntk>
+void map_core( Ntk const& imig, std::string const& name, experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, float>& exp, float& size_avg, float& depth_avg )
 {
   mockturtle::mig_npn_resynthesis mig_resyn{true};
+  // mockturtle::xag_npn_resynthesis<mockturtle::xag_network> xag_resyn;
 
+
+  mockturtle::depth_view imig_d{imig};
+  printf( "###################################################\n");
+  printf( "[i] read_benchmark %s\n", name.c_str() );
+
+  printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
+          imig.num_pis(), imig.num_pos(), imig.num_gates(), imig.size(), imig_d.depth() );
+
+  Ntk mig;
+  // mockturtle::xag_network res;
+  mig = cleanup_dangling( imig );
+  float time_i = 0;
+
+    // auto best_size = mig.size();
+    mockturtle::depth_view mig_d_tmp{mig};
+    // auto best_depth = mig_d_tmp.depth();
+    mockturtle::functional_reduction_params frp;
+    mockturtle::functional_reduction_stats st;
+    frp.compute_equivalence_classes = true;
+    auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    // mockturtle::functional_reduction( mig, frp, &st );
+
+    mockturtle::choice_view cmig{mig};
+    mockturtle::reduce_choice_network( cmig, eqpairs );
+    mockturtle::improve_representatives( cmig );
+    // mig = cleanup_dangling( mig );
+    mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::levelize_choice_network( cmig );
+
+    mockturtle::map_params ps;
+    mockturtle::map_stats mst;
+    auto res = mockturtle::map_choices<mockturtle::choice_view<mockturtle::mig_network>, mockturtle::mig_network, mockturtle::mig_npn_resynthesis>( cmig2, mig_resyn, ps, &mst );
+    // auto res = mockturtle::map( mig, mig_resyn, ps, &mst );
+    // auto res = mockturtle::map<mockturtle::mig_network, mockturtle::xag_network, mockturtle::xag_npn_resynthesis<mockturtle::xag_network>>( mig, xag_resyn, ps, &mst );
+    time_i += mockturtle::to_seconds( mst.time_total );
+
+    mockturtle::functional_reduction( res, frp, &st );
+    res= cleanup_dangling( res );
+
+    // mockturtle::depth_view res_d_tmp{res};
+
+    // if ( res.size() >= best_size )
+    // if ( res.size() >= best_size && res_d_tmp.depth() >= best_depth )
+    // mig = res;
+
+  mockturtle::depth_view res_d{res};
+  // mockturtle::depth_view migr_d{migr};
+  printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
+          res.num_pis(), res.num_pos(), res.num_gates(), res.size(), res_d.depth() );
+
+  // auto result = abc_cec_benchmark( res, filename );
+  // assert( result );
+  float size_impr = ( ( ( (float) imig.num_gates() ) - res.num_gates() ) ) / ( (float) imig.num_gates() ) * 100;
+  float depth_impr = ( ( ( (float) imig_d.depth() ) - res_d.depth() ) ) / ( (float) imig_d.depth() ) * 100;
+  // uint32_t time = static_cast<uint32_t>( time_i );
+  // uint32_t time_cut = static_cast<uint32_t>( mockturtle::to_seconds( pst.time_total ) );
+
+  size_avg += size_impr;
+  depth_avg += depth_impr;
+
+  // mockturtle::write_verilog( mig, "itest.v" );
+  // mockturtle::write_verilog( res, "test.v" );
+
+  // auto result = abc_cec_benchmark( res, name );
+  // assert( result );
+
+  exp( name, imig.num_gates(), res.num_gates(), size_impr, imig_d.depth(), res_d.depth(), depth_impr, time_i );
+}
+
+
+void map()
+{
+  experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, float> exp( "Mapper Comparison", "benchmark", "size MIG", "Size Map MIG", "Impr. Size",
+                                                                                                            "depth MIG", "depth Map MIG", "Impr. depth", "Map Time (s)" );
+
+  float size_avg = 0.0f, depth_avg = 0.0f;
+  auto i = 0u;
   for ( const auto& b : local_benchmarks )
   {
     std::string filename{"../test/assets/"};
     filename = filename + b + ".v";
-
     mockturtle::mig_network imig;
     if ( lorina::read_verilog( filename, mockturtle::verilog_reader( imig ) ) != lorina::return_code::success )
     {
@@ -577,43 +661,91 @@ void map()
       std::abort();
       return;
     }
-
-    mockturtle::depth_view imig_d{imig};
-    printf( "###################################################\n");
-    printf( "[i] read_benchmark %s\n", filename.c_str() );
-
-    printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
-            imig.num_pis(), imig.num_pos(), imig.size() - imig.num_pis() - 1, imig.size(), imig_d.depth() );
-
-    mockturtle::mig_network mig, res;
-    mig = cleanup_dangling( imig );
-
-    // mockturtle::functional_reduction_params frp;
-    // mockturtle::functional_reduction_stats st;
-    // mockturtle::functional_reduction( mig, frp, &st );
-    // mig = cleanup_dangling( mig );
-
-    res = mockturtle::mapping( mig, mig_resyn );
-
-    mockturtle::depth_view res_d{res};
-    printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
-            res.num_pis(), res.num_pos(), res.size() - res.num_pis() - 1, res.size(), res_d.depth() );
-
-    // auto result = abc_cec_benchmark( res, filename );
-    // assert( result );
+    map_core( imig, b, exp, size_avg, depth_avg );
+    i++;
   }
+  // for ( const auto& b : local_benchmarks_iwls )
+  // {
+  //   std::string filename{"../test/assets/"};
+  //   filename = filename + b + ".aig";
+  //   mockturtle::mig_network imig;
+  //   if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
+  //   {
+  //     std::cout << "ERROR IN" << std::endl;
+  //     std::abort();
+  //     return;
+  //   }
+  //   map_core( imig, b, exp, size_avg, depth_avg );
+  //   i++;
+  // }
+  exp.save();
+  exp.table();
+  printf( "Size avg: %.2f; Depth avg: %.2f\n", size_avg / i, depth_avg / i ); 
 }
 
 
-void map_iwls()
+template<class Ntk>
+void map_core_aqfp( Ntk const& imig, std::string const& name, experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float>& exp )
 {
   mockturtle::mig_npn_resynthesis mig_resyn{true};
+
+  mockturtle::depth_view imig_d{imig};
+  printf( "###################################################\n");
+  printf( "[i] read_benchmark %s\n", name.c_str() );
+
+  mockturtle::mig_network mig, res1, res2;
+  mig = cleanup_dangling( imig );
+
+  mockturtle::aqfp_view mig_aqfp{imig};
+
+  printf( "[i] MIG: size = %d depth = %d buffers = %d\n",
+          mig_aqfp.size(), mig_aqfp.depth(), mig_aqfp.num_buffers() );
+
+
+  res1 = mockturtle::mapper_sce( mig, mig_resyn );
+
+  res2 = mockturtle::map( mig, mig_resyn );
+
+  mockturtle::aqfp_view res_aqfp{res1};
+  mockturtle::aqfp_view res_vanilla{res2};
+  printf( "[i] MIG: size = %d depth = %d buffers = %d\n",
+          res_vanilla.size(), res_vanilla.depth(), res_vanilla.num_buffers() );
+  printf( "[i] MIG: size = %d depth = %d buffers = %d\n",
+          res_aqfp.size(), res_aqfp.depth(), res_aqfp.num_buffers() );
+
+  // auto result = abc_cec_benchmark( res, filename );
+  // assert( result );
+  uint32_t size_res_vanilla = res_vanilla.size() * 6u + res_vanilla.num_buffers() * 2u;
+  uint32_t size_res_aqfp = res_aqfp.size() * 6u + res_aqfp.num_buffers() * 2u; 
+  float size_impr = ( ( ( (float) size_res_vanilla ) - size_res_aqfp ) ) / ( (float) size_res_vanilla ) * 100;
+  float depth_impr = ( ( ( (float) res_vanilla.depth() ) - res_aqfp.depth() ) ) / ( (float) res_vanilla.depth() ) * 100;
+
+  exp( name, size_res_vanilla, size_res_aqfp, size_impr, res_vanilla.depth(), res_aqfp.depth(), depth_impr );
+}
+
+
+void map_aqfp()
+{
+  experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float> exp( "AQFP Mapper Comparison", "benchmark", "size MIG", "Size Map MIG", "Impr. Size",
+                                                                                                  "depth MIG", "depth Map MIG", "Impr. depth" );
+  for ( const auto& b : local_benchmarks )
+  {
+    std::string filename{"../test/assets/"};
+    filename = filename + b + ".v";
+    mockturtle::mig_network imig;
+    if ( lorina::read_verilog( filename, mockturtle::verilog_reader( imig ) ) != lorina::return_code::success )
+    {
+      std::cout << "ERROR IN" << std::endl;
+      std::abort();
+      return;
+    }
+    map_core_aqfp( imig, b, exp );
+  }
 
   for ( const auto& b : local_benchmarks_iwls )
   {
     std::string filename{"../test/assets/"};
     filename = filename + b + ".aig";
-
     mockturtle::mig_network imig;
     if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
     {
@@ -621,28 +753,10 @@ void map_iwls()
       std::abort();
       return;
     }
-
-    mockturtle::depth_view imig_d{imig};
-    printf( "###################################################\n");
-    printf( "[i] read_benchmark %s\n", filename.c_str() );
-
-    printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
-            imig.num_pis(), imig.num_pos(), imig.size() - imig.num_pis() - 1, imig.size(), imig_d.depth() );
-
-    mockturtle::mig_network mig, res;
-    mig = cleanup_dangling( imig );
-
-    // mockturtle::mapping_params ps;
-    // ps.required_time = static_cast<float>( imig_d.depth() );
-    res = mockturtle::mapping( mig, mig_resyn );
-
-    mockturtle::depth_view res_d{res};
-    printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
-            res.num_pis(), res.num_pos(), res.size() - res.num_pis() - 1, res.size(), res_d.depth() );
-
-    // auto result = abc_cec_benchmark( res, filename );
-    // assert( result );
+    map_core_aqfp( imig, b, exp );
   }
+  exp.save();
+  exp.table();
 }
 
 
@@ -654,6 +768,6 @@ int main()
   // synthesis_choice();
   // synthesis_choice_iwls();
   map();
-  map_iwls();
+  // map_aqfp();
   return 0;
 }
