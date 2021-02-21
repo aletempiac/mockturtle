@@ -17,7 +17,6 @@
 #include <mockturtle/algorithms/lut_mapping.hpp>
 #include <mockturtle/algorithms/cut_rewriting.hpp>
 #include <mockturtle/algorithms/mapper.hpp>
-#include <mockturtle/algorithms/mapper_sce.hpp>
 #include <mockturtle/algorithms/node_resynthesis.hpp>
 #include <mockturtle/algorithms/node_resynthesis/exact.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig4_npn.hpp>
@@ -34,6 +33,7 @@
 #include <mockturtle/views/aqfp_view.hpp>
 #include <mockturtle/views/fanout_limit_view.hpp>
 #include <mockturtle/utils/choice_utils.hpp>
+#include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/utils/stopwatch.hpp>
 
 
@@ -92,6 +92,7 @@ bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
   {
     result += buffer.data();
   }
+  std::cout << result << std::endl;
 
   return result.size() >= 23 && result.substr( 0u, 23u ) == "Networks are equivalent";
 }
@@ -196,7 +197,7 @@ void synthesis()
     mockturtle::choice_view_params cps;
 
     /* compute the equivalence classes and substitute representatives in the net */
-    // auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    // auto eqclasses = mockturtle::functional_reduction_choices( mig, frp, &st );
     // mockturtle::choice_view cmig{mig};
     //eqclasses.print_eqclasses();
     //mockturtle::functional_reduction( mig, frp, &st );
@@ -216,7 +217,7 @@ void synthesis()
       mockturtle::mig_network new_mig;
       auto const mig_gates_before = mig.num_gates();
 
-      auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+      auto eqpairs = mockturtle::functional_reduction_choices( mig, frp, &st );
       // mig = cleanup_dangling( mig );
       mockturtle::choice_view cmig( mig, cps );
       mockturtle::reduce_choice_network( cmig, eqpairs );
@@ -328,7 +329,7 @@ void synthesis_iwls()
     mockturtle::mig_algebraic_depth_rewriting_params adr;
     adr.allow_area_increase = false;
 
-    // auto eqclasses = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+    // auto eqclasses = mockturtle::functional_reduction_choices( mig, frp, &st );
     //eqclasses.print_eqclasses();
     // mockturtle::choice_network( mig, eqclasses );
     //eqclasses.print_eqclasses();
@@ -339,7 +340,7 @@ void synthesis_iwls()
       mockturtle::mig_network new_mig;
       auto const mig_gates_before = mig.num_gates();
 
-      auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
+      auto eqpairs = mockturtle::functional_reduction_choices( mig, frp, &st );
       // mig = cleanup_dangling( mig );
       mockturtle::choice_view cmig{mig};
       mockturtle::reduce_choice_network( cmig, eqpairs );
@@ -367,7 +368,7 @@ void synthesis_iwls()
       std::cout << "i: " << i << "; gates size " << new_mig.num_gates() << "/" << mig.num_gates() << std::endl;
 
 
-      // eqclasses = mockturtle::functional_reduction_eqclasses( new_mig, frp, &st );
+      // eqclasses = mockturtle::functional_reduction_choices( new_mig, frp, &st );
       // mockturtle::choice_network( new_mig, eqclasses );
 
       //mockturtle::depth_view depth_mig_new{new_mig};
@@ -569,11 +570,10 @@ void synthesis_choice_iwls()
 }
 
 template<class Ntk>
-void map_core( Ntk const& imig, std::string const& name, experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, float>& exp, float& size_avg, float& depth_avg )
+void map_core( Ntk const& imig, mockturtle::detail::exact_library<mockturtle::mig_network, mockturtle::mig_npn_resynthesis, 4>& lib, std::string const& name, experiments::experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, float>& exp, float& size_avg, float& depth_avg )
 {
-  mockturtle::mig_npn_resynthesis mig_resyn{true};
+  // mockturtle::mig_npn_resynthesis mig_resyn{true};
   // mockturtle::xag_npn_resynthesis<mockturtle::xag_network> xag_resyn;
-
 
   mockturtle::depth_view imig_d{imig};
   printf( "###################################################\n");
@@ -587,44 +587,43 @@ void map_core( Ntk const& imig, std::string const& name, experiments::experiment
   mig = cleanup_dangling( imig );
   float time_i = 0;
 
-    // auto best_size = mig.size();
-    mockturtle::depth_view mig_d_tmp{mig};
-    // auto best_depth = mig_d_tmp.depth();
-    mockturtle::functional_reduction_params frp;
-    mockturtle::functional_reduction_stats st;
-    frp.compute_equivalence_classes = true;
-    auto eqpairs = mockturtle::functional_reduction_eqclasses( mig, frp, &st );
-    // mockturtle::functional_reduction( mig, frp, &st );
+  // auto best_size = mig.size();
+  mockturtle::depth_view mig_d_tmp{mig};
+  // auto best_depth = mig_d_tmp.depth();
+  mockturtle::functional_reduction_params frp;
+  mockturtle::functional_reduction_stats st;
+  frp.compute_equivalence_classes = true;
+  // auto eqpairs = mockturtle::functional_reduction_choices( mig, frp, &st );
+  // mockturtle::functional_reduction( mig, frp, &st );
 
-    mockturtle::choice_view cmig{mig};
-    mockturtle::reduce_choice_network( cmig, eqpairs );
-    mockturtle::improve_representatives( cmig );
-    // mig = cleanup_dangling( mig );
-    mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::levelize_choice_network( cmig );
+  // mockturtle::choice_view cmig{mig};
+  // mockturtle::reduce_choice_network( cmig, eqpairs );
+  // mockturtle::improve_representatives( cmig );
+  // mig = cleanup_dangling( mig );
+  // mockturtle::choice_view<mockturtle::mig_network> cmig2 = mockturtle::levelize_choice_network( cmig );
 
-    mockturtle::map_params ps;
-    mockturtle::map_stats mst;
-    auto res = mockturtle::map_choices<mockturtle::choice_view<mockturtle::mig_network>, mockturtle::mig_network, mockturtle::mig_npn_resynthesis>( cmig2, mig_resyn, ps, &mst );
-    // auto res = mockturtle::map( mig, mig_resyn, ps, &mst );
-    // auto res = mockturtle::map<mockturtle::mig_network, mockturtle::xag_network, mockturtle::xag_npn_resynthesis<mockturtle::xag_network>>( mig, xag_resyn, ps, &mst );
-    time_i += mockturtle::to_seconds( mst.time_total );
+  mockturtle::map_params ps;
+  mockturtle::map_stats mst;
+  // auto res = mockturtle::map_choices<mockturtle::choice_view<mockturtle::mig_network>, mockturtle::mig_network, mockturtle::mig_npn_resynthesis>( cmig2, mig_resyn, ps, &mst );
+  // auto res = mockturtle::map( mig, mig_resyn, ps, &mst );
+  auto res = mockturtle::tech_map( mig, lib, ps, &mst );
+  // auto res = mockturtle::map<mockturtle::mig_network, mockturtle::xag_network, mockturtle::xag_npn_resynthesis<mockturtle::xag_network>>( mig, xag_resyn, ps, &mst );
+  time_i += mockturtle::to_seconds( mst.time_total );
 
-    mockturtle::functional_reduction( res, frp, &st );
-    res= cleanup_dangling( res );
+  // mockturtle::functional_reduction( res, frp, &st );
+  // res= cleanup_dangling( res );
 
-    // mockturtle::depth_view res_d_tmp{res};
+  // mockturtle::depth_view res_d_tmp{res};
 
-    // if ( res.size() >= best_size )
-    // if ( res.size() >= best_size && res_d_tmp.depth() >= best_depth )
-    // mig = res;
+  // if ( res.size() >= best_size )
+  // if ( res.size() >= best_size && res_d_tmp.depth() >= best_depth )
+  // mig = res;
 
   mockturtle::depth_view res_d{res};
   // mockturtle::depth_view migr_d{migr};
   printf( "[i] RES: i/o = %d / %d n = %d / %d depth = %d\n",
           res.num_pis(), res.num_pos(), res.num_gates(), res.size(), res_d.depth() );
 
-  // auto result = abc_cec_benchmark( res, filename );
-  // assert( result );
   float size_impr = ( ( ( (float) imig.num_gates() ) - res.num_gates() ) ) / ( (float) imig.num_gates() ) * 100;
   float depth_impr = ( ( ( (float) imig_d.depth() ) - res_d.depth() ) ) / ( (float) imig_d.depth() ) * 100;
   // uint32_t time = static_cast<uint32_t>( time_i );
@@ -638,6 +637,7 @@ void map_core( Ntk const& imig, std::string const& name, experiments::experiment
 
   // auto result = abc_cec_benchmark( res, name );
   // assert( result );
+  // std::cout << result << std::endl;
 
   exp( name, imig.num_gates(), res.num_gates(), size_impr, imig_d.depth(), res_d.depth(), depth_impr, time_i );
 }
@@ -650,6 +650,11 @@ void map()
 
   float size_avg = 0.0f, depth_avg = 0.0f;
   auto i = 0u;
+
+  mockturtle::mig_npn_resynthesis mig_resyn{true};
+
+  mockturtle::detail::exact_library<mockturtle::mig_network, mockturtle::mig_npn_resynthesis, 4> lib( mig_resyn );
+
   for ( const auto& b : local_benchmarks )
   {
     std::string filename{"../test/assets/"};
@@ -661,23 +666,23 @@ void map()
       std::abort();
       return;
     }
-    map_core( imig, b, exp, size_avg, depth_avg );
+    map_core( imig, lib, b, exp, size_avg, depth_avg );
     i++;
   }
-  // for ( const auto& b : local_benchmarks_iwls )
-  // {
-  //   std::string filename{"../test/assets/"};
-  //   filename = filename + b + ".aig";
-  //   mockturtle::mig_network imig;
-  //   if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
-  //   {
-  //     std::cout << "ERROR IN" << std::endl;
-  //     std::abort();
-  //     return;
-  //   }
-  //   map_core( imig, b, exp, size_avg, depth_avg );
-  //   i++;
-  // }
+  for ( const auto& b : local_benchmarks_iwls )
+  {
+    std::string filename{"../test/assets/"};
+    filename = filename + b + ".aig";
+    mockturtle::mig_network imig;
+    if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
+    {
+      std::cout << "ERROR IN" << std::endl;
+      std::abort();
+      return;
+    }
+    map_core( imig, lib, b, exp, size_avg, depth_avg );
+    i++;
+  }
   exp.save();
   exp.table();
   printf( "Size avg: %.2f; Depth avg: %.2f\n", size_avg / i, depth_avg / i ); 
@@ -702,7 +707,7 @@ void map_core_aqfp( Ntk const& imig, std::string const& name, experiments::exper
           mig_aqfp.size(), mig_aqfp.depth(), mig_aqfp.num_buffers() );
 
 
-  res1 = mockturtle::mapper_sce( mig, mig_resyn );
+  // res1 = mockturtle::mapper_sce( mig, mig_resyn );
 
   res2 = mockturtle::map( mig, mig_resyn );
 

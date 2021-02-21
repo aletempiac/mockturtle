@@ -478,10 +478,13 @@ void functional_reduction( Ntk& ntk, functional_reduction_params const& ps = {},
   }
 }
 
-
+/*! \brief Functional reduction with choices.
+ *
+ * Removes constant nodes and returns functionally equivalent nodes pairs.
+ */
 template<class Ntk>
 std::vector<std::pair<node<Ntk>, signal<Ntk>>>
-functional_reduction_eqclasses( Ntk& ntk, functional_reduction_params const& ps = {}, functional_reduction_stats* pst = nullptr )
+functional_reduction_choices( Ntk& ntk, functional_reduction_params const& ps = {}, functional_reduction_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );

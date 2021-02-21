@@ -760,7 +760,7 @@ choice_view<Ntk> create_choice_network( Ntk const& src1, Ntk const& src2 )
   functional_reduction_params ps;
   functional_reduction_stats st;
   ps.compute_equivalence_classes = true;
-  auto eqpairs = functional_reduction_eqclasses( dest, ps, &st );
+  auto eqpairs = functional_reduction_choices( dest, ps, &st );
 
   choice_view<Ntk> choice_dest{dest};
 

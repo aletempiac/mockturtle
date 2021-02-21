@@ -160,7 +160,7 @@ public:
 
   ~choice_view()
   {
-    if ( _ps.update_on_add && _choice_repr.use_count() == 1 )
+    if ( _ps.update_on_add /*&& _choice_repr.use_count() == 1*/ )
     {
       Ntk::events().on_add.erase( Ntk::events().on_add.begin() + _event_index );
     }
