@@ -45,7 +45,7 @@
 
 #include "../traits.hpp"
 
-namespace mockturtle::detail
+namespace mockturtle
 {
 
 struct gate
@@ -81,16 +81,23 @@ struct exact_supergate
   signal<Ntk> const root;
   kitty::static_truth_table<NInputs> const& tt;
 
+  /* number of inputs of the supergate */
   unsigned n_inputs : 3;
+  /* saved polarities for inputs and/or outputs */
+  unsigned polarity : 8;
   
+  /* area */
   float area;
+  /* worst delay */
   float worstDelay;
+  /* pin-to-pin delay */
   float tdelay[NInputs];
 
   exact_supergate( signal<Ntk> const root, kitty::static_truth_table<NInputs> const& tt )
   : root( root ),
     tt( tt ),
     n_inputs( 0u ),
+    polarity( 0u ),
     area( 0.0f ),
     worstDelay( 0.0f )
     {
@@ -109,7 +116,6 @@ class library
   }
 
 };
-
 
 struct exact_library_params
 {
@@ -150,6 +156,10 @@ public:
     return database;
   }
 
+  const std::tuple<float, float> get_inverter_info() const
+  {
+    return std::make_pair( ps.area_inverter, ps.delay_inverter );
+  }
 
 private:
   void generate_library()
@@ -197,17 +207,23 @@ private:
 
         for ( auto const&  gate : super_lib[entry] )
         {
-          printf( "%.0f,%.0f,%d ", gate.worstDelay, gate.area, gate.n_inputs );
+          printf( "%.2f,%.2f,%d ", gate.worstDelay, gate.area, gate.n_inputs );
         }
         std::cout << std::endl;
       }
     }
   }
 
-
   void compute_info( exact_supergate<Ntk, NInputs> &sg )
   {
-    sg.area = compute_info_rec( sg, sg.root, 0.0f );
+    database.incr_trav_id();
+    /* info does not consider input and output inverters */
+    auto const root = database.is_complemented( sg.root ) ? !sg.root : sg.root;
+    sg.area = compute_info_rec( sg, root, 0.0f );
+
+    /* output polarity */
+    sg.polarity |= ( unsigned( database.is_complemented( sg.root ) ) ) << NInputs;
+    /* number of inputs */
     for( auto i = 0u; i < NInputs; ++i )
     {
       if ( sg.tdelay[i] != 0.0f )
@@ -226,21 +242,34 @@ private:
     float area = 0.0f;
     float tdelay = delay;
 
-    if ( database.is_complemented( root ) )
-    {
-      area += ps.area_inverter;
-      tdelay -= ps.delay_inverter;
-    }
-
     if ( database.is_pi( n ) )
     {
       sg.tdelay[database.index_to_node( n ) - 1u] = std::min(sg.tdelay[database.index_to_node( n ) - 1u], tdelay);
       sg.worstDelay = std::min(sg.worstDelay, tdelay);
+      sg.polarity |= ( unsigned( database.is_complemented( root ) ) ) << ( database.index_to_node( n ) - 1u );
       return area;
     }
 
-    area += ps.area_gate;
     tdelay -= ps.delay_gate;
+
+    /* add gate area once */
+    if ( database.visited( n ) != database.trav_id() )
+    {
+      area += ps.area_gate;
+      database.set_value( n, 0u );
+      database.set_visited( n, database.trav_id() );
+    }
+
+    if ( database.is_complemented( root ) )
+    {
+      tdelay -= ps.delay_inverter;
+      /* add inverter area only once (shared by fanout) */
+      if ( database.value( n ) == 0u )
+      {
+        area += ps.area_inverter;
+        database.set_value( n, 1u );
+      }
+    }
 
     database.foreach_fanin( n, [&]( auto const& child ) {
       area += compute_info_rec( sg, child, tdelay );
