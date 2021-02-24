@@ -1203,16 +1203,7 @@ public:
   {
     stopwatch t( st.time_total );
 
-    node_map<signal<NtkDest>, Ntk> old2new( ntk );
-    NtkDest res;
-    old2new[ntk.get_constant( false )] = res.get_constant( false );
-    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
-    {
-      old2new[ntk.get_constant( true )] = res.get_constant( true );
-    }
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
+    auto [res, old2new] = initialize_copy_network<NtkDest>( ntk );
 
     /* compute and save topological order */
     top_order.reserve( ntk.size() );
