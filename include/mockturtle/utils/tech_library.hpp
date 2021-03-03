@@ -79,7 +79,6 @@ template<typename Ntk, unsigned NInputs>
 struct exact_supergate
 {
   signal<Ntk> const root;
-  kitty::static_truth_table<NInputs> const& tt;
 
   /* number of inputs of the supergate */
   unsigned n_inputs : 3;
@@ -93,9 +92,8 @@ struct exact_supergate
   /* pin-to-pin delay */
   float tdelay[NInputs];
 
-  exact_supergate( signal<Ntk> const root, kitty::static_truth_table<NInputs> const& tt )
+  exact_supergate( signal<Ntk> const root )
   : root( root ),
-    tt( tt ),
     n_inputs( 0u ),
     polarity( 0u ),
     area( 0.0f ),
@@ -120,10 +118,11 @@ class library
 struct exact_library_params
 {
   float area_gate{1.0f};
-  float area_inverter{0.0f};
+  float area_inverter{0.2f};
   float delay_gate{1.0f};
-  float delay_inverter{0.0f};
+  float delay_inverter{0.2f};
 
+  bool np_classification{true};
   bool verbose{false};
 };
 
@@ -183,29 +182,47 @@ private:
     /* Constuct supergates */
     for ( auto const &entry : classes )
     {
-      std::vector<exact_supergate<Ntk, NInputs>> supergates;
+      std::vector<exact_supergate<Ntk, NInputs>> supergates_pos;
+      std::vector<exact_supergate<Ntk, NInputs>> supergates_neg;
+      auto const not_entry = ~entry;
 
       const auto add_supergate = [&]( auto const& f_new ) {
-        exact_supergate<Ntk, NInputs> sg( f_new, entry );
+        bool complemented = database.is_complemented( f_new );
+        auto f = f_new;
+        if ( ps.np_classification && complemented ) {
+          f = !f;
+        }
+        exact_supergate<Ntk, NInputs> sg( f );
         compute_info( sg );
-        supergates.push_back( sg );
-        database.create_po( f_new );
+        if ( ps.np_classification && complemented )
+        {
+          supergates_neg.push_back( sg );
+        }
+        else
+        {
+          supergates_pos.push_back( sg );
+        }
+        database.create_po( f );
         return true;
       };
 
       kitty::dynamic_truth_table function = kitty::extend_to( entry, NInputs );
       rewriting_fn( database, function, pis.begin(), pis.end(), add_supergate );
-      super_lib.insert( {entry, supergates} );
+      if ( supergates_pos.size() > 0 )
+        super_lib.insert( {entry, supergates_pos} );
+      if ( ps.np_classification && supergates_neg.size() > 0 )
+        super_lib.insert( {not_entry, supergates_neg} );
     }
 
     if ( ps.verbose )
     {
-      for ( auto const &entry : classes )
+      std::cout << "Classified in " << super_lib.size() << " entries" << std::endl;
+      for ( auto const &pair : super_lib )
       {
-        kitty::print_hex( entry );
+        kitty::print_hex( pair.first );
         std::cout << ": ";
 
-        for ( auto const&  gate : super_lib[entry] )
+        for ( auto const&  gate : pair.second )
         {
           printf( "%.2f,%.2f,%d ", gate.worstDelay, gate.area, gate.n_inputs );
         }
@@ -214,15 +231,17 @@ private:
     }
   }
 
+  /* Computes delay and area info */
   void compute_info( exact_supergate<Ntk, NInputs> &sg )
   {
     database.incr_trav_id();
     /* info does not consider input and output inverters */
-    auto const root = database.is_complemented( sg.root ) ? !sg.root : sg.root;
+    bool compl_root = database.is_complemented( sg.root );
+    auto const root = compl_root ? !sg.root : sg.root;
     sg.area = compute_info_rec( sg, root, 0.0f );
 
     /* output polarity */
-    sg.polarity |= ( unsigned( database.is_complemented( sg.root ) ) ) << NInputs;
+    sg.polarity |= ( unsigned( compl_root ) ) << NInputs;
     /* number of inputs */
     for( auto i = 0u; i < NInputs; ++i )
     {
