@@ -41,6 +41,7 @@
 #include "../utils/node_map.hpp"
 #include "../utils/cost_functions.hpp"
 #include "../utils/tech_library.hpp"
+#include "detail/mffc_utils.hpp"
 #include "../views/topo_view.hpp"
 #include "../views/depth_view.hpp"
 #include "cut_enumeration.hpp"

@@ -118,9 +118,9 @@ class library
 struct exact_library_params
 {
   float area_gate{1.0f};
-  float area_inverter{0.2f};
+  float area_inverter{0.0f};
   float delay_gate{1.0f};
-  float delay_inverter{0.2f};
+  float delay_inverter{0.0f};
 
   bool np_classification{true};
   bool verbose{false};
