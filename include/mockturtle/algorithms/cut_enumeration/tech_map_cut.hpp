@@ -47,7 +47,7 @@ namespace mockturtle
 
   See <a href="https://github.com/berkeley-abc/abc/blob/master/src/aig/gia/giaMf.c">giaMf.c</a> in ABC's repository.
 */
-struct cut_enumeration_map_cut
+struct cut_enumeration_tech_map_cut
 {
   uint32_t delay{0};
   float flow{0};
@@ -57,9 +57,11 @@ struct cut_enumeration_map_cut
 };
 
 template<bool ComputeTruth>
-bool operator<( cut_type<ComputeTruth, cut_enumeration_map_cut> const& c1, cut_type<ComputeTruth, cut_enumeration_map_cut> const& c2 )
+bool operator<( cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c1, cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c2 )
 {
   constexpr auto eps{0.005f};
+  if ( c1.size() > c2.size() )
+    return false;
   if ( c1->data.flow < c2->data.flow - eps )
     return true;
   if ( c1->data.flow > c2->data.flow + eps )
@@ -72,7 +74,7 @@ bool operator<( cut_type<ComputeTruth, cut_enumeration_map_cut> const& c1, cut_t
 }
 
 template<>
-struct cut_enumeration_update_cut<cut_enumeration_map_cut>
+struct cut_enumeration_update_cut<cut_enumeration_tech_map_cut>
 {
   template<typename Cut, typename NetworkCuts, typename Ntk>
   static void apply( Cut& cut, NetworkCuts const& cuts, Ntk const& ntk, node<Ntk> const& n )
@@ -94,7 +96,7 @@ struct cut_enumeration_update_cut<cut_enumeration_map_cut>
 };
 
 template<int MaxLeaves>
-std::ostream& operator<<( std::ostream& os, cut<MaxLeaves, cut_data<false, cut_enumeration_map_cut>> const& c )
+std::ostream& operator<<( std::ostream& os, cut<MaxLeaves, cut_data<false, cut_enumeration_tech_map_cut>> const& c )
 {
   os << "{ ";
   std::copy( c.begin(), c.end(), std::ostream_iterator<uint32_t>( os, " " ) );

@@ -43,35 +43,127 @@
 #include <kitty/npn.hpp>
 #include <kitty/print.hpp>
 
+#include "../io/genlib_reader.hpp"
 #include "../traits.hpp"
 
 namespace mockturtle
 {
 
-struct gate
-{
-  std::string name;
-  double area;
-  double delay;
-  kitty::dynamic_truth_table tt;
+// struct gate
+// {
+//   std::string name;
+//   std::string expression;
+//   double area;
+//   double delay;
+//   kitty::dynamic_truth_table function;
 
-  uint8_t n_inputs;
+//   uint8_t n_inputs;
 
-  gate() : area( 0.0f ), delay( 0.0f ) {}
-};
+//   gate() : area( 0.0f ), delay( 0.0f ) {}
+// };
 
-
+template<unsigned NInputs>
 struct supergate
 {
   struct gate *root;
-  kitty::dynamic_truth_table tt;
 
-  unsigned n_inputs : 3;
-  
+  /* area */
   float area;
-  float delay;
+  /* worst delay */
+  float worstDelay;
+  /* permuted pin-to-pin delay w.r.t NP-repr. */
+  float tdelay[NInputs];
 
-  supergate() : area( 0.0f ), delay( 0.0f ) {}
+  /* permutation vector to np representative*/
+  std::array<uint8_t, NInputs> permutation;
+  /* negation to np representative */
+  uint8_t polarity{0};
+};
+
+
+template<unsigned NInputs = 4u>
+class tech_library
+{
+
+public:
+  tech_library( std::vector<gate> gates )
+    : inv_area( 0 ),
+      inv_delay( 0 ),
+      _gates( gates ),
+      _super_lib()
+  {
+    generate_library();
+  }
+
+  const std::vector<supergate<NInputs>>* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  {
+    auto match = _super_lib.find( tt );
+    if ( match != _super_lib.end() )
+      return &match->second;
+    return NULL;
+  }
+
+  const std::tuple<float, float> get_inverter_info() const
+  {
+    return std::make_pair( inv_area, inv_delay );
+  }
+
+private:
+  void generate_library()
+  {
+    for ( auto& gate : _gates )
+    {
+      if ( gate.function.num_vars() == 1 )
+      {
+        if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
+        {
+          inv_area = gate.area;
+          inv_delay = gate.delay;
+        }
+      }
+
+      /* NPN canonization of the function */
+      const auto tt = kitty::extend_to<NInputs>( gate.function );
+      auto [tt_np, neg, perm] = kitty::exact_npn_canonization( tt );
+      /* from NPN class to NP */
+      if ( ( ( neg >> NInputs ) & 1 ) == 1 )
+      {
+        tt_np = ~tt_np;
+        neg ^= 1 << NInputs;
+      }
+      /* initialize gate info */
+      supergate<NInputs> sg;
+      sg.root = &gate;
+      sg.area = gate.area;
+      sg.worstDelay = gate.delay;
+      /* a permutation index points to the new input at that position */
+      for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
+      {
+        sg.permutation[perm[i]] = i;
+        sg.tdelay[perm[i]] = gate.delay;
+      }
+      sg.polarity = neg;
+      _super_lib[tt_np].push_back( sg );
+    }
+
+    printf( "inv(%.2f, %.2f)\n", inv_delay, inv_area );
+    for ( auto const& entry : _super_lib )
+    {
+      kitty::print_hex( entry.first );
+      std::cout << ": ";
+      for ( auto const& gate : entry.second )
+      {
+        printf( "%s(%.2f, %.2f) ", gate.root->name.c_str(), gate.worstDelay, gate.area );
+      }
+      std::cout << std::endl;
+    }
+  }
+
+private:
+  float inv_area;
+  float inv_delay;
+  std::vector<gate> _gates;
+  std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>> _super_lib;
 };
 
 
@@ -104,15 +196,6 @@ struct exact_supergate
         tdelay[i] = 0.0f;
       }
     }
-};
-
-
-class library
-{
-  library()
-  {
-  }
-
 };
 
 struct exact_library_params

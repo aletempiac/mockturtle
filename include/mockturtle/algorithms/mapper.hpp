@@ -1288,6 +1288,9 @@ private:
       uint8_t mask = ~( 1 << NInputs );
       for ( auto& cut : cuts.cuts( index ) )
       {
+        if ( cut->size() == 1 )
+          continue;
+
         const auto tt = cuts.truth_table( *cut );
         const auto fe = kitty::extend_to<NInputs>( tt );
         const auto config = kitty::exact_npn_canonization( fe );
@@ -1441,7 +1444,11 @@ private:
     delay = 0.0f;
     ntk.foreach_po( [this]( auto s ) {
       const auto index = ntk.node_to_index( ntk.get_node( s ) );
-      delay = std::max( delay, node_match[index].arrival[0] );
+      if ( ntk.is_complemented( s ) )
+        delay = std::max( delay, node_match[index].arrival[1] );
+      else
+        delay = std::max( delay, node_match[index].arrival[0] );
+
       if constexpr ( !ELA )
       {
         node_match[index].map_refs[2]++;

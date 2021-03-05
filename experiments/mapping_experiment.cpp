@@ -13,7 +13,6 @@
 #include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
-#include <mockturtle/algorithms/mapper.hpp>
 #include <mockturtle/algorithms/node_resynthesis.hpp>
 #include <mockturtle/algorithms/node_resynthesis/exact.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
@@ -27,6 +26,10 @@
 #include <mockturtle/views/depth_choice_view.hpp>
 #include <mockturtle/utils/choice_utils.hpp>
 #include <mockturtle/utils/tech_library.hpp>
+#include <mockturtle/algorithms/mapper.hpp>
+#include <mockturtle/algorithms/tech_mapper.hpp>
+#include <mockturtle/io/genlib_reader.hpp>
+#include <lorina/genlib.hpp>
 #include <mockturtle/utils/stopwatch.hpp>
 
 
@@ -209,28 +212,83 @@ void map()
     map_core( imig, lib, b, exp, size_avg, depth_avg );
     i++;
   }
-  for ( const auto& b : local_benchmarks_iwls )
-  {
-    std::string filename{"../test/assets/"};
-    filename = filename + b + ".aig";
-    mockturtle::mig_network imig;
-    if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
-    {
-      std::cout << "ERROR IN" << std::endl;
-      std::abort();
-      return;
-    }
-    map_core( imig, lib, b, exp, size_avg, depth_avg );
-    i++;
-  }
+  // for ( const auto& b : local_benchmarks_iwls )
+  // {
+  //   std::string filename{"../test/assets/"};
+  //   filename = filename + b + ".aig";
+  //   mockturtle::mig_network imig;
+  //   if ( lorina::read_aiger( filename, mockturtle::aiger_reader( imig ) ) != lorina::return_code::success )
+  //   {
+  //     std::cout << "ERROR IN" << std::endl;
+  //     std::abort();
+  //     return;
+  //   }
+  //   map_core( imig, lib, b, exp, size_avg, depth_avg );
+  //   i++;
+  // }
   exp.save();
   exp.table();
   printf( "Size avg: %.2f; Depth avg: %.2f\n", size_avg / i, depth_avg / i ); 
 }
 
+void tech_map()
+{
+  std::vector<mockturtle::gate> gates;
+  std::string const file {
+    "GATE zero 0 O=0;\n"
+    "GATE one 0 O=1;\n"
+    "GATE inverter 1 O=!a; PIN * INV 1 999 1.0 1.0 1.0 1.0\n"
+    "GATE buffer 2 O=a; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+    "GATE and 5 O=(ab); PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+    "GATE or 4 O={ab}; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+    "GATE mig 6 O=<abc>; PIN * NONINV 1 999 1.0 1.0 1.0 1.0 1.0\n"
+    "GATE xor 7 O=[ab]; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  };
+
+  std::istringstream in( file );
+  if ( lorina::read_genlib( in, mockturtle::genlib_reader( gates ) ) != lorina::return_code::success )
+  {
+    std::cout << "ERROR IN" << std::endl;
+    std::abort();
+    return;
+  }
+  mockturtle::tech_library<4> lib( gates );
+
+  /* map to library */
+  for ( const auto& b : local_benchmarks )
+  {
+    std::string filename{"../test/assets/"};
+    filename = filename + b + ".v";
+    mockturtle::mig_network imig;
+    if ( lorina::read_verilog( filename, mockturtle::verilog_reader( imig ) ) != lorina::return_code::success )
+    {
+      std::cout << "ERROR IN" << std::endl;
+      std::abort();
+      return;
+    }
+    mockturtle::depth_view imig_d{imig};
+    printf( "###################################################\n");
+    printf( "[i] read_benchmark %s\n", b.c_str() );
+    printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
+            imig.num_pis(), imig.num_pos(), imig.num_gates(), imig.size(), imig_d.depth() );
+
+    mockturtle::mig_network mig;
+    mig = cleanup_dangling( imig );
+    mockturtle::map_params ps;
+    ps.cut_enumeration_ps.cut_size = 4;
+    ps.cut_enumeration_ps.cut_limit = 8;
+    ps.verbose = true;
+    ps.skip_delay_round = false;
+    mockturtle::map_stats mst;
+
+    mockturtle::tech_mapping( mig, lib, ps, &mst );
+  }
+}
+
 
 int main()
 {
-  map();
+  // map();
+  tech_map();
   return 0;
 }
