@@ -124,9 +124,6 @@ private:
 
       /* NPN canonization of the function */
       const auto tt = kitty::extend_to<NInputs>( gate.function );
-      std::cout << gate.name << ": " << std::endl;
-      kitty::print_hex( tt );
-      std::cout << std::endl;
       auto [tt_np, neg, perm] = kitty::exact_npn_canonization( tt );
       /* from NPN class to NP */
       if ( ( ( neg >> NInputs ) & 1 ) == 1 )
@@ -134,9 +131,6 @@ private:
         tt_np = ~tt_np;
         neg ^= 1 << NInputs;
       }
-      kitty::print_hex( tt_np );
-      std::cout << std::endl;
-      std::cout << std::endl;
       /* initialize gate info */
       supergate<NInputs> sg;
       sg.root = &gate;

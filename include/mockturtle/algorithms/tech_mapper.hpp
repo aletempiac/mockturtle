@@ -248,7 +248,6 @@ private:
       std::vector<cut_match_tech<NInputs>> node_matches;
 
       auto i = 0u;
-      uint8_t mask = ~( 1 << NInputs );
       for ( auto& cut : cuts.cuts( index ) )
       {
         if ( cut->size() == 1 )
