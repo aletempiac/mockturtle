@@ -270,11 +270,12 @@ private:
             match.supergates[phase] = supergates_npn;
           if ( supergates_npn_neg != NULL )
             match.supergates[phase ^ 1] = supergates_npn_neg;
+          match.negation = 0;
           for ( auto j = 0u; j < perm.size() && j < NInputs; ++j )
           {
             match.permutation[perm[j]] = j;
+            match.negation |= ( ( neg >> perm[j] ) & 1 ) << j;
           }
-          match.negation = neg & mask;
           node_matches.push_back( match );
           ( *cut )->data.match_index = i++;
         }

@@ -178,9 +178,9 @@ void map_core( Ntk const& imig, mockturtle::exact_library<mockturtle::mig_networ
   // mockturtle::write_verilog( mig, "itest.v" );
   // mockturtle::write_verilog( res, "test.v" );
 
-  // auto result = abc_cec_benchmark( res, name );
-  // assert( result );
-  // std::cout << result << std::endl;
+  auto result = abc_cec_benchmark( res, name );
+  assert( result );
+  std::cout << result << std::endl;
 
   exp( name, imig.num_gates(), res.num_gates(), size_impr, imig_d.depth(), res_d.depth(), depth_impr, time_i );
 }
@@ -209,7 +209,7 @@ void map()
       std::abort();
       return;
     }
-    map_core( imig, lib, b, exp, size_avg, depth_avg );
+    map_core( imig, lib, filename, exp, size_avg, depth_avg );
     i++;
   }
   // for ( const auto& b : local_benchmarks_iwls )
@@ -241,7 +241,7 @@ void tech_map()
     "GATE buffer 2 O=a; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
     "GATE and 5 O=(ab); PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
     "GATE or 4 O={ab}; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
-    "GATE mig 6 O=<abc>; PIN * NONINV 1 999 1.0 1.0 1.0 1.0 1.0\n"
+    "GATE maj 6 O=<abc>; PIN * NONINV 1 999 1.0 1.0 1.0 1.0 1.0\n"
     "GATE xor 7 O=[ab]; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
   };
 
@@ -252,7 +252,7 @@ void tech_map()
     std::abort();
     return;
   }
-  mockturtle::tech_library<4> lib( gates );
+  mockturtle::tech_library<3> lib( gates );
 
   /* map to library */
   for ( const auto& b : local_benchmarks )
@@ -275,10 +275,11 @@ void tech_map()
     mockturtle::mig_network mig;
     mig = cleanup_dangling( imig );
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = 4;
+    ps.cut_enumeration_ps.cut_size = 3;
     ps.cut_enumeration_ps.cut_limit = 8;
     ps.verbose = true;
     ps.skip_delay_round = false;
+    ps.ela_rounds = 1;
     mockturtle::map_stats mst;
 
     mockturtle::tech_mapping( mig, lib, ps, &mst );

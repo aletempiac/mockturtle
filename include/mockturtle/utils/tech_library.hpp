@@ -76,7 +76,7 @@ struct supergate
 
   /* permutation vector to np representative*/
   std::array<uint8_t, NInputs> permutation;
-  /* negation to np representative */
+  /* permutated negation */
   uint8_t polarity{0};
 };
 
@@ -124,6 +124,9 @@ private:
 
       /* NPN canonization of the function */
       const auto tt = kitty::extend_to<NInputs>( gate.function );
+      std::cout << gate.name << ": " << std::endl;
+      kitty::print_hex( tt );
+      std::cout << std::endl;
       auto [tt_np, neg, perm] = kitty::exact_npn_canonization( tt );
       /* from NPN class to NP */
       if ( ( ( neg >> NInputs ) & 1 ) == 1 )
@@ -131,18 +134,22 @@ private:
         tt_np = ~tt_np;
         neg ^= 1 << NInputs;
       }
+      kitty::print_hex( tt_np );
+      std::cout << std::endl;
+      std::cout << std::endl;
       /* initialize gate info */
       supergate<NInputs> sg;
       sg.root = &gate;
       sg.area = gate.area;
       sg.worstDelay = gate.delay;
+      sg.polarity = 0;
       /* a permutation index points to the new input at that position */
       for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
       {
         sg.permutation[perm[i]] = i;
         sg.tdelay[perm[i]] = gate.delay;
+        sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i;
       }
-      sg.polarity = neg;
       _super_lib[tt_np].push_back( sg );
     }
 
@@ -201,9 +208,9 @@ struct exact_supergate
 struct exact_library_params
 {
   float area_gate{1.0f};
-  float area_inverter{0.0f};
+  float area_inverter{0.2f};
   float delay_gate{1.0f};
-  float delay_inverter{0.0f};
+  float delay_inverter{1.0f};
 
   bool np_classification{true};
   bool verbose{false};
