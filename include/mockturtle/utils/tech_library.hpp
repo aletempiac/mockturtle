@@ -121,6 +121,11 @@ private:
           inv_delay = gate.delay;
         }
       }
+      if ( gate.function.num_vars() > NInputs )
+      {
+        std::cout << "Gate " << gate.name << " IGNORED: too many variables for the library settings" << std::endl;
+        continue;
+      }
 
       /* NPN canonization of the function */
       const auto tt = kitty::extend_to<NInputs>( gate.function );
@@ -147,7 +152,6 @@ private:
       _super_lib[tt_np].push_back( sg );
     }
 
-    printf( "inv(%.2f, %.2f)\n", inv_delay, inv_area );
     for ( auto const& entry : _super_lib )
     {
       kitty::print_hex( entry.first );
@@ -201,8 +205,8 @@ struct exact_supergate
 
 struct exact_library_params
 {
-  float area_gate{1.0f};
-  float area_inverter{0.2f};
+  float area_gate{2.5f};
+  float area_inverter{1.0f};
   float delay_gate{1.0f};
   float delay_inverter{1.0f};
 
@@ -308,7 +312,10 @@ private:
 
         for ( auto const&  gate : pair.second )
         {
-          printf( "%.2f,%.2f,%d ", gate.worstDelay, gate.area, gate.n_inputs );
+          printf( "%.2f,%.2f,%d,%d,:", gate.worstDelay, gate.area, gate.polarity, gate.n_inputs );
+          for ( auto j = 0u; j < NInputs; ++j )
+            printf( "%.2f/", gate.tdelay[j] );
+          std::cout << " ";
         }
         std::cout << std::endl;
       }

@@ -178,9 +178,9 @@ void map_core( Ntk const& imig, mockturtle::exact_library<mockturtle::mig_networ
   // mockturtle::write_verilog( mig, "itest.v" );
   // mockturtle::write_verilog( res, "test.v" );
 
-  auto result = abc_cec_benchmark( res, name );
-  assert( result );
-  std::cout << result << std::endl;
+  // auto result = abc_cec_benchmark( res, name );
+  // assert( result );
+  // std::cout << result << std::endl;
 
   exp( name, imig.num_gates(), res.num_gates(), size_impr, imig_d.depth(), res_d.depth(), depth_impr, time_i );
 }
@@ -209,7 +209,7 @@ void map()
       std::abort();
       return;
     }
-    map_core( imig, lib, filename, exp, size_avg, depth_avg );
+    map_core( imig, lib, b, exp, size_avg, depth_avg );
     i++;
   }
   // for ( const auto& b : local_benchmarks_iwls )
@@ -234,55 +234,58 @@ void map()
 void tech_map()
 {
   std::vector<mockturtle::gate> gates;
-  std::string const file {
-    "GATE zero 0 O=0;\n"
-    "GATE one 0 O=1;\n"
-    "GATE inverter 1 O=!a; PIN * INV 1 999 1.0 1.0 1.0 1.0\n"
-    "GATE buffer 2 O=a; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
-    "GATE and 5 O=(ab); PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
-    "GATE or 4 O={ab}; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
-    "GATE maj 6 O=<abc>; PIN * NONINV 1 999 1.0 1.0 1.0 1.0 1.0\n"
-    "GATE xor 7 O=[ab]; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
-  };
+  // std::string const file {
+  //   "GATE zero 0 O=0;\n"
+  //   "GATE one 0 O=1;\n"
+  //   "GATE inverter 1 O=!a; PIN * INV 1 999 1.0 1.0 1.0 1.0\n"
+  //   "GATE buffer 2 O=a; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  //   "GATE nand2 1.5 O=!(ab); PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  //   // "GATE or 4 O={ab}; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  //   "GATE maj3 2.5 O=<abc>; PIN * NONINV 1 999 1.0 1.0 1.0 1.0 1.0\n"
+  //   "GATE xor2 4 O=[ab]; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  //   "GATE xor3 5 O=[abc]; PIN * NONINV 1 999 1.0 1.0 1.0 1.0\n"
+  // };
 
-  std::istringstream in( file );
+  std::ifstream in( "../../smaller.genlib" );
+  // std::istringstream in( file );
   if ( lorina::read_genlib( in, mockturtle::genlib_reader( gates ) ) != lorina::return_code::success )
   {
     std::cout << "ERROR IN" << std::endl;
     std::abort();
     return;
   }
-  mockturtle::tech_library<3> lib( gates );
+  mockturtle::tech_library lib( gates );
 
   /* map to library */
   for ( const auto& b : local_benchmarks )
   {
     std::string filename{"../test/assets/"};
     filename = filename + b + ".v";
-    mockturtle::mig_network imig;
-    if ( lorina::read_verilog( filename, mockturtle::verilog_reader( imig ) ) != lorina::return_code::success )
+    mockturtle::aig_network inet;
+    if ( lorina::read_verilog( filename, mockturtle::verilog_reader( inet ) ) != lorina::return_code::success )
     {
       std::cout << "ERROR IN" << std::endl;
       std::abort();
       return;
     }
-    mockturtle::depth_view imig_d{imig};
+    mockturtle::depth_view inet_d{inet};
     printf( "###################################################\n");
     printf( "[i] read_benchmark %s\n", b.c_str() );
     printf( "[i] MIG: i/o = %d / %d n = %d / %d depth = %d\n",
-            imig.num_pis(), imig.num_pos(), imig.num_gates(), imig.size(), imig_d.depth() );
+            inet.num_pis(), inet.num_pos(), inet.num_gates(), inet.size(), inet_d.depth() );
 
-    mockturtle::mig_network mig;
-    mig = cleanup_dangling( imig );
+    mockturtle::aig_network net;
+    net = cleanup_dangling( inet );
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = 3;
+    ps.cut_enumeration_ps.cut_size = 4;
     ps.cut_enumeration_ps.cut_limit = 8;
     ps.verbose = true;
     ps.skip_delay_round = false;
+    ps.area_flow_rounds = 1;
     ps.ela_rounds = 1;
     mockturtle::map_stats mst;
 
-    mockturtle::tech_mapping( mig, lib, ps, &mst );
+    mockturtle::tech_mapping( net, lib, ps, &mst );
   }
 }
 

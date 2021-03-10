@@ -62,7 +62,7 @@ struct map_params
   {
     cut_enumeration_ps.cut_size = 4;
     cut_enumeration_ps.cut_limit = 8;
-    cut_enumeration_ps.minimize_truth_table = true;
+    cut_enumeration_ps.minimize_truth_table = false;
   }
 
   /*! \brief Parameters for cut enumeration
@@ -1250,11 +1250,18 @@ private:
       const auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
 
-      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+      if ( ntk.is_constant( n ) )
       {
         /* all terminals have flow 1.0 */
         node_data.flow_refs[0] = node_data.flow_refs[1] = node_data.flow_refs[2] = 1.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
+      }
+      else if ( ntk.is_pi( n ) )
+      {
+        /* all terminals have flow 1.0 */
+        node_data.flow_refs[0] = node_data.flow_refs[1] = node_data.flow_refs[2] = 1.0f;
+        node_data.arrival[0] = 0.0f;
+        node_data.arrival[1] = lib_inv_delay;
       }
       else
       {
@@ -1463,11 +1470,22 @@ private:
     area = 0.0f;
     for ( auto it = top_order.rbegin(); it != top_order.rend(); ++it )
     {
-      /* skip constants and PIs */
-      if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
-        continue;
-
       const auto index = ntk.node_to_index( *it );
+      /* skip constants and PIs */
+      if ( ntk.is_pi( *it ) )
+      {
+        if ( node_match[index].map_refs[1] > 0u )
+        {
+          /* Add inverter over the negated fanins */
+          area += lib_inv_area;
+        }
+        continue;
+      }
+      else if ( ntk.is_constant( *it ) )
+      {
+        continue;
+      }
+
       if ( node_match[index].map_refs[2] == 0u )
         continue;
 
