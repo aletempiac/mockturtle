@@ -499,24 +499,27 @@ private:
     if ( iteration == 0 )
       return;
 
-    ntk.foreach_po( [&]( auto const& s ) {
-      const auto index = ntk.node_to_index( ntk.get_node( s ) );
-      if ( ps.required_time == 0.0f )
+    auto required = delay;
+    if ( ps.required_time != 0.0f )
+    {
+      /* Global target time constraint */
+      if ( ps.required_time < delay - epsilon )
       {
-        node_match[index].required[0] = delay;
-        node_match[index].required[1] = delay;
+        if ( !ps.skip_delay_round && iteration == 1 )
+          std::cerr << fmt::format( "MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
       }
       else
       {
-        if ( ntk.is_complemented( s ) )
-        {
-          node_match[index].required[1] = ps.required_time;
-        } 
-        else
-        {
-          node_match[index].required[0] = ps.required_time;
-        }
+        required = ps.required_time;
       }
+    }
+
+    ntk.foreach_po( [&]( auto const& s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+      if ( ntk.is_complemented( s ) )
+        node_match[index].required[1] = required;
+      else
+        node_match[index].required[0] = required;
     } );
 
     auto i = ntk.size();
@@ -901,10 +904,6 @@ private:
               use_one = !use_one;
             }
           }
-          // node_data.flows[2] = ( node_data.flows[0] + node_data.flows[1] ) / node_data.flow_refs[2];
-          // node_data.flows[0] = node_data.flows[0] / node_data.flow_refs[0];
-          // node_data.flows[1] = node_data.flows[1] / node_data.flow_refs[1];
-          // return;
         }
       }
     }
@@ -920,10 +919,6 @@ private:
         use_zero = false;
     }
 
-    /* TODO: return if no replacement can happen */
-    /* TODO: insert not same_match case */
-
-    /* TODO add exact area compatibility */
     if ( use_zero )
     {
       if constexpr ( ELA )
