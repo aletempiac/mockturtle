@@ -254,7 +254,7 @@ void tech_map()
     std::abort();
     return;
   }
-  mockturtle::tech_library lib( gates );
+  mockturtle::tech_library<5> lib( gates );
 
   /* map to library */
   for ( const auto& b : local_benchmarks )
@@ -277,15 +277,24 @@ void tech_map()
     mockturtle::aig_network net;
     net = cleanup_dangling( inet );
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = 4;
-    ps.cut_enumeration_ps.cut_limit = 8;
+    ps.cut_enumeration_ps.cut_size = lib.max_gate_size();
+    ps.cut_enumeration_ps.cut_limit = 15;
     ps.verbose = true;
     ps.skip_delay_round = false;
     ps.area_flow_rounds = 1;
+    // ps.required_time = 12000;
     ps.ela_rounds = 1;
     mockturtle::map_stats mst;
 
-    mockturtle::tech_mapping( net, lib, ps, &mst );
+    auto res = mockturtle::tech_mapping( net, lib, ps, &mst );
+
+    // mockturtle::depth_view res_d{res};
+    // printf( "[i] KLUT: i/o = %d / %d n = %d / %d depth = %d\n",
+    //         res.num_pis(), res.num_pos(), res.num_gates(), res.size(), res_d.depth() );
+
+    // auto result = abc_cec_benchmark( res, filename );
+    // assert( result );
+    // std::cout << result << std::endl;
   }
 }
 

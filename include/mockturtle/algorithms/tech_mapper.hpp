@@ -168,11 +168,11 @@ public:
     std::tie( lib_inv_area, lib_inv_delay ) = library.get_inverter_info();
   }
 
-  void run()
+  klut_network run()
   {
     stopwatch t( st.time_total );
 
-    // auto [res, old2new] = initialize_copy_network<klut_network>( ntk );
+    auto [res, old2new] = initialize_copy_network<klut_network>( ntk );
     /* compute and save topological order */
     top_order.reserve( ntk.size() );
     topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
@@ -187,7 +187,7 @@ public:
     {
       if ( !compute_mapping<false>() )
       {
-        return;
+        return res;
       }
     }
 
@@ -197,7 +197,7 @@ public:
       compute_required_time();
       if ( !compute_mapping<true>() )
       {
-        return;
+        return res;
       }
     }
 
@@ -207,7 +207,7 @@ public:
       compute_required_time();
       if ( !compute_exact_area() )
       {
-        return;
+        return res;
       }
     }
 
@@ -215,7 +215,9 @@ public:
     st.area = area;
     st.delay = delay;
 
-    // finalize_cover( res, old2new );
+    finalize_cover( res, old2new );
+
+    return res;
   }
 
 private:
@@ -329,7 +331,7 @@ private:
       match_phase<DO_AREA>( n, 1u );
 
       /* try to drop one phase */
-      match_drop_phase<DO_AREA, false>( n, 0u );
+      match_drop_phase<DO_AREA, false>( n, 0 );
     }
     return set_mapping_refs<false>();
   }
@@ -361,7 +363,7 @@ private:
       match_phase_exact( n, 1u );
 
       /* try to drop one phase */
-      match_drop_phase<true, true>( n, 0u );
+      match_drop_phase<true, true>( n, 0 );
     }
     return set_mapping_refs<true>();
   }
@@ -698,7 +700,6 @@ private:
     auto& cut_matches = matches[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
 
-
     /* recompute best match info */
     if ( best_supergate != NULL )
     {
@@ -805,7 +806,7 @@ private:
   }
 
   template<bool DO_AREA, bool ELA>
-  void match_drop_phase( node<Ntk> const& n, unsigned area_margin_factor )
+  void match_drop_phase( node<Ntk> const& n, float area_margin_factor )
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
@@ -854,9 +855,10 @@ private:
     else
     {
       /* check if both phases + inverter meet the required time */
-      use_zero = worst_arrival_nneg < node_data.required[1] + epsilon - area_margin_factor * lib_inv_delay;
-      use_one = worst_arrival_npos < node_data.required[0] + epsilon - area_margin_factor * lib_inv_delay;
+      use_zero = worst_arrival_nneg < ( node_data.required[1] + epsilon - area_margin_factor * lib_inv_delay );
+      use_one = worst_arrival_npos < ( node_data.required[0] + epsilon - area_margin_factor * lib_inv_delay );
     }
+
 
     if ( !use_zero && !use_one )
     {
@@ -864,6 +866,7 @@ private:
       node_data.flows[2] = ( node_data.flows[0] + node_data.flows[1] ) / node_data.flow_refs[2];
       node_data.flows[0] = node_data.flows[0] / node_data.flow_refs[0];
       node_data.flows[1] = node_data.flows[1] / node_data.flow_refs[1];
+      node_data.same_match = false;
       return;
     }
 
@@ -927,7 +930,7 @@ private:
         {
           if ( node_data.map_refs[1] > 0 )
             cut_deref( cuts.cuts( index )[node_data.best_cut[1]], n, 1 );
-          if ( node_data.map_refs[0] == 0 )
+          if ( node_data.map_refs[0] == 0 && node_data.map_refs[2] )
             cut_ref( cuts.cuts( index )[node_data.best_cut[0]], n, 0 );
         }
         else if ( node_data.map_refs[2] )
@@ -992,13 +995,25 @@ private:
     uint8_t ctr = 0;
     for ( auto leaf : cut )
     {
-      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) || ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      /* compute leaf phase using the current gate */
+      uint8_t leaf_phase = ( node_data.phase[phase] >> match.permutation[ctr] ) & 1;
+
+      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
       {
         ++ctr;
         continue;
       }
-      /* compute leaf phase using the current gate */
-      uint8_t leaf_phase = ( node_data.phase[phase] >> match.permutation[ctr] ) & 1;
+      else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      {
+        /* inverter cost for PIs */
+        if ( leaf_phase == 1u )
+        {
+          if ( node_match[leaf].map_refs[1]++ == 0u )
+            count += lib_inv_area;
+        }
+        ++ctr;
+        continue;
+      }
 
       if ( node_match[leaf].same_match )
       {
@@ -1008,7 +1023,7 @@ private:
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
         {
-          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[phase]], ntk.index_to_node( leaf ), leaf_phase );
+          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       else
@@ -1016,7 +1031,7 @@ private:
         ++node_match[leaf].map_refs[2];
         if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
         {
-          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[phase]], ntk.index_to_node( leaf ), leaf_phase );
+          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       ++ctr;
@@ -1032,13 +1047,25 @@ private:
     uint8_t ctr = 0;
     for ( auto leaf : cut )
     {
-      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) || ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      /* compute leaf phase using the current gate */
+      uint8_t leaf_phase = ( node_data.phase[phase] >> match.permutation[ctr] ) & 1;
+
+      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
       {
         ++ctr;
         continue;
       }
-      /* compute leaf phase using the current gate */
-      uint8_t leaf_phase = ( node_data.phase[phase] >> match.permutation[ctr] ) & 1;
+      else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      {
+        /* inverter cost for PIs */
+        if ( leaf_phase == 1u )
+        {
+          if ( --node_match[leaf].map_refs[1] == 0u )
+            count += lib_inv_area;
+        }
+        ++ctr;
+        continue;
+      }
 
       if ( node_match[leaf].same_match )
       {
@@ -1088,12 +1115,71 @@ private:
       old2new[n] = f;
 
       /* check correctness */
+      // auto& node_data = node_match[index];
+      // auto& cut_match = matches[index][best_cut->data.match_index];
+      // auto tt = kitty::extend_to<NInputs>( cuts.truth_table( best_cut ) );
+      // if ( ( phase ) == 1 )
+      //   tt = ~tt;
+      // std::array<uint8_t, NInputs> perm;
+      // for ( auto i = 0u; i < NInputs; ++i )
+      // {
+      //   perm[cut_match.permutation[i]] = i;
+      // }
+      // for ( auto i = 0u; i < NInputs - 1; ++i )
+      // {
+      //   /* swap */
+      //   if ( i != perm[i] )
+      //   {
+      //     kitty::swap_inplace( tt, i, perm[i] );
+      //     for ( auto j = i + 1u; j < NInputs; ++j )
+      //     {
+      //       if ( perm[j] == i )
+      //       {
+      //         perm[j] = perm[i];
+      //         break;
+      //       }
+      //     }
+      //     perm[i] = i;
+      //   }
+      //   /* flip */
+      //   if ( ( ( node_data.phase[phase] >> i ) & 1 ) == 1 )
+      //     kitty::flip_inplace( tt, i );
+      // }
+      // if ( ( ( node_data.phase[phase] >> ( NInputs - 1 ) ) & 1 ) == 1 )
+      //     kitty::flip_inplace( tt, NInputs - 1 );
+
+      // /* obtained NP canonical truth table */
+      // /* apply supergate negation on top and permutate again */
+      // auto const supergate = node_data.best_supergate[phase];
+      // for ( auto i = 0u; i < NInputs; ++i )
+      // {
+      //   perm[i] = supergate->permutation[i];
+      // }
+      // for ( auto i = 0u; i < NInputs - 1; ++i )
+      // {
+      //   if ( i != perm[i] )
+      //   {
+      //     kitty::swap_inplace( tt, i, perm[i] );
+      //     for ( auto j = i + 1u; j < NInputs; ++j )
+      //     {
+      //       if ( perm[j] == i )
+      //       {
+      //         perm[j] = perm[i];
+      //         break;
+      //       }
+      //     }
+      //     perm[i] = i;
+      //   }
+      // }
+      // /* check truth table is equal */
+      // auto gate_tt = kitty::extend_to<NInputs>( supergate->root->function );
+      // assert( gate_tt == tt );
       return true;
     } );
 
     /* create POs */
     ntk.foreach_po( [&]( auto const& f ) {
-      res.create_po(  old2new[f] );
+      res.create_po( ntk.is_complemented( f ) ? res.create_not( old2new[f] ) : old2new[f] );
     } );
   }
 
@@ -1171,7 +1257,7 @@ private:
 } /* namespace detail */
 
 template<class Ntk, unsigned NInputs, typename CutData = cut_enumeration_tech_map_cut>
-void tech_mapping( Ntk& ntk, tech_library<NInputs> const& library, map_params const& ps = {}, map_stats* pst = nullptr )
+klut_network tech_mapping( Ntk& ntk, tech_library<NInputs> const& library, map_params const& ps = {}, map_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -1186,7 +1272,7 @@ void tech_mapping( Ntk& ntk, tech_library<NInputs> const& library, map_params co
 
   map_stats st;
   detail::tech_mapping_impl<Ntk, NInputs, CutData> p( ntk, library, ps, st );
-  p.run();
+  auto res = p.run();
   if ( ps.verbose )
   {
     st.report();
@@ -1196,6 +1282,7 @@ void tech_mapping( Ntk& ntk, tech_library<NInputs> const& library, map_params co
   {
     *pst = st;
   }
+  return res;
 }
 
 } /* namespace mockturtle */

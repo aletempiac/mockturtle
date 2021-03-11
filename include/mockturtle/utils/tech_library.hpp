@@ -89,6 +89,7 @@ public:
   tech_library( std::vector<gate> gates )
     : inv_area( 0 ),
       inv_delay( 0 ),
+      max_size( 0 ),
       _gates( gates ),
       _super_lib()
   {
@@ -108,6 +109,11 @@ public:
     return std::make_pair( inv_area, inv_delay );
   }
 
+  unsigned max_gate_size()
+  {
+    return max_size;
+  }
+
 private:
   void generate_library()
   {
@@ -123,9 +129,11 @@ private:
       }
       if ( gate.function.num_vars() > NInputs )
       {
-        std::cout << "Gate " << gate.name << " IGNORED: too many variables for the library settings" << std::endl;
+        std::cerr << "WARNING: gate " << gate.name << " IGNORED, too many variables for the library settings" << std::endl;
         continue;
       }
+
+      max_size = std::max( max_size, gate.num_vars );
 
       /* NPN canonization of the function */
       const auto tt = kitty::extend_to<NInputs>( gate.function );
@@ -134,7 +142,6 @@ private:
       if ( ( ( neg >> NInputs ) & 1 ) == 1 )
       {
         tt_np = ~tt_np;
-        neg ^= 1 << NInputs;
       }
       /* initialize gate info */
       supergate<NInputs> sg;
@@ -167,6 +174,7 @@ private:
 private:
   float inv_area;
   float inv_delay;
+  unsigned max_size;
   std::vector<gate> _gates;
   std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>> _super_lib;
 };
