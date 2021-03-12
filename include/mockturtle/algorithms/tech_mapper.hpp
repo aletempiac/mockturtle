@@ -806,7 +806,7 @@ private:
   }
 
   template<bool DO_AREA, bool ELA>
-  void match_drop_phase( node<Ntk> const& n, float area_margin_factor )
+  void match_drop_phase( node<Ntk> const& n, float required_margin_factor )
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
@@ -855,8 +855,8 @@ private:
     else
     {
       /* check if both phases + inverter meet the required time */
-      use_zero = worst_arrival_nneg < ( node_data.required[1] + epsilon - area_margin_factor * lib_inv_delay );
-      use_one = worst_arrival_npos < ( node_data.required[0] + epsilon - area_margin_factor * lib_inv_delay );
+      use_zero = worst_arrival_nneg < ( node_data.required[1] + epsilon - required_margin_factor * lib_inv_delay );
+      use_one = worst_arrival_npos < ( node_data.required[0] + epsilon - required_margin_factor * lib_inv_delay );
     }
 
 
@@ -892,7 +892,7 @@ private:
             use_one = false;
             use_zero = true;
           }
-          /* enable the non used match if leads to improvement and doesn't violate the required time */
+          /* select the not used match instead if it leads to improvement and doesn't violate the required time */
           if ( node_data.arrival[nphase] + lib_inv_delay < node_data.required[phase] + epsilon )
           {
             auto size_phase = cuts.cuts( index )[node_data.best_cut[phase]].size();
