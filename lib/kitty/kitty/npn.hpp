@@ -262,6 +262,81 @@ std::tuple<TT, uint32_t, std::vector<uint8_t>> exact_npn_canonization( const TT&
   return std::make_tuple( tmin, phase, perm );
 }
 
+/*! \brief Exact NP enumeration
+
+  Given a truth table, this function enumerates all the functions in its
+  NP class. Two functions are in the same NP class, if one can obtain one
+  from the other by input negation and input permutation..
+
+  The function takes a callback as second parameter which is called for
+  every enumerated function. The callback should take as parameters:
+  - NP-enumerated function
+  - input negations
+  - input permutation to apply
+
+  \param tt Truth table
+  \param fn Callback for each enumerated truth table in the NP class
+*/
+template<typename TT, typename Callback>
+void exact_np_enumeration( const TT& tt, Callback&& fn )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  const auto num_vars = tt.num_vars();
+
+  /* Special case for n = 0 || n == 1 */
+  if ( num_vars == 0 || num_vars == 1 )
+  {
+    return std::make_tuple( tt, static_cast<uint32_t>( 0 ), std::vector<uint8_t>{} );
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tt;
+
+  std::vector<uint8_t> perm( num_vars );
+  std::iota( perm.begin(), perm.end(), 0u );
+
+  uint32_t phase = 0;
+
+  fn( t1, phase, perm );
+
+  const auto& swaps = detail::swaps[num_vars - 2u];
+  const auto& flips = detail::flips[num_vars - 2u];
+
+  for ( std::size_t i = 0; i < swaps.size(); ++i )
+  {
+    const auto pos = swaps[i];
+    swap_adjacent_inplace( t1, pos );
+
+    std::swap( perm[pos], perm[pos + 1] );
+
+    fn( t1, phase, perm );
+  }
+
+  for ( std::size_t j = 0; j < flips.size(); ++j )
+  {
+    const auto pos = flips[j];
+    swap_adjacent_inplace( t1, 0 );
+    flip_inplace( t1, pos );
+
+    std::swap( perm[0], perm[1] );
+    phase ^= 1 << perm[pos];
+
+    fn( t1, phase, perm );
+
+    for ( std::size_t i = 0; i < swaps.size(); ++i )
+    {
+      const auto pos = swaps[i];
+      swap_adjacent_inplace( t1, pos );
+
+      std::swap( perm[pos], perm[pos + 1] );
+
+      fn( t1, phase, perm );
+    }
+  }
+}
+
 /*! \brief Flip-swap NPN heuristic
 
   This algorithm will iteratively try to reduce the numeric value of the truth

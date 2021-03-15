@@ -49,48 +49,51 @@
 namespace mockturtle
 {
 
-// struct gate
-// {
-//   std::string name;
-//   std::string expression;
-//   double area;
-//   double delay;
-//   kitty::dynamic_truth_table function;
+struct tech_library_params
+{
+  /*! \brief reports np enumerations */
+  bool verbose{false};
 
-//   uint8_t n_inputs;
+  /*! \brief reports all the entries in the library */
+  bool very_verbose{false};
+};
 
-//   gate() : area( 0.0f ), delay( 0.0f ) {}
-// };
 
 template<unsigned NInputs>
 struct supergate
 {
   struct gate *root;
 
+  uint8_t id;
+
   /* area */
   float area;
   /* worst delay */
   float worstDelay;
-  /* permuted pin-to-pin delay w.r.t NP-repr. */
-  float tdelay[NInputs];
+  /* pin-to-pin delay */
+  std::array<float, NInputs> tdelay;
 
-  /* permutation vector to np representative*/
-  std::array<uint8_t, NInputs> permutation;
-  /* permutated negation */
+  /* np permutation vector */
+  std::vector<uint8_t> permutation;
+
+  /* pin negations */
   uint8_t polarity{0};
 };
 
 
-template<unsigned NInputs = 4u>
+template<unsigned NInputs = 5u>
 class tech_library
 {
 
+  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>>;
+
 public:
-  tech_library( std::vector<gate> gates )
+  tech_library( std::vector<gate> gates, tech_library_params ps = {} )
     : inv_area( 0 ),
       inv_delay( 0 ),
       max_size( 0 ),
       _gates( gates ),
+      ps ( ps ),
       _super_lib()
   {
     generate_library();
@@ -117,10 +120,12 @@ public:
 private:
   void generate_library()
   {
+    uint8_t id = 0;
     for ( auto& gate : _gates )
     {
       if ( gate.function.num_vars() == 1 )
       {
+        /* extract inverter delay and area */
         if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
         {
           inv_area = gate.area;
@@ -135,48 +140,112 @@ private:
 
       max_size = std::max( max_size, gate.num_vars );
 
-      /* NPN canonization of the function */
-      const auto tt = kitty::extend_to<NInputs>( gate.function );
-      auto [tt_np, neg, perm] = kitty::exact_npn_canonization( tt );
-      /* from NPN class to NP */
-      if ( ( ( neg >> NInputs ) & 1 ) == 1 )
+      uint32_t np_count = 0;
+
+      const auto on_np = [&]( auto const& tt, auto neg, auto const& perm ) {
+        supergate<NInputs> sg;
+        sg.root = &gate;
+        sg.id = id;
+        sg.area = gate.area;
+        sg.worstDelay = gate.delay;
+        sg.polarity = 0;
+        sg.permutation = perm;
+
+        for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
+        {
+          sg.tdelay[i] = gate.delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
+          sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i;
+        }
+        for ( auto i = perm.size(); i < NInputs; ++i )
+        {
+          sg.tdelay[i] = 0; /* added for completeness but not necessary */
+        }
+
+        const auto static_tt = kitty::extend_to<NInputs>( tt );
+
+        auto& v = _super_lib[static_tt];
+
+        /* ordered insert by ascending area and number of input pins */
+        auto it = std::lower_bound( v.begin(), v.end(), sg, [&]( auto const& s1, auto const& s2 ) {
+          if ( s1.area < s2.area )
+            return true;
+          if ( s1.area > s2.area )
+            return false;
+          if ( s1.root->num_vars < s2.root->num_vars )
+            return true;
+          if ( s1.root->num_vars > s2.root->num_vars )
+            return true;
+          return s1.id < s2.id;
+        } );
+
+        bool to_add = true;
+        /* search for duplicated element due to simmetries */
+        while ( it != v.end() )
+        {
+          if ( sg.id == it->id )
+          {
+            /* if already in the library exit, else ignore permutations if with equal delay cost */
+            if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
+            {
+              to_add = false;
+              break;
+            }
+          }
+          else
+          {
+            break;
+          }
+          ++it;
+        }
+
+        if ( to_add )
+        {
+          v.insert( it, sg );
+          ++np_count;
+        }
+
+        /* check correct results */
+        // assert( gate.function == create_from_npn_config( std::make_tuple( tt, neg, sg.permutation ) ) );
+      };
+
+      /* NP enumeration of the function */
+      const auto tt = gate.function;
+      kitty::exact_np_enumeration( tt, on_np );
+
+      if ( ps.verbose )
       {
-        tt_np = ~tt_np;
+        std::cout << "Gate " << gate.name << ", num_vars = " << gate.num_vars << ", np entries = " << np_count << std::endl;
       }
-      /* initialize gate info */
-      supergate<NInputs> sg;
-      sg.root = &gate;
-      sg.area = gate.area;
-      sg.worstDelay = gate.delay;
-      sg.polarity = 0;
-      /* a permutation index points to the new input at that position */
-      for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
-      {
-        sg.permutation[perm[i]] = i;
-        sg.tdelay[perm[i]] = gate.delay;
-        sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i;
-      }
-      _super_lib[tt_np].push_back( sg );
+      ++id;
     }
 
-    for ( auto const& entry : _super_lib )
+    if ( ps.very_verbose )
     {
-      kitty::print_hex( entry.first );
-      std::cout << ": ";
-      for ( auto const& gate : entry.second )
+      for ( auto const& entry : _super_lib )
       {
-        printf( "%s(%.2f, %.2f) ", gate.root->name.c_str(), gate.worstDelay, gate.area );
+        kitty::print_hex( entry.first );
+        std::cout << ": ";
+        for ( auto const& gate : entry.second )
+        {
+          printf( "%s(d:%.2f, a:%.2f, p:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity );
+        }
+        std::cout << std::endl;
       }
-      std::cout << std::endl;
     }
   }
 
 private:
+  /* inverter info */
   float inv_area;
   float inv_delay;
-  unsigned max_size;
+
+  unsigned max_size; /* max #fanins of the gates in the library */
+
+  /* collection of gates */
   std::vector<gate> _gates;
-  std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>> _super_lib;
+
+  tech_library_params ps;
+  lib_t _super_lib; /* library of enumerated gates */
 };
 
 

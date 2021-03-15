@@ -62,7 +62,7 @@ struct map_params
   {
     cut_enumeration_ps.cut_size = 4;
     cut_enumeration_ps.cut_limit = 8;
-    cut_enumeration_ps.minimize_truth_table = false;
+    cut_enumeration_ps.minimize_truth_table = true;
   }
 
   /*! \brief Parameters for cut enumeration

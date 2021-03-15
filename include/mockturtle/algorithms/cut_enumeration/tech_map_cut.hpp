@@ -60,17 +60,15 @@ template<bool ComputeTruth>
 bool operator<( cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c1, cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c2 )
 {
   constexpr auto eps{0.005f};
+  if ( c1.size() < c2.size() )
+    return true;
   if ( c1.size() > c2.size() )
     return false;
   if ( c1->data.flow < c2->data.flow - eps )
     return true;
   if ( c1->data.flow > c2->data.flow + eps )
     return false;
-  if ( c1->data.delay < c2->data.delay )
-    return true;
-  if ( c1->data.delay > c2->data.delay )
-    return false;
-  return c1.size() < c2.size();
+  return c1->data.delay < c2->data.delay;
 }
 
 template<>

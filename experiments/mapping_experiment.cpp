@@ -268,6 +268,17 @@ void tech_map()
       std::abort();
       return;
     }
+  // for ( const auto& b : local_benchmarks_iwls )
+  // {
+  //   std::string filename{"../test/assets/"};
+  //   filename = filename + b + ".aig";
+  //   mockturtle::aig_network inet;
+  //   if ( lorina::read_aiger( filename, mockturtle::aiger_reader( inet ) ) != lorina::return_code::success )
+  //   {
+  //     std::cout << "ERROR IN" << std::endl;
+  //     std::abort();
+  //     return;
+  //   }
     mockturtle::depth_view inet_d{inet};
     printf( "###################################################\n");
     printf( "[i] read_benchmark %s\n", b.c_str() );
@@ -283,14 +294,14 @@ void tech_map()
     ps.skip_delay_round = false;
     ps.area_flow_rounds = 1;
     // ps.required_time = 12000;
-    ps.ela_rounds = 1;
+    ps.ela_rounds = 2;
     mockturtle::map_stats mst;
 
     auto res = mockturtle::tech_mapping( net, lib, ps, &mst );
 
-    // mockturtle::depth_view res_d{res};
-    // printf( "[i] KLUT: i/o = %d / %d n = %d / %d depth = %d\n",
-    //         res.num_pis(), res.num_pos(), res.num_gates(), res.size(), res_d.depth() );
+    mockturtle::depth_view res_d{res};
+    printf( "[i] KLUT: i/o = %d / %d n = %d / %d depth = %d\n",
+            res.num_pis(), res.num_pos(), res.num_gates(), res.size(), res_d.depth() );
 
     // auto result = abc_cec_benchmark( res, filename );
     // assert( result );
