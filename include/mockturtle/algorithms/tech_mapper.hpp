@@ -1085,7 +1085,7 @@ private:
     klut_map old2new;
 
     old2new[ntk.node_to_index( ntk.get_node( ntk.get_constant( false ) ) )][0] = dest.get_constant( false );
-    old2new[ntk.node_to_index( ntk.get_node( ntk.get_constant( false ) ) )][1] = dest.get_constant( false );
+    old2new[ntk.node_to_index( ntk.get_node( ntk.get_constant( false ) ) )][1] = dest.get_constant( true );
     
     ntk.foreach_pi( [&]( auto const& n ) {
       old2new[ntk.node_to_index( n )][0] = dest.create_pi();
