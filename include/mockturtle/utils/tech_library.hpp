@@ -154,7 +154,7 @@ private:
         for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
         {
           sg.tdelay[i] = gate.delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
-          sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i;
+          sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
         }
         for ( auto i = perm.size(); i < NInputs; ++i )
         {
@@ -179,7 +179,7 @@ private:
         } );
 
         bool to_add = true;
-        /* search for duplicated element due to simmetries */
+        /* search for duplicated element due to symmetries */
         while ( it != v.end() )
         {
           if ( sg.id == it->id )

@@ -165,7 +165,7 @@ public:
         st( st ),
         node_match( ntk.size() ),
         matches(),
-        cuts( cut_enumeration<Ntk, true, CutData>( ntk, ps.cut_enumeration_ps ) )
+        cuts( cut_enumeration<Ntk, true, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
   {
     map_update_cuts<CutData>().apply( cuts, ntk );
     std::tie( lib_inv_area, lib_inv_delay ) = library.get_inverter_info();
@@ -173,7 +173,7 @@ public:
 
   klut_network run()
   {
-    stopwatch t( st.time_total );
+    stopwatch t( st.time_mapping );
 
     auto [res, old2new] = initialize_map_network();
 
@@ -1159,18 +1159,17 @@ private:
     auto const& node_data = node_match[index];
     auto& best_cut = cuts.cuts( index )[node_data.best_cut[phase]];
     auto const gate = node_data.best_supergate[phase]->root;
-    auto tt = cuts.truth_table( best_cut );
+    // auto tt = cuts.truth_table( best_cut );
 
+    /* check correctness */
     /* invert the truth table if using the negative phase */
-    if ( phase == 1 )
-      tt = ~tt;
-
+    // if ( phase == 1 )
+    //   tt = ~tt;
     // uint32_t neg = 0;
     // for ( auto i = 0u; i < best_cut.size(); ++i )
     // {
     //   neg |= ( ( node_data.phase[phase] >> i ) & 1 ) << node_data.best_supergate[phase]->permutation[i];
     // }
-
     // auto check_tt = kitty::create_from_npn_config( std::make_tuple( tt, neg, node_data.best_supergate[phase]->permutation ) );
     // assert( gate->function == check_tt );
 
@@ -1280,6 +1279,8 @@ klut_network tech_mapping( Ntk const& ntk, tech_library<NInputs> const& library,
   map_stats st;
   detail::tech_mapping_impl<Ntk, NInputs, CutData> p( ntk, library, ps, st );
   auto res = p.run();
+
+  st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
   if ( ps.verbose )
   {
     st.report();
