@@ -99,6 +99,10 @@ public:
     generate_library();
   }
 
+  ~tech_library ()
+  {
+  }
+
   const std::vector<supergate<NInputs>>* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
     auto match = _super_lib.find( tt );
@@ -107,14 +111,19 @@ public:
     return NULL;
   }
 
-  const std::tuple<float, float> get_inverter_info() const
+  const std::tuple<float, float, std::string> get_inverter_info() const
   {
-    return std::make_pair( inv_area, inv_delay );
+    return std::make_tuple( inv_area, inv_delay, inv_name );
   }
 
   unsigned max_gate_size()
   {
     return max_size;
+  }
+
+  const std::vector<gate> gate_list() const
+  {
+      return _gates;
   }
 
 private:
@@ -130,6 +139,7 @@ private:
         {
           inv_area = gate.area;
           inv_delay = gate.delay;
+          inv_name = gate.name;
         }
       }
       if ( gate.function.num_vars() > NInputs )
@@ -232,12 +242,14 @@ private:
         std::cout << std::endl;
       }
     }
+    
   }
 
 private:
   /* inverter info */
   float inv_area;
   float inv_delay;
+  std::string inv_name{};
 
   unsigned max_size; /* max #fanins of the gates in the library */
 

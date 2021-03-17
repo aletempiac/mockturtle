@@ -90,20 +90,20 @@ namespace mockturtle
  * The data structure `mapper_stats` provides data collected by running
  * `mapper`.
  */
-// struct map_stats
-// {
-//   /* \brief Area and delay */
-//   double area{0};
-//   double delay{0};
-//   /*! \brief Total runtime. */
-//   stopwatch<>::duration time_total{0};
+ //struct map_stats
+ //{
+ //  /* \brief Area and delay */
+ //  double area{0};
+ //  double delay{0};
+ //  /*! \brief Total runtime. */
+ //  stopwatch<>::duration time_total{0};
 
-//   void report() const
-//   {
-//     std::cout << fmt::format( "[i] area = {:>5.2f}; delay = {:>5.2f}\n", area, delay );
-//     std::cout << fmt::format( "[i] total time = {:>5.2f} secs\n", to_seconds( time_total ) );
-//   }
-// };
+ //  void report() const
+ //  {
+ //    std::cout << fmt::format( "[i] area = {:>5.2f}; delay = {:>5.2f}\n", area, delay );
+ //    std::cout << fmt::format( "[i] total time = {:>5.2f} secs\n", to_seconds( time_total ) );
+ //  }
+ //};
 
 /* function to update all cuts after cut enumeration */
 // template<typename CutData>
@@ -157,7 +157,7 @@ public:
   using supergate_t = std::array<std::vector<supergate<NInputs>> const*, 2>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
 
-public:
+public: 
   tech_mapping_impl( Ntk const& ntk, tech_library<NInputs> const& library, map_params const& ps, map_stats& st )
       : ntk( ntk ),
         library( library ),
@@ -168,7 +168,10 @@ public:
         cuts( cut_enumeration<Ntk, true, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
   {
     map_update_cuts<CutData>().apply( cuts, ntk );
-    std::tie( lib_inv_area, lib_inv_delay ) = library.get_inverter_info();
+    auto res = library.get_inverter_info();
+    lib_inv_area = std::get<0> ( res );
+    lib_inv_delay = std::get<1> ( res );
+    lib_inv_name = std::get<2> ( res );
   }
 
   klut_network run()
@@ -220,8 +223,82 @@ public:
 
     /* generate the output network */
     finalize_cover( res, old2new );
-
     return res;
+  }
+
+  void print_gates() 
+  {
+      std::map<std::string, uint32_t> gate_profile;
+      gate_profile.insert( std::make_pair( lib_inv_name, 0u ) );
+
+      ntk.foreach_node( [&]( auto const& n, auto ) {
+              if ( ntk.is_constant( n ) )
+              return true;
+
+              const auto index = ntk.node_to_index( n );
+              auto& node_data = node_match[index];
+              if ( ntk.is_pi( n ) )
+              {
+              if ( node_match[index].map_refs[1] > 0 )
+              {
+              gate_profile[lib_inv_name]++;  
+              }
+              return true;
+              }
+
+              /* continue if cut is not in the cover */
+              if ( node_match[index].map_refs[2] == 0u )
+              {
+              return true;
+              }
+
+              unsigned phase = ( node_data.best_supergate[0] != NULL ) ? 0 : 1;
+              if (node_data.best_supergate[0] != NULL)
+              {
+                  if(gate_profile.find(node_data.best_supergate[0]->root->name) != gate_profile.end())
+                      gate_profile[node_data.best_supergate[0]->root->name]++;
+                  else
+                      gate_profile.insert(std::make_pair(node_data.best_supergate[0]->root->name,1u));
+              }
+              else if (node_data.best_supergate[1] != NULL)
+              {
+                  if(gate_profile.find(node_data.best_supergate[1]->root->name) != gate_profile.end())
+                      gate_profile[node_data.best_supergate[1]->root->name]++;
+                  else
+                      gate_profile.insert(std::make_pair(node_data.best_supergate[1]->root->name,1u));
+              }
+
+              if ( node_data.same_match && node_data.map_refs[phase ^ 1] > 0 )
+                  gate_profile[lib_inv_name]++;  
+
+              return true;
+      });
+
+      double tmp_area{0.0};
+      double tmp_instance{0.0};
+      for ( auto& it : gate_profile ) 
+      {
+          for ( auto& g: library.gate_list( ) )
+          {
+              if ( it.first == g.name )
+              {
+                  std::cout << std::setw( 1 ) << it.first 
+                      << std::setw( 20 ) << "\t Instance = \t " 
+                      << std::setw( 20 ) << it.second 
+                      << std::setw( 20 ) << "\t Area = \t" 
+                      << std::setw( 20 ) << it.second * g.area 
+                      << std::endl;
+                  tmp_instance += it.second;
+                  tmp_area += it.second * g.area;
+              }
+          }
+      }
+      std::cout << std::setw( 1 )  << "TOTAL  " 
+          << std::setw( 20 ) << "\t Instance = \t " 
+          << std::setw( 20 ) << tmp_instance 
+          << std::setw( 20 ) << "\t Area = \t" 
+          << std::setw( 20 ) << tmp_area 
+          << std::endl;
   }
 
 private:
@@ -1241,7 +1318,7 @@ private:
 
 private:
   Ntk const& ntk;
-  tech_library<NInputs> const& library;
+  tech_library<NInputs> const library;
   map_params const& ps;
   map_stats& st;
 
@@ -1253,6 +1330,7 @@ private:
   /* lib inverter info */
   float lib_inv_area;
   float lib_inv_delay;
+  std::string lib_inv_name;
 
   std::vector<node<Ntk>> top_order;
   std::vector<node_match_tech<NInputs>> node_match;
@@ -1284,6 +1362,7 @@ klut_network tech_mapping( Ntk const& ntk, tech_library<NInputs> const& library,
   if ( ps.verbose )
   {
     st.report();
+    p.print_gates();
   }
 
   if ( pst )
