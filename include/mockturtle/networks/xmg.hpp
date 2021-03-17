@@ -296,10 +296,6 @@ public:
     {
       return ( b.complement == c.complement ) ? b : a;
     }
-    else if ( a.index == b.index == c.index )
-    {
-      return ( a.complement == b.complement ) ? a : c;
-    }
 
     /*  complemented edges minimization */
     auto node_complement = false;

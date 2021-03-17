@@ -379,6 +379,7 @@ struct exact_xmg_resynthesis_params
   uint32_t num_candidates{10u};
   bool use_only_self_dual_gates{false};
   bool use_xor3{true};
+  int conflict_limit{0};
 };
 
 /*! \brief Resynthesis function based on exact synthesis for XMGs.
@@ -413,6 +414,10 @@ public:
   template<typename LeavesIterator, typename TT, typename Fn>
   void operator()( Ntk& ntk, TT const& function, LeavesIterator begin, LeavesIterator end, Fn&& fn ) const
   {
+
+    //std::cout << "exact: " ;
+    //kitty::print_binary(function);
+    //std::cout << std::endl;
     static_assert( kitty::is_complete_truth_table<TT>::value, "Truth table must be complete" );
 
     using signal = mockturtle::signal<Ntk>;
@@ -568,10 +573,11 @@ public:
       assert( chain.get_outputs().size() > 0u );
       uint32_t const output_index = ( chain.get_outputs()[0u] >> 1u );
       auto const output_signal = output_index == 0u ? ntk.get_constant( false ) : signals[output_index - 1];
-      if ( !fn( chain.is_output_inverted( 0 ) ^ normal ? output_signal : !output_signal ) )
+      if ( !(fn( chain.is_output_inverted( 0 ) ^ normal ? output_signal : !output_signal ) ) )
       {
         return; /* quit */
       }
+      //fn( chain.is_output_inverted( 0 ) ^ normal ? output_signal : !output_signal ); 
     }
   }
 
