@@ -401,17 +401,17 @@ private:
     {
       const auto index = ntk.node_to_index( *it );
       /* skip constants and PIs */
-      if ( ntk.is_pi( *it ) )
+      if ( ntk.is_constant( *it ) )
+      {
+        continue;
+      }
+      else if ( ntk.is_pi( *it ) )
       {
         if ( node_match[index].map_refs[1] > 0u )
         {
           /* Add inverter area over the negated fanins */
           area += lib_inv_area;
         }
-        continue;
-      }
-      else if ( ntk.is_constant( *it ) )
-      {
         continue;
       }
 

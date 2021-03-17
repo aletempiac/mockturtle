@@ -62,7 +62,7 @@ struct tech_library_params
 template<unsigned NInputs>
 struct supergate
 {
-  struct gate *root;
+  struct gate const* root;
 
   uint8_t id;
 
@@ -88,7 +88,7 @@ class tech_library
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>>;
 
 public:
-  tech_library( std::vector<gate> gates, tech_library_params ps = {} )
+  tech_library( std::vector<gate> const gates, tech_library_params const ps = {} )
     : inv_area( 0 ),
       inv_delay( 0 ),
       max_size( 0 ),
@@ -242,9 +242,8 @@ private:
   unsigned max_size; /* max #fanins of the gates in the library */
 
   /* collection of gates */
-  std::vector<gate> _gates;
-
-  tech_library_params ps;
+  std::vector<gate> const _gates;
+  tech_library_params const ps;
   lib_t _super_lib; /* library of enumerated gates */
 };
 
