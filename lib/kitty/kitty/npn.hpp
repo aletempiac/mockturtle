@@ -287,7 +287,8 @@ void exact_np_enumeration( const TT& tt, Callback&& fn )
   /* Special case for n = 0 || n == 1 */
   if ( num_vars == 0 || num_vars == 1 )
   {
-    return std::make_tuple( tt, static_cast<uint32_t>( 0 ), std::vector<uint8_t>{} );
+    fn(tt, static_cast<uint32_t>( 0 ), std::vector<uint8_t>{} );
+    return;
   }
 
   assert( num_vars >= 2 && num_vars <= 6 );
