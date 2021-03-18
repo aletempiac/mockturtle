@@ -1163,7 +1163,7 @@ template<typename Ntk, unsigned NInputs>
 struct cut_match_t
 {
   std::vector<exact_supergate<Ntk, NInputs>> const* supergates[2] = {NULL, NULL};
-  std::array<uint8_t, NInputs> permutation;
+  std::array<uint8_t, NInputs> permutation{};
   uint8_t negation{0};
 };
 
@@ -1190,8 +1190,6 @@ class tech_map_impl
 public:
   using network_cuts_t = network_cuts<Ntk, true, CutData>;
   using cut_t = typename network_cuts_t::cut_t;
-  using ref_t = std::array<uint32_t, 3>;
-  using ref_est_t = std::array<float, 3>;
 
 public:
   tech_map_impl( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs> const& library, map_params const& ps, map_stats& st )
