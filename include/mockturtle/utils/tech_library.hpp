@@ -64,8 +64,6 @@ struct supergate
 {
   struct gate const* root;
 
-  uint8_t id;
-
   /* area */
   float area;
   /* worst delay */
@@ -84,23 +82,15 @@ struct supergate
 template<unsigned NInputs = 5u>
 class tech_library
 {
-
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>>;
 
 public:
   tech_library( std::vector<gate> const gates, tech_library_params const ps = {} )
-    : inv_area( 0 ),
-      inv_delay( 0 ),
-      max_size( 0 ),
-      _gates( gates ),
-      ps ( ps ),
+    : _gates( gates ),
+      _ps ( ps ),
       _super_lib()
   {
     generate_library();
-  }
-
-  ~tech_library ()
-  {
   }
 
   const std::vector<supergate<NInputs>>* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
@@ -111,9 +101,9 @@ public:
     return NULL;
   }
 
-  const std::tuple<float, float, std::string> get_inverter_info() const
+  const std::tuple<float, float, uint32_t> get_inverter_info() const
   {
-    return std::make_tuple( inv_area, inv_delay, inv_name );
+    return std::make_tuple( inv_area, inv_delay, inv_id );
   }
 
   unsigned max_gate_size()
@@ -121,7 +111,7 @@ public:
     return max_size;
   }
 
-  const std::vector<gate> gate_list() const
+  const std::vector<gate> get_gates() const
   {
       return _gates;
   }
@@ -129,7 +119,6 @@ public:
 private:
   void generate_library()
   {
-    uint8_t id = 0;
     for ( auto& gate : _gates )
     {
       if ( gate.function.num_vars() == 1 )
@@ -139,7 +128,7 @@ private:
         {
           inv_area = gate.area;
           inv_delay = gate.delay;
-          inv_name = gate.name;
+          inv_id = gate.id;
         }
       }
       if ( gate.function.num_vars() > NInputs )
@@ -155,7 +144,6 @@ private:
       const auto on_np = [&]( auto const& tt, auto neg, auto const& perm ) {
         supergate<NInputs> sg;
         sg.root = &gate;
-        sg.id = id;
         sg.area = gate.area;
         sg.worstDelay = gate.delay;
         sg.polarity = 0;
@@ -185,14 +173,14 @@ private:
             return true;
           if ( s1.root->num_vars > s2.root->num_vars )
             return true;
-          return s1.id < s2.id;
+          return s1.root->id < s2.root->id;
         } );
 
         bool to_add = true;
         /* search for duplicated element due to symmetries */
         while ( it != v.end() )
         {
-          if ( sg.id == it->id )
+          if ( sg.root->id == it->root->id )
           {
             /* if already in the library exit, else ignore permutations if with equal delay cost */
             if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
@@ -222,14 +210,13 @@ private:
       const auto tt = gate.function;
       kitty::exact_np_enumeration( tt, on_np );
 
-      if ( ps.verbose )
+      if ( _ps.verbose )
       {
         std::cout << "Gate " << gate.name << ", num_vars = " << gate.num_vars << ", np entries = " << np_count << std::endl;
       }
-      ++id;
     }
 
-    if ( ps.very_verbose )
+    if ( _ps.very_verbose )
     {
       for ( auto const& entry : _super_lib )
       {
@@ -242,20 +229,18 @@ private:
         std::cout << std::endl;
       }
     }
-    
   }
 
 private:
   /* inverter info */
-  float inv_area;
-  float inv_delay;
-  std::string inv_name{};
+  float inv_area{0.0};
+  float inv_delay{0.0};
+  uint32_t inv_id{0};
 
-  unsigned max_size; /* max #fanins of the gates in the library */
+  unsigned max_size{0}; /* max #fanins of the gates in the library */
 
-  /* collection of gates */
-  std::vector<gate> const _gates;
-  tech_library_params const ps;
+  std::vector<gate> const _gates; /* collection of gates */
+  tech_library_params const _ps;
   lib_t _super_lib; /* library of enumerated gates */
 };
 

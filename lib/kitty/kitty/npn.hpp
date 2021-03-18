@@ -284,10 +284,17 @@ void exact_np_enumeration( const TT& tt, Callback&& fn )
 
   const auto num_vars = tt.num_vars();
 
-  /* Special case for n = 0 || n == 1 */
-  if ( num_vars == 0 || num_vars == 1 )
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
   {
-    fn(tt, static_cast<uint32_t>( 0 ), std::vector<uint8_t>{} );
+    fn( tt, 0u, std::vector<uint8_t>{} );
+    return;
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    fn( tt, 0u, std::vector<uint8_t>{0} );
     return;
   }
 

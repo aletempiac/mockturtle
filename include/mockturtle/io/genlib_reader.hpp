@@ -45,6 +45,7 @@ struct gate
 {
   std::string name;
   std::string expression;
+  uint32_t id;
   uint32_t num_vars;
   kitty::dynamic_truth_table function;
   double area;
@@ -88,8 +89,8 @@ public:
     kitty::dynamic_truth_table tt{num_vars};
     create_from_expression( tt, expression );
 
-    gates.emplace_back( gate{name, expression, num_vars, tt,
-                             area, delay ? *delay : 1.0} );
+    gates.emplace_back( gate{name, expression, static_cast<uint32_t>( gates.size() ),
+                             num_vars, tt, area, delay ? *delay : 1.0} );
   }
 
 protected:
