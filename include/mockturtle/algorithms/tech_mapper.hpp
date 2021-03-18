@@ -264,7 +264,7 @@ public:
       }
 
       return true;
-    });
+    } );
 
     double tot_area = 0.0f;
     uint32_t tot_instances = 0u;
@@ -358,10 +358,7 @@ private:
         auto const supergates_neg = library.get_supergates( ~fe );
         if ( supergates_pos != NULL || supergates_neg != NULL )
         {
-          supergate_t match;
-
-          match[0] = supergates_pos;
-          match[1] = supergates_neg;
+          supergate_t match{supergates_pos, supergates_neg};
 
           node_matches.push_back( match );
           ( *cut )->data.match_index = i++;

@@ -35,7 +35,6 @@
 #include <cassert>
 #include <vector>
 #include <unordered_map>
-#include <optional>
 
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
