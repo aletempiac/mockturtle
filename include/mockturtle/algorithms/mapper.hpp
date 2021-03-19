@@ -1162,7 +1162,7 @@ namespace detail
 template<typename Ntk, unsigned NInputs>
 struct cut_match_t
 {
-  std::vector<exact_supergate<Ntk, NInputs>> const* supergates[2] = {NULL, NULL};
+  std::vector<exact_supergate<Ntk, NInputs>> const* supergates[2] = {nullptr, nullptr};
   std::array<uint8_t, NInputs> permutation{};
   uint8_t negation{0};
 };
@@ -1170,7 +1170,7 @@ struct cut_match_t
 template<typename Ntk, unsigned NInputs>
 struct node_match_t
 {
-  exact_supergate<Ntk, NInputs> const* best_supergate[2] = {NULL, NULL};
+  exact_supergate<Ntk, NInputs> const* best_supergate[2] = {nullptr, nullptr};
   uint8_t phase[2];
   uint32_t best_cut[2];
   bool same_match{false};
@@ -1305,15 +1305,15 @@ private:
         const auto config = kitty::exact_npn_canonization( fe );
         auto const supergates_npn = library.get_supergates( std::get<0>( config ) );
         auto const supergates_npn_neg = library.get_supergates( ~std::get<0>( config ) );
-        if ( supergates_npn != NULL || supergates_npn_neg != NULL )
+        if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
           auto neg = std::get<1>( config );
           auto perm = std::get<2>( config );
           uint8_t phase = ( neg >> NInputs ) & 1;
           cut_match_t<NtkDest, NInputs> match;
-          if ( supergates_npn != NULL )
+          if ( supergates_npn != nullptr )
             match.supergates[phase] = supergates_npn;
-          if ( supergates_npn_neg != NULL )
+          if ( supergates_npn_neg != nullptr )
             match.supergates[phase ^ 1] = supergates_npn_neg;
           match.negation = 0;
           for ( auto j = 0u; j < perm.size() && j < NInputs; ++j )
@@ -1369,7 +1369,7 @@ private:
       /* recursive deselect the best cut in common if used */
       if ( node_data.same_match && node_data.map_refs[2] != 0 )
       {
-        if ( node_data.best_supergate[0] != NULL )
+        if ( node_data.best_supergate[0] != nullptr )
           cut_deref( cuts.cuts( index )[node_data.best_cut[0]], n, 0u );
         else
           cut_deref( cuts.cuts( index )[node_data.best_cut[1]], n, 1u );
@@ -1399,7 +1399,7 @@ private:
       if ( node_match[index].map_refs[2] == 0u )
         return true;
 
-      unsigned phase = ( node_match[index].best_supergate[0] != NULL ) ? 0 : 1;
+      unsigned phase = ( node_match[index].best_supergate[0] != nullptr ) ? 0 : 1;
       auto& best_cut = cuts.cuts( index )[node_match[index].best_cut[phase]];
 
       std::vector<signal<NtkDest>> children( NInputs, res.get_constant( false ) );
@@ -1494,7 +1494,7 @@ private:
 
       auto& node_data = node_match[index];
 
-      unsigned use_phase = node_data.best_supergate[0] == NULL ? 1u : 0u;
+      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
       if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
       {
         if constexpr ( !ELA )
@@ -1587,10 +1587,10 @@ private:
 
       auto& node_data = node_match[i];
 
-      unsigned use_phase = node_data.best_supergate[0] == NULL ? 1u : 0u;
+      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
       unsigned other_phase = use_phase ^ 1;
 
-      assert( node_data.best_supergate[0] != NULL || node_data.best_supergate[1] != NULL );
+      assert( node_data.best_supergate[0] != nullptr || node_data.best_supergate[1] != nullptr );
       assert( node_data.map_refs[0] || node_data.map_refs[1] );
 
       /* propagate required time over output inverter if present */
@@ -1646,7 +1646,7 @@ private:
     exact_supergate<NtkDest, NInputs> const* best_supergate = node_data.best_supergate[phase];
 
     /* recompute best match info */
-    if ( best_supergate != NULL )
+    if ( best_supergate != nullptr )
     {
       auto const& cut = cuts.cuts( index )[node_data.best_cut[phase]];
       auto& supergates = cut_matches[( cut )->data.match_index];
@@ -1682,7 +1682,7 @@ private:
 
       auto const& supergates = cut_matches[( *cut )->data.match_index];
 
-      if ( supergates.supergates[phase] == NULL )
+      if ( supergates.supergates[phase] == nullptr )
       {
         cut_index++;
         continue;
@@ -1753,7 +1753,7 @@ private:
 
 
     /* recompute best match info */
-    if ( best_supergate != NULL )
+    if ( best_supergate != nullptr )
     {
       auto const& cut = cuts.cuts( index )[node_data.best_cut[phase]];
       auto const& supergates = cut_matches[( cut )->data.match_index];
@@ -1799,7 +1799,7 @@ private:
 
       auto const& supergates = cut_matches[( *cut )->data.match_index];
 
-      if ( supergates.supergates[phase] == NULL )
+      if ( supergates.supergates[phase] == nullptr )
       {
         cut_index++;
         continue;
@@ -1870,7 +1870,7 @@ private:
     bool use_one = false;
 
     /* only one phase is matched */
-    if ( node_data.best_supergate[0] == NULL )
+    if ( node_data.best_supergate[0] == nullptr )
     {
       set_match_complemented_phase( index, 1, worst_arrival_npos );
       if constexpr ( ELA )
@@ -1880,7 +1880,7 @@ private:
       }
       return;
     }
-    else if ( node_data.best_supergate[1] == NULL )
+    else if ( node_data.best_supergate[1] == nullptr )
     {
       set_match_complemented_phase( index, 0, worst_arrival_nneg );
       if constexpr ( ELA )
@@ -1988,7 +1988,7 @@ private:
     auto& node_data = node_match[index];
     auto phase_n = phase ^ 1;
     node_data.same_match = true;
-    node_data.best_supergate[phase_n] = NULL;
+    node_data.best_supergate[phase_n] = nullptr;
     node_data.best_cut[phase_n] = node_data.best_cut[phase];
     node_data.phase[phase_n] = node_data.phase[phase] ^ ( 1 << NInputs );
     node_data.arrival[phase_n] = worst_arrival_n;
@@ -2033,7 +2033,7 @@ private:
       if ( node_match[leaf].same_match )
       {
         /* Add inverter area if not present yet and leaf node is implemented in the opposite phase */
-        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u && node_match[leaf].best_supergate[leaf_phase] == NULL )
+        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u && node_match[leaf].best_supergate[leaf_phase] == nullptr )
           count += lib_inv_area;
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
@@ -2073,7 +2073,7 @@ private:
       if ( node_match[leaf].same_match )
       {
         /* Add inverter area if it is used only by the current gate and leaf node is implemented in the opposite phase */
-        if ( --node_match[leaf].map_refs[leaf_phase] == 0u && node_match[leaf].best_supergate[leaf_phase] == NULL )
+        if ( --node_match[leaf].map_refs[leaf_phase] == 0u && node_match[leaf].best_supergate[leaf_phase] == nullptr )
           count += lib_inv_area;
         /* Recursive dereferencing */
         if ( --node_match[leaf].map_refs[2] == 0u )

@@ -124,7 +124,7 @@ template<unsigned NInputs>
 struct node_match_tech
 {
   /* best supergate match for positive and negative output phases */
-  supergate<NInputs> const* best_supergate[2] = {NULL, NULL};
+  supergate<NInputs> const* best_supergate[2] = {nullptr, nullptr};
   /* fanin pin phases for both output phases */
   uint8_t phase[2];
   /* best cut index for both phases */
@@ -247,7 +247,7 @@ public:
       if ( node_match[index].map_refs[2] == 0u )
         return true;
 
-      unsigned phase = ( node_data.best_supergate[0] != NULL ) ? 0 : 1;
+      unsigned phase = ( node_data.best_supergate[0] != nullptr ) ? 0 : 1;
 
       if ( node_data.same_match || node_data.map_refs[phase] > 0 )
       {
@@ -356,7 +356,7 @@ private:
         const auto fe = kitty::extend_to<NInputs>( tt );
         auto const supergates_pos = library.get_supergates( fe );
         auto const supergates_neg = library.get_supergates( ~fe );
-        if ( supergates_pos != NULL || supergates_neg != NULL )
+        if ( supergates_pos != nullptr || supergates_neg != nullptr )
         {
           supergate_t match{supergates_pos, supergates_neg};
 
@@ -408,7 +408,7 @@ private:
       /* recursive deselect the best cut in common if is use in the cover */
       if ( node_data.same_match && node_data.map_refs[2] != 0 )
       {
-        if ( node_data.best_supergate[0] != NULL )
+        if ( node_data.best_supergate[0] != nullptr )
           cut_deref( cuts.cuts( index )[node_data.best_cut[0]], n, 0u );
         else
           cut_deref( cuts.cuts( index )[node_data.best_cut[1]], n, 1u );
@@ -484,9 +484,9 @@ private:
         continue;
 
       auto& node_data = node_match[index];
-      unsigned use_phase = node_data.best_supergate[0] == NULL ? 1u : 0u;
+      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
 
-      if ( node_data.best_supergate[use_phase] == NULL )
+      if ( node_data.best_supergate[use_phase] == nullptr )
       {
         /* Library is not complete, mapping is not possible */
         std::cerr << "MAP ERROR: technology library is not complete, impossible to perform mapping" << std::endl;
@@ -600,10 +600,10 @@ private:
 
       auto& node_data = node_match[i];
 
-      unsigned use_phase = node_data.best_supergate[0] == NULL ? 1u : 0u;
+      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
       unsigned other_phase = use_phase ^ 1;
 
-      assert( node_data.best_supergate[0] != NULL || node_data.best_supergate[1] != NULL );
+      assert( node_data.best_supergate[0] != nullptr || node_data.best_supergate[1] != nullptr );
       assert( node_data.map_refs[0] || node_data.map_refs[1] );
 
       /* propagate required time over the output inverter if present */
@@ -657,7 +657,7 @@ private:
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
 
     /* recompute best match info */
-    if ( best_supergate != NULL )
+    if ( best_supergate != nullptr )
     {
       auto const& cut = cuts.cuts( index )[node_data.best_cut[phase]];
 
@@ -689,7 +689,7 @@ private:
 
       auto const& supergates = cut_matches[( *cut )->data.match_index];
 
-      if ( supergates[phase] == NULL )
+      if ( supergates[phase] == nullptr )
       {
         ++cut_index;
         continue;
@@ -755,7 +755,7 @@ private:
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
 
     /* recompute best match info */
-    if ( best_supergate != NULL )
+    if ( best_supergate != nullptr )
     {
       auto const& cut = cuts.cuts( index )[node_data.best_cut[phase]];
 
@@ -797,7 +797,7 @@ private:
 
       auto const& supergates = cut_matches[( *cut )->data.match_index];
 
-      if ( supergates[phase] == NULL )
+      if ( supergates[phase] == nullptr )
       {
         ++cut_index;
         continue;
@@ -864,7 +864,7 @@ private:
     bool use_one = false;
 
     /* only one phase is matched */
-    if ( node_data.best_supergate[0] == NULL )
+    if ( node_data.best_supergate[0] == nullptr )
     {
       set_match_complemented_phase( index, 1, worst_arrival_npos );
       if constexpr ( ELA )
@@ -874,7 +874,7 @@ private:
       }
       return;
     }
-    else if ( node_data.best_supergate[1] == NULL )
+    else if ( node_data.best_supergate[1] == nullptr )
     {
       set_match_complemented_phase( index, 0, worst_arrival_nneg );
       if constexpr ( ELA )
@@ -1012,7 +1012,7 @@ private:
     auto& node_data = node_match[index];
     auto phase_n = phase ^ 1;
     node_data.same_match = true;
-    node_data.best_supergate[phase_n] = NULL;
+    node_data.best_supergate[phase_n] = nullptr;
     node_data.best_cut[phase_n] = node_data.best_cut[phase];
     node_data.phase[phase_n] = node_data.phase[phase];
     node_data.arrival[phase_n] = worst_arrival_n;
@@ -1070,7 +1070,7 @@ private:
       if ( node_match[leaf].same_match )
       {
         /* Add inverter area if not present yet and leaf node is implemented in the opposite phase */
-        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u && node_match[leaf].best_supergate[leaf_phase] == NULL )
+        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u && node_match[leaf].best_supergate[leaf_phase] == nullptr )
           count += lib_inv_area;
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
@@ -1122,7 +1122,7 @@ private:
       if ( node_match[leaf].same_match )
       {
         /* Add inverter area if it is used only by the current gate and leaf node is implemented in the opposite phase */
-        if ( --node_match[leaf].map_refs[leaf_phase] == 0u && node_match[leaf].best_supergate[leaf_phase] == NULL )
+        if ( --node_match[leaf].map_refs[leaf_phase] == 0u && node_match[leaf].best_supergate[leaf_phase] == nullptr )
           count += lib_inv_area;
         /* Recursive dereferencing */
         if ( --node_match[leaf].map_refs[2] == 0u )
@@ -1177,7 +1177,7 @@ private:
         return true;
 
       auto const& node_data = node_match[index];
-      unsigned phase = ( node_data.best_supergate[0] != NULL ) ? 0 : 1;
+      unsigned phase = ( node_data.best_supergate[0] != nullptr ) ? 0 : 1;
 
       /* add used cut */
       if ( node_data.same_match || node_data.map_refs[phase] > 0 )

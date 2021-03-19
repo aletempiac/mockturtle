@@ -24,8 +24,8 @@
  */
 
 /*!
-  \file gates.hpp
-  \brief Implements utilities to manage and create gates
+  \file tech_library.hpp
+  \brief Implements utilities to enumerates gates for technology mapping
 
   \author Alessandro Tempia Calvino
 */
@@ -81,7 +81,9 @@ struct supergate
 template<unsigned NInputs = 5u>
 class tech_library
 {
-  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<supergate<NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>>;
+  using supergates_list_t = std::vector<supergate<NInputs>>;
+  using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
+  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
 
 public:
   tech_library( std::vector<gate> const gates, tech_library_params const ps = {} )
@@ -92,12 +94,12 @@ public:
     generate_library();
   }
 
-  const std::vector<supergate<NInputs>>* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
     auto match = _super_lib.find( tt );
     if ( match != _super_lib.end() )
       return &match->second;
-    return NULL;
+    return nullptr;
   }
 
   const std::tuple<float, float, uint32_t> get_inverter_info() const
@@ -290,6 +292,9 @@ struct exact_library_params
 template<typename Ntk, class RewritingFn, unsigned NInputs>
 class exact_library
 {
+  using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
+  using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
+  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
 
 public:
   exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
@@ -302,12 +307,12 @@ public:
     generate_library();
   }
 
-  const std::vector<exact_supergate<Ntk, NInputs>>* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
     auto match = super_lib.find( tt );
     if ( match != super_lib.end() )
       return &match->second;
-    return NULL;
+    return nullptr;
   }
 
   const Ntk &get_database() const
@@ -330,7 +335,7 @@ private:
     }
 
     /* Compute NPN classes */
-    std::unordered_set<kitty::static_truth_table<NInputs>, kitty::hash<kitty::static_truth_table<NInputs>>> classes;
+    std::unordered_set<kitty::static_truth_table<NInputs>, tt_hash> classes;
     kitty::static_truth_table<NInputs> tt;
     do
     {
@@ -342,8 +347,8 @@ private:
     /* Constuct supergates */
     for ( auto const &entry : classes )
     {
-      std::vector<exact_supergate<Ntk, NInputs>> supergates_pos;
-      std::vector<exact_supergate<Ntk, NInputs>> supergates_neg;
+      supergates_list_t supergates_pos;
+      supergates_list_t supergates_neg;
       auto const not_entry = ~entry;
 
       const auto add_supergate = [&]( auto const& f_new ) {
@@ -464,7 +469,7 @@ private:
   Ntk database;
   RewritingFn const& rewriting_fn;
   exact_library_params const& ps;
-  std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<exact_supergate<Ntk, NInputs>>, kitty::hash<kitty::static_truth_table<NInputs>>> super_lib;
+  lib_t super_lib;
 };
 
 }
