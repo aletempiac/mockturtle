@@ -280,9 +280,9 @@ struct exact_supergate
 struct exact_library_params
 {
   float area_gate{2.5f};
-  float area_inverter{1.0f};
+  float area_inverter{0.0f};
   float delay_gate{1.0f};
-  float delay_inverter{1.0f};
+  float delay_inverter{0.0f};
 
   bool np_classification{true};
   bool verbose{false};
@@ -413,6 +413,7 @@ private:
     /* number of inputs */
     for( auto i = 0u; i < NInputs; ++i )
     {
+      sg.tdelay[i] *= -1;   /* invert to positive value */
       if ( sg.tdelay[i] != 0.0f )
         sg.n_inputs++;
     }

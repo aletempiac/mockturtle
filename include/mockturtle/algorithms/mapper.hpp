@@ -61,7 +61,7 @@ struct map_params
   map_params()
   {
     cut_enumeration_ps.cut_size = 4;
-    cut_enumeration_ps.cut_limit = 8;
+    cut_enumeration_ps.cut_limit = 25;
     cut_enumeration_ps.minimize_truth_table = true;
   }
 
@@ -81,7 +81,7 @@ struct map_params
   uint32_t area_flow_rounds{1u};
 
   /*! \brief Number of rounds for exact area optimization. */
-  uint32_t ela_rounds{1u};
+  uint32_t ela_rounds{2u};
 
   /*! \brief Use structural choices. */
   bool choices{false};
@@ -1207,7 +1207,7 @@ public:
 
   NtkDest run()
   {
-    stopwatch t( st.time_total );
+    stopwatch t( st.time_mapping );
 
     auto [res, old2new] = initialize_copy_network<NtkDest>( ntk );
 
@@ -1493,8 +1493,8 @@ private:
         continue;
 
       auto& node_data = node_match[index];
-
       unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
+
       if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
       {
         if constexpr ( !ELA )
@@ -1561,20 +1561,31 @@ private:
     if ( iteration == 0 )
       return;
 
-    ntk.foreach_po( [&]( auto const& s ) {
-      const auto index = ntk.node_to_index( ntk.get_node( s ) );
-      if ( ps.required_time == 0.0f )
+    auto required = delay;
+
+    if ( ps.required_time != 0.0f )
+    {
+      /* Global target time constraint */
+      if ( ps.required_time < delay - epsilon )
       {
-        node_match[index].required[0] = delay;
-        node_match[index].required[1] = delay;
+        if ( !ps.skip_delay_round && iteration == 1 )
+          std::cerr << fmt::format( "MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
       }
       else
       {
-        node_match[index].required[0] = ps.required_time;
-        node_match[index].required[1] = ps.required_time;
+        required = ps.required_time;
       }
+    }
+
+    ntk.foreach_po( [&]( auto const& s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+      if ( ntk.is_complemented( s ) )
+        node_match[index].required[1] = required;
+      else
+        node_match[index].required[0] = required;
     } );
 
+    /* propagate required time to the PIs */
     auto i = ntk.size();
     while ( i-- > 0u )
     {
@@ -1608,7 +1619,7 @@ private:
         for ( auto leaf : best_cut )
         {
           auto phase = ( node_data.phase[use_phase] >> match.permutation[ctr] ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] + supergate->tdelay[match.permutation[ctr]] );
+          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[match.permutation[ctr]] );
           ctr++;
         }
       }
@@ -1622,7 +1633,7 @@ private:
         for ( auto leaf : best_cut )
         {
           auto phase = ( node_data.phase[other_phase] >> match.permutation[ctr] ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] + supergate->tdelay[match.permutation[ctr]] );
+          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[match.permutation[ctr]] );
           ctr++;
         }
       }
@@ -1665,7 +1676,7 @@ private:
       best_size = cut.size();
       for ( auto pin = 0u; pin < NInputs; pin++ )
       {
-        float arrival_pin = node_match[children[pin]].arrival[( best_phase >> pin ) & 1] - best_supergate->tdelay[pin];
+        float arrival_pin = node_match[children[pin]].arrival[( best_phase >> pin ) & 1] + best_supergate->tdelay[pin];
         best_arrival = std::max( best_arrival, arrival_pin );
       }
     }
@@ -1703,7 +1714,7 @@ private:
         float worst_arrival = 0.0f;
         for ( auto pin = 0u; pin < NInputs; pin++ )
         {
-          float arrival_pin = node_match[children[pin]].arrival[( complement >> pin ) & 1] - gate.tdelay[pin];
+          float arrival_pin = node_match[children[pin]].arrival[( complement >> pin ) & 1] + gate.tdelay[pin];
           worst_arrival = std::max( worst_arrival, arrival_pin );
         }
 
@@ -1771,7 +1782,7 @@ private:
       best_size = cut.size();
       for ( auto pin = 0u; pin < NInputs; pin++ )
       {
-        float arrival_pin = node_match[children[pin]].arrival[( best_phase >> pin ) & 1] - best_supergate->tdelay[pin];
+        float arrival_pin = node_match[children[pin]].arrival[( best_phase >> pin ) & 1] + best_supergate->tdelay[pin];
         best_arrival = std::max( best_arrival, arrival_pin );
       }
 
@@ -1822,7 +1833,7 @@ private:
         float worst_arrival = 0.0f;
         for ( auto pin = 0u; pin < NInputs; pin++ )
         {
-          float arrival_pin = node_match[children[pin]].arrival[( complement >> pin ) & 1] - gate.tdelay[pin];
+          float arrival_pin = node_match[children[pin]].arrival[( complement >> pin ) & 1] + gate.tdelay[pin];
           worst_arrival = std::max( worst_arrival, arrival_pin );
         }
 
@@ -2038,7 +2049,7 @@ private:
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
         {
-          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[phase]], ntk.index_to_node( leaf ), leaf_phase );
+          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       else
@@ -2046,7 +2057,7 @@ private:
         ++node_match[leaf].map_refs[2];
         if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
         {
-          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[phase]], ntk.index_to_node( leaf ), leaf_phase );
+          count += cut_ref( cuts.cuts( leaf )[node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       ++ctr;
@@ -2184,6 +2195,8 @@ NtkDest tech_map( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs> const& 
   map_stats st;
   detail::tech_map_impl<NtkDest, Ntk, RewritingFn, CutData, NInputs> p( ntk, library, ps, st );
   auto res = p.run();
+
+  st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
   if ( ps.verbose )
   {
     st.report();
