@@ -19,7 +19,8 @@ namespace mockturtle
 enum class aqfp_node_resyn_strategy
 {
   cost_based,
-  level_based
+  level_based,
+  mixed,
 };
 
 /*! \brief Parameters for aqfp_node_resyn. */
@@ -121,8 +122,13 @@ struct aqfp_node_resyn
             {
               return ( f.first < s.first || ( f.first == s.first && f.second < s.second ) );
             }
-            else
+            else if (params.strategy == aqfp_node_resyn_strategy::level_based)
             {
+              return ( f.second < s.second || ( f.second == s.second && f.first < s.first ) );
+            } else {
+              if (f.first  >= s.first * 1.2 ) {
+                return false;
+              }
               return ( f.second < s.second || ( f.second == s.second && f.first < s.first ) );
             }
           } );

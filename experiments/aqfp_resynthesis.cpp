@@ -191,6 +191,92 @@ void experiment_aqfp_exact_syn( std::unordered_map<uint32_t, double>& gate_costs
   exp.table();
 }
 
+void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_costs, std::unordered_map<uint32_t, double>& splitters, mockturtle::aqfp_db<>& db3, mockturtle::aqfp_db<>& db5, const std::vector<std::string>& benchmarks )
+{
+  mockturtle::aqfp_network_cost cost_fn( gate_costs, splitters );
+
+  mockturtle::aqfp_node_resyn node_resyn_cst( db3, { splitters, mockturtle::aqfp_node_resyn_strategy::cost_based } );
+  mockturtle::aqfp_node_resyn node_resyn_lvl( db3, { splitters, mockturtle::aqfp_node_resyn_strategy::mixed } );
+  mockturtle::aqfp_node_resyn node_resyn_cst5( db5, { splitters, mockturtle::aqfp_node_resyn_strategy::cost_based } );
+  mockturtle::aqfp_node_resyn node_resyn_lvl5( db5, { splitters, mockturtle::aqfp_node_resyn_strategy::mixed } );
+  mockturtle::aqfp_fanout_resyn fanout_resyn( 4u );
+
+  experiments::experiment<std::string, double, uint32_t, double, uint32_t, double, uint32_t, double, uint32_t> exp( "aqfp_resynthesis", "benchmark", "#JJ (C01)", "LVL (C01)", "#JJ (C10)", "LVL (C10)", "#JJ (L01)", "LVL (L01)", "#JJ (L10)", "LVL (L10)" );
+
+  for ( auto b : benchmarks )
+  {
+    fmt::print( "Processing benchmark {}...\n", b );
+
+    std::string benchmark = fmt::format( "./benchmarks/{}", b );
+    mockturtle::mig_network mig;
+
+    lorina::read_verilog( benchmark, mockturtle::verilog_reader( mig ) );
+    fmt::print( "\tpi: {:4d} po: {:4d} size: {:6d}\n", mig.num_pis(), mig.num_pos(), mig.num_gates() );
+
+    mockturtle::klut_network klut_orig = lut_map( mig, 4 );
+
+    /* 1. Apply cost-based AQFP resynthesis once */
+    mockturtle::aqfp_network opt_aqfp;
+    mockturtle::aqfp_network opt_aqfp5;
+    auto res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_orig, node_resyn_cst, fanout_resyn );
+    auto res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_orig, node_resyn_cst5, fanout_resyn );
+    std::pair<double, uint32_t> res_orig_cst = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
+
+    /* 2. Repeatedly apply cost-based AQFP resynthesis */
+    auto res_opt_cst = res_orig_cst;
+    for ( auto i = 2u; i <= 10u; i++ )
+    {
+      auto klut_opt = lut_map( opt_aqfp, 4 );
+
+      opt_aqfp = mockturtle::aqfp_network();
+      opt_aqfp5 = mockturtle::aqfp_network();
+      res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_opt, node_resyn_cst, fanout_resyn );
+      res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_opt, node_resyn_cst5, fanout_resyn );
+      std::pair<double, uint32_t> res_temp = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
+
+      if ( has_better_cost( res_temp, res_opt_cst ) )
+      {
+        res_opt_cst = res_temp;
+      }
+    }
+
+    assert( abc_cec_aqfp( opt_aqfp, benchmark ) );
+    assert( abc_cec_aqfp( opt_aqfp5, benchmark ) );
+
+    /* 3. Apply level-based AQFP resynthesis once */
+    opt_aqfp = mockturtle::aqfp_network();
+    opt_aqfp5 = mockturtle::aqfp_network();
+    res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_orig, node_resyn_lvl, fanout_resyn );
+    res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_orig, node_resyn_lvl5, fanout_resyn );
+    std::pair<double, uint32_t> res_orig_lvl = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
+
+    /* 4. Repeatedly apply level-based AQFP resynthesis */
+    auto res_opt_lvl = res_orig_lvl;
+    for ( auto i = 2u; i <= 10u; i++ )
+    {
+      auto klut_opt = lut_map( opt_aqfp, 4 );
+
+      opt_aqfp = mockturtle::aqfp_network();
+      opt_aqfp5 = mockturtle::aqfp_network();
+      res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_opt, node_resyn_lvl, fanout_resyn );
+      res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_opt, node_resyn_lvl5, fanout_resyn );
+      std::pair<double, uint32_t> res_temp = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
+
+      if ( has_better_level( res_temp, res_opt_lvl ) )
+      {
+        res_opt_lvl = res_temp;
+      }
+    }
+
+    assert( abc_cec_aqfp( opt_aqfp, benchmark ) );
+
+    exp( b, res_orig_cst.first, res_orig_cst.second, res_opt_cst.first, res_opt_cst.second, res_orig_lvl.first, res_orig_lvl.second, res_opt_lvl.first, res_opt_lvl.second );
+  }
+
+  exp.save();
+  exp.table();
+}
+
 int main( int argc, char** argv )
 {
   (void)argc;
@@ -199,14 +285,32 @@ int main( int argc, char** argv )
   std::unordered_map<uint32_t, double> gate_costs = { { 3u, 6.0 }, { 5u, 10.0 } };
   std::unordered_map<uint32_t, double> splitters = { { 1u, 2.0 }, { 4u, 2.0 } };
 
-  mockturtle::aqfp_db<> db( gate_costs, splitters );
+  mockturtle::aqfp_db<> db3( gate_costs, splitters );
+  mockturtle::aqfp_db<> db5( gate_costs, splitters );
 
-  std::ifstream db_file( "aqfp_db.txt" );
-  assert( db_file.is_open() );
-  db.load_db_from_file( db_file );
-  db_file.close();
+  std::ifstream db_file3( (argc < 2) ? std::string("db1.txt") : std::string(argv[1]) );
+  std::ifstream db_file5( (argc < 3) ? std::string("db12.txt") : std::string(argv[2]) );
+  
+  assert( db_file3.is_open() );
+  assert( db_file5.is_open() );
+  db3.load_db_from_file( db_file3 );
+  db5.load_db_from_file( db_file5 );
+  db_file3.close();
+  db_file5.close();
 
-  experiment_aqfp_exact_syn( gate_costs, splitters, db, mcnc );
+  experiment_aqfp_exact_syn_2( gate_costs, splitters, db3, db5, mcnc );
+
+  /* Old Experiment */
+
+  // mockturtle::aqfp_db<> db( gate_costs, splitters );
+
+  // std::ifstream db_file( (argc < 2) ? std::string("db1.txt") : std::string(argv[1]) );
+  
+  // assert( db_file.is_open() );
+  // db.load_db_from_file( db_file );
+  // db_file.close();
+
+  // experiment_aqfp_exact_syn( gate_costs, splitters, db3, mcnc );
 
   return 0;
 }
