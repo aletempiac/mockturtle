@@ -508,8 +508,8 @@ std::string benchmark_path( std::string const& benchmark_name )
 template<class Ntk>
 bool abc_cec( Ntk const& ntk, std::string const& benchmark )
 {
-  mockturtle::write_bench( ntk, "/tmp/test.bench" );
-  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/test.bench\"", benchmark_path( benchmark ) );
+  mockturtle::write_bench( ntk, "/tmp/xmg_test.bench" );
+  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/xmg_test.bench\"", benchmark_path( benchmark ) );
 
   std::array<char, 128> buffer;
   std::string result;

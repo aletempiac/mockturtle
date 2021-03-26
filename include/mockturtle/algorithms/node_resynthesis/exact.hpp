@@ -414,10 +414,6 @@ public:
   template<typename LeavesIterator, typename TT, typename Fn>
   void operator()( Ntk& ntk, TT const& function, LeavesIterator begin, LeavesIterator end, Fn&& fn ) const
   {
-
-    //std::cout << "exact: " ;
-    //kitty::print_binary(function);
-    //std::cout << std::endl;
     static_assert( kitty::is_complete_truth_table<TT>::value, "Truth table must be complete" );
 
     using signal = mockturtle::signal<Ntk>;

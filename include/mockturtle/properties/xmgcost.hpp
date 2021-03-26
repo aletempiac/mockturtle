@@ -72,6 +72,17 @@ struct xmg_cost_params
   {
     fmt::print( "#total_xor3 = {} / #total_maj = {} / #xor2 = {} / #xor3 = {} / #actual_maj = {} / #remaining_maj = {} \n", total_xor3, total_maj, actual_xor2, actual_xor3, actual_maj, remaining_maj );
   }
+
+  void reset() 
+  {
+    total_xor3    = 0; 
+    actual_xor3   = 0;
+    actual_xor2   = 0;
+    total_maj     = 0;
+    actual_maj    = 0;
+    remaining_maj = 0;
+  }
+
 };
 
 template<class Ntk>
