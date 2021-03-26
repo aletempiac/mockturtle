@@ -97,25 +97,29 @@ struct map_params
  */
 struct map_stats
 {
-  /*! \brief Area and delay */
+  /*! \brief Area and delay results. */
   double area{0};
   double delay{0};
-  /*! \brief Total runtime. */
-  stopwatch<>::duration time_total{0};
+
+  /*! \brief Runtime. */
   stopwatch<>::duration time_mapping{0};
+  stopwatch<>::duration time_total{0};
 
-  /*! \brief cut enumeration stats */
-  cut_enumeration_stats cut_enumeration_st;
+  /*! \brief Cut enumeration stats. */
+  cut_enumeration_stats cut_enumeration_st{};
 
-  /*! \brief gates usage stats */
-  std::string gates_usage;
+  /*! \brief Gates usage stats. */
+  std::string gates_usage{};
+
+  /*! \brief Mapping error. */
+  bool mapping_error{false};
 
   void report() const
   {
     std::cout << fmt::format( "[i] area = {:>5.2f}; delay = {:>5.2f}\n", area, delay );
     std::cout << fmt::format( "[i] mapping time = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] total time = {:>5.2f} secs\n", to_seconds( time_total ) );
-    std::cout << gates_usage;
+    std::cout << "[i] gates usage report:\n" << gates_usage;
   }
 };
 

@@ -408,7 +408,8 @@ private:
           /* if used and not available in the library launch a mapping error */
           if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
           {
-            std::cerr << "[i] MAP ERROR: technology library do not contain constant gates, impossible to perform mapping" << std::endl;
+            std::cerr << "[i] MAP ERROR: technology library does not contain constant gates, impossible to perform mapping" << std::endl;
+            st.mapping_error = true;
             return false;
           }
         }
@@ -434,6 +435,7 @@ private:
       {
         /* Library is not complete, mapping is not possible */
         std::cerr << "[i] MAP ERROR: technology library is not complete, impossible to perform mapping" << std::endl;
+        st.mapping_error = true;
         return false;
       }
 
@@ -1405,7 +1407,7 @@ klut_network tech_mapping( Ntk const& ntk, tech_library<NInputs> const& library,
   auto res = p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
-  if ( ps.verbose )
+  if ( ps.verbose && !st.mapping_error )
   {
     st.report();
   }
