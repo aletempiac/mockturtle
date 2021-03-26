@@ -122,20 +122,23 @@ private:
   {
     for ( auto& gate : _gates )
     {
+      if ( gate.function.num_vars() > NInputs )
+      {
+        std::cerr << "WARNING: gate " << gate.name << " IGNORED, too many variables for the library settings" << std::endl;
+        continue;
+      }
+
+      float worst_delay = compute_worst_delay( gate );
+
       if ( gate.function.num_vars() == 1 )
       {
         /* extract inverter delay and area */
         if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
         {
           inv_area = gate.area;
-          inv_delay = gate.delay;
+          inv_delay = worst_delay;
           inv_id = gate.id;
         }
-      }
-      if ( gate.function.num_vars() > NInputs )
-      {
-        std::cerr << "WARNING: gate " << gate.name << " IGNORED, too many variables for the library settings" << std::endl;
-        continue;
       }
 
       max_size = std::max( max_size, gate.num_vars );
@@ -146,13 +149,13 @@ private:
         supergate<NInputs> sg;
         sg.root = &gate;
         sg.area = gate.area;
-        sg.worstDelay = gate.delay;
+        sg.worstDelay = worst_delay;
         sg.polarity = 0;
         sg.permutation = perm;
 
         for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
         {
-          sg.tdelay[i] = gate.delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
+          sg.tdelay[i] = worst_delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
           sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
         }
         for ( auto i = perm.size(); i < NInputs; ++i )
@@ -230,6 +233,19 @@ private:
         std::cout << std::endl;
       }
     }
+  }
+
+  float compute_worst_delay( gate const& g )
+  {
+    float worst_delay = 0.0f;
+
+    /* consider only block_delay */
+    for ( auto const& pin : g.pins )
+    {
+      float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
+      worst_delay = std::max( worst_delay, worst_pin_delay );
+    }
+    return worst_delay;
   }
 
 private:

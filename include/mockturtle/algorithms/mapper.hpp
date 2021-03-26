@@ -107,11 +107,15 @@ struct map_stats
   /*! \brief cut enumeration stats */
   cut_enumeration_stats cut_enumeration_st;
 
+  /*! \brief gates usage stats */
+  std::string gates_usage;
+
   void report() const
   {
     std::cout << fmt::format( "[i] area = {:>5.2f}; delay = {:>5.2f}\n", area, delay );
     std::cout << fmt::format( "[i] mapping time = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] total time = {:>5.2f} secs\n", to_seconds( time_total ) );
+    std::cout << gates_usage;
   }
 };
 

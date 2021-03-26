@@ -223,74 +223,6 @@ public:
     return res;
   }
 
-  void print_gates() 
-  {
-    auto const& gates = library.get_gates();
-    std::vector<uint32_t> gates_profile( gates.size(), 0u );
-
-    ntk.foreach_node( [&]( auto const& n, auto ) {
-      if ( ntk.is_constant( n ) )
-        return true;
-
-      const auto index = ntk.node_to_index( n );
-      auto& node_data = node_match[index];
-
-      if ( ntk.is_pi( n ) )
-      {
-        if ( node_data.map_refs[1] > 0 )
-          ++gates_profile[lib_inv_id];
-
-        return true;
-      }
-
-      /* continue if cut is not in the cover */
-      if ( node_match[index].map_refs[2] == 0u )
-        return true;
-
-      unsigned phase = ( node_data.best_supergate[0] != nullptr ) ? 0 : 1;
-
-      if ( node_data.same_match || node_data.map_refs[phase] > 0 )
-      {
-        ++gates_profile[node_data.best_supergate[phase]->root->id];
-
-        if ( node_data.same_match && node_data.map_refs[phase ^ 1] > 0 )
-          ++gates_profile[lib_inv_id];
-      }
-
-      phase = phase ^ 1;
-      if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
-      {
-        ++gates_profile[node_data.best_supergate[phase]->root->id];
-      }
-
-      return true;
-    } );
-
-    double tot_area = 0.0f;
-    uint32_t tot_instances = 0u;
-    for ( auto i = 0u; i < gates_profile.size(); ++i ) 
-    {
-      if ( gates_profile[i] > 0u )
-      {
-        auto tot_gate_area = gates_profile[i] * gates[i].area;
-
-        std::cout << fmt::format( "{:<15}", gates[i].name )
-                  << fmt::format( "\t Instance = {:>10d}", gates_profile[i] )
-                  << fmt::format( "\t Area = {:>12.2f}", tot_gate_area )
-                  << fmt::format( " {:>8.2f} %", tot_gate_area / area * 100 )
-                  << std::endl;
-
-        tot_instances += gates_profile[i];
-        tot_area += tot_gate_area;
-      }
-    }
-
-    std::cout << fmt::format( "{:<15}", "TOTAL" )
-              << fmt::format( "\t Instance = {:>10d}", tot_instances )
-              << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_area )
-              << std::endl;
-  }
-
 private:
   void init_nodes()
   {
@@ -303,6 +235,7 @@ private:
         /* all terminals have flow 1.0 */
         node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = 1.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
+        match_constants( index );
       }
       else if ( ntk.is_pi( n ) )
       {
@@ -333,6 +266,7 @@ private:
 
   void compute_matches()
   {
+    /* match gates */
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
 
@@ -464,9 +398,20 @@ private:
     for ( auto it = top_order.rbegin(); it != top_order.rend(); ++it )
     {
       const auto index = ntk.node_to_index( *it );
+      auto& node_data = node_match[index];
+
       /* skip constants and PIs */
       if ( ntk.is_constant( *it ) )
       {
+        if ( node_match[index].map_refs[2] > 0u )
+        {
+          /* if used and not available in the library launch a mapping error */
+          if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
+          {
+            std::cerr << "[i] MAP ERROR: technology library do not contain constant gates, impossible to perform mapping" << std::endl;
+            return false;
+          }
+        }
         continue;
       }
       else if ( ntk.is_pi( *it ) )
@@ -483,13 +428,12 @@ private:
       if ( node_match[index].map_refs[2] == 0u )
         continue;
 
-      auto& node_data = node_match[index];
       unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
 
       if ( node_data.best_supergate[use_phase] == nullptr )
       {
         /* Library is not complete, mapping is not possible */
-        std::cerr << "MAP ERROR: technology library is not complete, impossible to perform mapping" << std::endl;
+        std::cerr << "[i] MAP ERROR: technology library is not complete, impossible to perform mapping" << std::endl;
         return false;
       }
 
@@ -570,7 +514,7 @@ private:
       if ( ps.required_time < delay - epsilon )
       {
         if ( !ps.skip_delay_round && iteration == 1 )
-          std::cerr << fmt::format( "MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
+          std::cerr << fmt::format( "[i] MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
       }
       else
       {
@@ -1022,6 +966,50 @@ private:
     node_data.flows[2] = node_data.flows[phase];
   }
 
+  void match_constants( uint32_t index )
+  {
+    auto& node_data = node_match[index];
+
+    kitty::static_truth_table<NInputs> zero_tt;
+    auto const supergates_zero = library.get_supergates( zero_tt );
+    auto const supergates_one = library.get_supergates( ~zero_tt );
+
+    /* Not available in the library */
+    if ( supergates_zero == nullptr && supergates_one == nullptr )
+    {
+      return;
+    }
+    /* if only one is available, the other is obtained using an inverter */
+    if ( supergates_zero != nullptr )
+    {
+      node_data.best_supergate[0] = &( ( *supergates_zero )[0] );
+      node_data.arrival[0] = node_data.best_supergate[0]->worstDelay;
+      node_data.area[0] = node_data.best_supergate[0]->area;
+      node_data.phase[0] = 0;
+    }
+    if ( supergates_one != nullptr )
+    {
+      node_data.best_supergate[1] = &( ( *supergates_one )[0] );
+      node_data.arrival[1] = node_data.best_supergate[1]->worstDelay;
+      node_data.area[1] = node_data.best_supergate[1]->area;
+      node_data.phase[1] = 0;
+    }
+    else
+    {
+      node_data.same_match = true;
+      node_data.arrival[1] = node_data.arrival[0] + lib_inv_delay;
+      node_data.area[1] = node_data.area[0] + lib_inv_area;
+      node_data.phase[1] = 1;
+    }
+    if ( supergates_zero == nullptr )
+    {
+      node_data.same_match = true;
+      node_data.arrival[0] = node_data.arrival[1] + lib_inv_delay;
+      node_data.area[0] = node_data.area[1] + lib_inv_area;
+      node_data.phase[0] = 1;
+    }
+  }
+
   inline float cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
   {
     float flow{0.0f};
@@ -1214,6 +1202,7 @@ private:
     /* write final results */
     st.area = area;
     st.delay = delay;
+    compute_gates_usage();
   }
 
 
@@ -1301,6 +1290,77 @@ private:
     return false;
   }
 
+  void compute_gates_usage()
+  {
+    auto const& gates = library.get_gates();
+    std::vector<uint32_t> gates_profile( gates.size(), 0u );
+
+    ntk.foreach_node( [&]( auto const& n, auto ) {
+      const auto index = ntk.node_to_index( n );
+      auto& node_data = node_match[index];
+
+      if ( ntk.is_constant( n ) )
+      {
+        if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
+          return true;
+      }
+      else if ( ntk.is_pi( n ) )
+      {
+        if ( node_data.map_refs[1] > 0 )
+          ++gates_profile[lib_inv_id];
+        return true;
+      }
+
+      /* continue if cut is not in the cover */
+      if ( node_match[index].map_refs[2] == 0u )
+        return true;
+
+      unsigned phase = ( node_data.best_supergate[0] != nullptr ) ? 0 : 1;
+
+      if ( node_data.same_match || node_data.map_refs[phase] > 0 )
+      {
+        ++gates_profile[node_data.best_supergate[phase]->root->id];
+
+        if ( node_data.same_match && node_data.map_refs[phase ^ 1] > 0 )
+          ++gates_profile[lib_inv_id];
+      }
+
+      phase = phase ^ 1;
+      if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
+      {
+        ++gates_profile[node_data.best_supergate[phase]->root->id];
+      }
+
+      return true;
+    } );
+
+    std::stringstream gates_usage;
+    double tot_area = 0.0f;
+    uint32_t tot_instances = 0u;
+    for ( auto i = 0u; i < gates_profile.size(); ++i ) 
+    {
+      if ( gates_profile[i] > 0u )
+      {
+        auto tot_gate_area = gates_profile[i] * gates[i].area;
+
+        gates_usage << fmt::format( "[i] {:<15}", gates[i].name )
+                    << fmt::format( "\t Instance = {:>10d}", gates_profile[i] )
+                    << fmt::format( "\t Area = {:>12.2f}", tot_gate_area )
+                    << fmt::format( " {:>8.2f} %", tot_gate_area / area * 100 )
+                    << std::endl;
+
+        tot_instances += gates_profile[i];
+        tot_area += tot_gate_area;
+      }
+    }
+
+    gates_usage << fmt::format( "[i] {:<15}", "TOTAL" )
+                << fmt::format( "\t Instance = {:>10d}", tot_instances )
+                << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_area )
+                << std::endl;
+
+    st.gates_usage = gates_usage.str();
+  }
 
 private:
   Ntk const& ntk;
@@ -1348,7 +1408,6 @@ klut_network tech_mapping( Ntk const& ntk, tech_library<NInputs> const& library,
   if ( ps.verbose )
   {
     st.report();
-    p.print_gates();
   }
 
   if ( pst )
