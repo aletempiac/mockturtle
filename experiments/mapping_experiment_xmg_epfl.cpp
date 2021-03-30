@@ -200,8 +200,8 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
 
     outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
     outs << "cut size = "               << cut_size    << std::endl;
-    outs << "delay round (0/1)=  "      << delay_round == 1 ? "true" : "false" << std::endl;
-    outs << "required time (def/max)= " << req_time == 1 ? "true" : "false"  << std::endl;
+    outs << "delay round (0/1)=  "      << (delay_round ? "true" : "false") << std::endl;
+    outs << "required time (def/max)= " << (req_time ? "true" : "false")  << std::endl;
 
     experiments::experiment<std::string, std::string, std::string>
          exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
