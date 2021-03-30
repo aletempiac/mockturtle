@@ -142,7 +142,7 @@ Ntk ntk_optimization( Ntk const& ntk )
       auto const size_before = des.size();
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::aig_network>::value )
       {
-          std::cout << "aig" << std::endl;
+          //std::cout << "aig" << std::endl;
           exact_resynthesis_params eps;
           //eps.cache = std::make_shared<exact_resynthesis_params::cache_map_t>();
           exact_aig_resynthesis<aig_network> aig_exact( false, eps );
@@ -155,7 +155,7 @@ Ntk ntk_optimization( Ntk const& ntk )
       }
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::mig_network>::value )
       {
-          std::cout << "mig" << std::endl;
+          //std::cout << "mig" << std::endl;
           mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
           mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
           des = mockturtle::cleanup_dangling( des);
@@ -167,7 +167,7 @@ Ntk ntk_optimization( Ntk const& ntk )
       }
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xmg_network>::value )
       {
-          std::cout << "xmg" << std::endl;
+          //std::cout << "xmg" << std::endl;
           mockturtle::xmg3_npn_resynthesis<mockturtle::xmg_network> xmg_npn_resyn;
           mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
           des = mockturtle::cleanup_dangling( des);
@@ -176,12 +176,12 @@ Ntk ntk_optimization( Ntk const& ntk )
           des = mockturtle::cleanup_dangling( des );
       }
 
-      std::cout << "size after and before  "<< des.size() << " " << size_before << std::endl ;
+      //std::cout << "size after and before  "<< des.size() << " " << size_before << std::endl ;
       improv =  size_before - des.size(); 
       auto diff = std::abs(improv);
       improv_per = 100 * (double(diff/size_before)); //100 * (double((std::abs(improv)) improv/ size_before ));
-      std::cout << " improvement " << improv << " improv_per " << improv_per << std::endl;
-      std::cout << "Iterations # " << iter++ << std::endl; 
+      //std::cout << " improvement " << improv << " improv_per " << improv_per << std::endl;
+      //std::cout << "Iterations # " << iter++ << std::endl; 
       if (improv_per <= 0.5 )
           break;
   }
@@ -194,7 +194,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
 
     std::string filename = "epfl";
     filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
-    std::cout << "log file" << filename;
+    //std::cout << "log file" << filename;
     std::ofstream outs;
     outs.open(filename.c_str());
 
@@ -222,10 +222,10 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   //    return;
   //}
 
-  for ( auto const& g : gates1 )
-  {
-    std::cout << g.name << std::endl;
-  }
+  //for ( auto const& g : gates1 )
+  //{
+  //  std::cout << g.name << std::endl;
+  //}
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
   mockturtle::tech_library<5> lib1( gates1, lib_ps );
@@ -248,8 +248,8 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::epfl_benchmarks() )
   {
-      if( benchmark != "adder")
-      continue;
+      //if( benchmark != "adder")
+      //continue;
 
     /* Crypto Benchmarks */
     //for ( auto const& benchmark : crypto_experiments::crypto_benchmarks( ))
@@ -342,13 +342,13 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     mockturtle::depth_view xmg_d{ xmg };
     mockturtle::depth_view mig_d{ mig };
     mockturtle::depth_view aig_d{ aig };
-    printf( "###################################################\n" );
-    printf( "[i] AIG: n = %d   depth = %d\n",
-            mig.size(), mig_d.depth() );
-    printf( "[i] MIG: n = %d   depth = %d\n",
-            mig.size(), mig_d.depth() );
-    printf( "[i] XMG: n = %d   depth = %d\n",
-            xmg.size(), xmg_d.depth() );
+    //printf( "###################################################\n" );
+    //printf( "[i] AIG: n = %d   depth = %d\n",
+    //        mig.size(), mig_d.depth() );
+    //printf( "[i] MIG: n = %d   depth = %d\n",
+    //        mig.size(), mig_d.depth() );
+    //printf( "[i] XMG: n = %d   depth = %d\n",
+    //        xmg.size(), xmg_d.depth() );
     fflush( stdout );
 
     mockturtle::map_params ps;
