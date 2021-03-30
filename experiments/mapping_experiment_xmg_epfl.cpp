@@ -189,7 +189,7 @@ Ntk ntk_optimization( Ntk const& ntk )
   return des;
 }
 
-void tech_map()
+void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 {
     experiments::experiment<std::string, std::string, std::string>
          exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
@@ -236,8 +236,8 @@ void tech_map()
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::epfl_benchmarks() )
   {
-  //if( benchmark != "voter")
-  //    continue;
+      //if( benchmark != "adder")
+      //continue;
 
     /* Crypto Benchmarks */
     //for ( auto const& benchmark : crypto_experiments::crypto_benchmarks( ))
@@ -274,12 +274,33 @@ void tech_map()
     sop_rebalancing<aig_network> sop_balancing;    
     aig = balancing( aig, {sop_balancing}, sps, &st4 );
 
-    //auto klut = lut_map( aig, 4u );
+    auto klut = lut_map( aig, 4u );
 
 
-    //imig = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn );
-    xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, cached_xmg3_exact );
-    xmg = cleanup_dangling( xmg );
+    /* Calling Resynthesis engine */
+    if(aig_or_klut == "aig")
+    {
+        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, cached_xmg3_exact );
+        xmg = cleanup_dangling( xmg );
+
+        aig = mockturtle::node_resynthesis<mockturtle::aig_network>( aig, cached_aig_exact );
+        aig = cleanup_dangling( aig );
+
+        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
+        mig = cleanup_dangling( mig );
+    }
+    else
+    {
+        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, cached_xmg3_exact );
+        xmg = cleanup_dangling( xmg );
+
+        aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
+        aig = cleanup_dangling( aig );
+
+        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+        mig = cleanup_dangling( mig );
+
+    }
 
     /* measuring sd ratios */
     ps1.reset();
@@ -289,11 +310,6 @@ void tech_map()
     double sd_rat = ( double( ps1.actual_maj + ps1.actual_xor3 )/  size_before ) * 100;
     std::string sd_before = fmt::format( "{}/{} = {}", ( ps1.actual_maj + ps1.actual_xor3 ),  size_before, sd_rat );
 
-    //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
-    //aig = cleanup_dangling( aig );
-
-    mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
-    mig = cleanup_dangling( mig );
 
     aig = ntk_optimization<mockturtle::aig_network> ( aig );
     mig = ntk_optimization<mockturtle::mig_network> ( mig );
@@ -324,11 +340,15 @@ void tech_map()
     fflush( stdout );
 
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = 6;
+    ps.cut_enumeration_ps.cut_size = cut_size;
     ps.cut_enumeration_ps.cut_limit = 25;
     ps.verbose = true;
-    ps.skip_delay_round = false;
-    ps.required_time = std::numeric_limits<float>::max();
+    if (delay_round)
+        ps.skip_delay_round = true;
+    else
+        ps.skip_delay_round = false;
+    if (req_time)
+        ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst;
 
@@ -351,14 +371,25 @@ void tech_map()
     exp2.save();
     exp2.table();
   }
-  exp.save();
-  exp.table();
-  exp2.save();
-  exp2.table();
+  exp.save("1");
+  std::string filename = "epfl.txt";
+  filename = filename + aig_or_klut + (delay_round == 0 ? "false" : "true") + (req_time == 0 ? "def": "max");
+  std::cout << "log file" << filename;
+  std::ofstream outs;
+  outs.open(filename.c_str());
+  exp.table("1", outs); 
+  exp2.save("1");
+  exp2.table("1",outs); 
+  outs.close();
 }
 
-int main()
+int main( int argc, char* argv[])
 {
-  tech_map();
+  std::cout << "aig(0) or klut(1)   "      << argv[1] << std::endl;
+  std::cout << "cut size = "               << argv[2] << std::endl;
+  std::cout << "delay round (0/1)=  "      << argv[3] << std::endl;
+  std::cout << "required time (def/max)= " << argv[4] << std::endl;
+
+  tech_map( argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
   return 0;
 }
