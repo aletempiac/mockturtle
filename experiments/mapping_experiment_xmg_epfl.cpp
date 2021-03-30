@@ -191,6 +191,18 @@ Ntk ntk_optimization( Ntk const& ntk )
 
 void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 {
+
+    std::string filename = "epfl";
+    filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
+    std::cout << "log file" << filename;
+    std::ofstream outs;
+    outs.open(filename.c_str());
+
+    outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
+    outs << "cut size = "               << cut_size    << std::endl;
+    outs << "delay round (0/1)=  "      << delay_round == 1 ? "true" : "false" << std::endl;
+    outs << "required time (def/max)= " << req_time == 1 ? "true" : "false"  << std::endl;
+
     experiments::experiment<std::string, std::string, std::string>
          exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
 
@@ -236,8 +248,8 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::epfl_benchmarks() )
   {
-      //if( benchmark != "adder")
-      //continue;
+      if( benchmark != "adder")
+      continue;
 
     /* Crypto Benchmarks */
     //for ( auto const& benchmark : crypto_experiments::crypto_benchmarks( ))
@@ -371,12 +383,9 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     exp2.save();
     exp2.table();
   }
+  outs.close();
+  outs.open(filename.c_str(), std::ios::app);
   exp.save("1");
-  std::string filename = "epfl.txt";
-  filename = filename + aig_or_klut + (delay_round == 0 ? "false" : "true") + (req_time == 0 ? "def": "max");
-  std::cout << "log file" << filename;
-  std::ofstream outs;
-  outs.open(filename.c_str());
   exp.table("1", outs); 
   exp2.save("1");
   exp2.table("1",outs); 
