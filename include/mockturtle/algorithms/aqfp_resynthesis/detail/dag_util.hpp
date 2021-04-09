@@ -1,3 +1,35 @@
+/* mockturtle: C++ logic network library
+ * Copyright (C) 2018-2021  EPFL
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*!
+  \file dag_util.hpp
+  \brief Utilities for DAG generation
+
+  \author Dewmini Marakkalage 
+*/
+
 #pragma once
 
 #include <map>
@@ -32,10 +64,10 @@ class partition_generator
   using partition_set = std::set<partition>;
 
   using inner_cache_key_t = std::vector<ElemT>;
-  using inner_cache_t = std::unordered_map<inner_cache_key_t, partition_set>;
+  using inner_cache_t = std::unordered_map<inner_cache_key_t, partition_set, hash<inner_cache_key_t>>;
 
   using outer_cache_key_t = std::tuple<std::vector<uint32_t>, uint32_t, uint32_t>;
-  using outer_cache_t = std::unordered_map<outer_cache_key_t, inner_cache_t>;
+  using outer_cache_t = std::unordered_map<outer_cache_key_t, inner_cache_t, hash<outer_cache_key_t>>;
 
 public:
   /*! \brief Computes and returns a set of partitions for a given list of elements
@@ -134,7 +166,7 @@ class partition_extender
   using partition_set = std::set<partition>;
 
   using inner_cache_key_t = std::vector<ElemT>;
-  using inner_cache_t = std::unordered_map<inner_cache_key_t, partition_set>;
+  using inner_cache_t = std::unordered_map<inner_cache_key_t, partition_set, hash<inner_cache_key_t>>;
 
   using outer_cache_key_t = std::tuple<partition, std::vector<uint32_t>, uint32_t>;
   using outer_cache_t = std::map<outer_cache_key_t, inner_cache_t>;
@@ -232,7 +264,7 @@ public:
   }
 
 private:
-  std::unordered_map<sub_list_cache_key_t, std::set<std::vector<ElemT>>> sub_list_cache;
+  std::unordered_map<sub_list_cache_key_t, std::set<std::vector<ElemT>>, hash<sub_list_cache_key_t>> sub_list_cache;
   std::map<ElemT, uint32_t> elem_counts;
 
   std::set<std::vector<ElemT>> get_sub_lists_recur()
