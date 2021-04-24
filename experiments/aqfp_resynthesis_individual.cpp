@@ -69,19 +69,6 @@ std::vector<std::string> mcnc = {
     "x1dn.v",
 };
 
-std::vector<std::string> epfl_small = {
- "adder",
- "bar",
- "max",
- "cavlc",
- "ctrl",
- "dec",
- "i2c",
- "int2float",
- "priority",
- "router" 
-};
-
 template<class Ntk>
 bool abc_cec_aqfp( Ntk const& ntk, std::string const& benchmark )
 {
@@ -109,10 +96,10 @@ bool abc_cec_aqfp( Ntk const& ntk, std::string const& benchmark )
 }
 
 template<typename Ntk>
-mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4, std::string name = "temp")
+mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k, std::string name)
 {
-  std::string tempfile1 = "/tmp/temp1_" + name + ".blif";
-  std::string tempfile2 = "/tmp/temp2_" + name + ".blif";
+  std::string tempfile1 = "temp1_" + name + ".blif";
+  std::string tempfile2 = "temp2_" + name + ".blif";
 
   mockturtle::write_blif( ntk, tempfile1 );
   // system( fmt::format( "abc -q \"{}; if -K {}; write_blif {}\" >> /dev/null 2>&1", tempfile1, k, tempfile2 ).c_str() );
@@ -121,7 +108,7 @@ mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4, std::string na
   mockturtle::klut_network klut;
   if ( lorina::read_blif( tempfile2, mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
   {
-    std::cout << "FATAL OLD LUT MAP - Reading mapped network failed!" << std::endl;
+    std::cout << "FATAL OLD LUT MAP - Reading mapped network failed! " << tempfile1 << " " << tempfile2 << std::endl;
     std::abort();
     return klut;
   }
@@ -206,6 +193,16 @@ void experiment_aqfp_exact_syn( std::unordered_map<uint32_t, double>& gate_costs
   exp.table();
 }
 
+template <typename T>
+std::pair<uint32_t, uint32_t> count(T& ntk) {
+  uint32_t c3 = 0, c5 = 0;
+  ntk.foreach_gate([&] (auto n) {
+    if (ntk.fanin_size(n) == 3) c3++;
+    if (ntk.fanin_size(n) == 5) c5++;
+  }); 
+  return {c3, c5};
+}
+
 void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_costs, std::unordered_map<uint32_t, double>& splitters, mockturtle::aqfp_db<>& db3, mockturtle::aqfp_db<>& db5, const std::vector<std::string>& benchmarks )
 {
   mockturtle::aqfp_network_cost cost_fn( gate_costs, splitters );
@@ -216,20 +213,19 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
   mockturtle::aqfp_node_resyn node_resyn_lvl5( db5, { splitters, mockturtle::aqfp_node_resyn_strategy::level_based } );
   mockturtle::aqfp_fanout_resyn fanout_resyn( 4u );
 
-  experiments::experiment<std::string, double, uint32_t, double, uint32_t, double, uint32_t, double, uint32_t> exp( "aqfp_resynthesis", "benchmark", "#JJ (C01)", "LVL (C01)", "#JJ (C10)", "LVL (C10)", "#JJ (L01)", "LVL (L01)", "#JJ (L10)", "LVL (L10)" );
+  experiments::experiment<std::string, double, uint32_t, double, uint32_t, double, uint32_t, double, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t> exp( "aqfp_resynthesis", "benchmark", "#JJ (C01)", "LVL (C01)", "#JJ (C10)", "LVL (C10)", "#JJ (L01)", "LVL (L01)", "#JJ (L10)", "LVL (L10)", "C Maj3", "C Maj5", "L Maj3", "L Maj5" );
 
   for ( auto b : benchmarks )
   {
     fmt::print( "Processing benchmark {}...\n", b );
 
-    //std::string benchmark = fmt::format( "./benchmarks/{}", b );
-    std::string benchmark = fmt::format( "./{}_after_eleonora.v", b );
+    std::string benchmark = fmt::format( "./benchmarks/{}", b );
     mockturtle::mig_network mig;
 
     lorina::read_verilog( benchmark, mockturtle::verilog_reader( mig ) );
     fmt::print( "\tpi: {:4d} po: {:4d} size: {:6d}\n", mig.num_pis(), mig.num_pos(), mig.num_gates() );
 
-    mockturtle::klut_network klut_orig = lut_map( mig, 4 );
+    mockturtle::klut_network klut_orig = lut_map( mig, 4, b);
 
     /* 1. Apply cost-based AQFP resynthesis once */
     mockturtle::aqfp_network opt_aqfp;
@@ -237,6 +233,7 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
     std::cout << "iter " << 1 << "\n";
     auto res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_orig, node_resyn_cst, fanout_resyn );
     auto res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_orig, node_resyn_cst5, fanout_resyn );
+    auto gc_cost = count(opt_aqfp5);
     std::pair<double, uint32_t> res_orig_cst = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
 
     /* 2. Repeatedly apply cost-based AQFP resynthesis */
@@ -244,7 +241,7 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
     for ( auto i = 2u; i <= 10u; i++ )
     {
       std::cout << "iter " << i << "\n";
-      auto klut_opt = lut_map( opt_aqfp, 4 );
+      auto klut_opt = lut_map( opt_aqfp, 4, b);
 
       opt_aqfp = mockturtle::aqfp_network();
       opt_aqfp5 = mockturtle::aqfp_network();
@@ -255,6 +252,7 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
       if ( has_better_cost( res_temp, res_opt_cst ) )
       {
         res_opt_cst = res_temp;
+        gc_cost = count(opt_aqfp5);
       }
     }
 
@@ -267,6 +265,7 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
     std::cout << "iter " << 1 << "\n";
     res = mockturtle::aqfp_resynthesis( opt_aqfp, klut_orig, node_resyn_lvl, fanout_resyn );
     res5 = mockturtle::aqfp_resynthesis( opt_aqfp5, klut_orig, node_resyn_lvl5, fanout_resyn );
+    auto gc_lev = count(opt_aqfp5);
     std::pair<double, uint32_t> res_orig_lvl = { cost_fn( opt_aqfp5, res5.node_level, res5.po_level ), res5.po_level };
 
     /* 4. Repeatedly apply level-based AQFP resynthesis */
@@ -274,7 +273,7 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
     for ( auto i = 2u; i <= 10u; i++ )
     {
       std::cout << "iter " << i << "\n";
-      auto klut_opt = lut_map( opt_aqfp, 4 );
+      auto klut_opt = lut_map( opt_aqfp, 4, b);
 
       opt_aqfp = mockturtle::aqfp_network();
       opt_aqfp5 = mockturtle::aqfp_network();
@@ -285,13 +284,14 @@ void experiment_aqfp_exact_syn_2( std::unordered_map<uint32_t, double>& gate_cos
       if ( has_better_level( res_temp, res_opt_lvl ) )
       {
         res_opt_lvl = res_temp;
+        gc_lev = count(opt_aqfp5);
       }
     }
 
     // assert( abc_cec_aqfp( opt_aqfp, benchmark ) );
     // assert( abc_cec_aqfp( opt_aqfp5, benchmark ) );
 
-    exp( b, res_orig_cst.first, res_orig_cst.second, res_opt_cst.first, res_opt_cst.second, res_orig_lvl.first, res_orig_lvl.second, res_opt_lvl.first, res_opt_lvl.second );
+    exp( b, res_orig_cst.first, res_orig_cst.second, res_opt_cst.first, res_opt_cst.second, res_orig_lvl.first, res_orig_lvl.second, res_opt_lvl.first, res_opt_lvl.second, gc_cost.first, gc_cost.second, gc_lev.first, gc_lev.second );
   }
 
   exp.save();
@@ -308,7 +308,7 @@ void experiment_aqfp_exact_syn_2_epfl( std::unordered_map<uint32_t, double>& gat
   mockturtle::aqfp_node_resyn node_resyn_lvl5( db5, { splitters, mockturtle::aqfp_node_resyn_strategy::level_based } );
   mockturtle::aqfp_fanout_resyn fanout_resyn( 4u );
 
-  experiments::experiment<std::string, double, uint32_t, double, uint32_t, double, uint32_t, double, uint32_t> exp( "aqfp_resynthesis", "benchmark", "#JJ (C01)", "LVL (C01)", "#JJ (C10)", "LVL (C10)", "#JJ (L01)", "LVL (L01)", "#JJ (L10)", "LVL (L10)" );
+  experiments::experiment<std::string, double, uint32_t, double, uint32_t, double, uint32_t, double, uint32_t> exp( "aqfp_resynthesis_" + benchmarks[0], "benchmark", "#JJ (C01)", "LVL (C01)", "#JJ (C10)", "LVL (C10)", "#JJ (L01)", "LVL (L01)", "#JJ (L10)", "LVL (L10)" );
 
   for ( auto b : benchmarks)
   {
@@ -320,7 +320,7 @@ void experiment_aqfp_exact_syn_2_epfl( std::unordered_map<uint32_t, double>& gat
     lorina::read_aiger( benchmark, mockturtle::aiger_reader( mig ) );
     fmt::print( "\tpi: {:4d} po: {:4d} size: {:6d}\n", mig.num_pis(), mig.num_pos(), mig.num_gates() );
 
-    mockturtle::klut_network klut_orig = lut_map( mig, 4 );
+    mockturtle::klut_network klut_orig = lut_map( mig, 4, b);
 
     /* 1. Apply cost-based AQFP resynthesis once */
     std::cout << "iter " << 1 << "\n";
@@ -335,7 +335,7 @@ void experiment_aqfp_exact_syn_2_epfl( std::unordered_map<uint32_t, double>& gat
     for ( auto i = 2u; i <= 10u; i++ )
     {
       std::cout << "iter " << i << "\n";
-      auto klut_opt = lut_map( opt_aqfp, 4 );
+      auto klut_opt = lut_map( opt_aqfp, 4, b);
 
       opt_aqfp = mockturtle::aqfp_network();
       opt_aqfp5 = mockturtle::aqfp_network();
@@ -365,7 +365,7 @@ void experiment_aqfp_exact_syn_2_epfl( std::unordered_map<uint32_t, double>& gat
     for ( auto i = 2u; i <= 10u; i++ )
     {
       std::cout << "iter " << i << "\n";
-      auto klut_opt = lut_map( opt_aqfp, 4 );
+      auto klut_opt = lut_map( opt_aqfp, 4, b);
 
       opt_aqfp = mockturtle::aqfp_network();
       opt_aqfp5 = mockturtle::aqfp_network();
@@ -400,6 +400,10 @@ int main( int argc, char** argv )
   mockturtle::aqfp_db<> db3( gate_costs, splitters );
   mockturtle::aqfp_db<> db5( gate_costs, splitters );
 
+  if (argc < 4) {
+    std::cerr << "Not enough arguments: Need db3 db5 benchmark_name\n";
+  }
+
   std::ifstream db_file3( (argc < 2) ? std::string("db1.txt") : std::string(argv[1]) );
   std::ifstream db_file5( (argc < 3) ? std::string("db12.txt") : std::string(argv[2]) );
   
@@ -410,10 +414,18 @@ int main( int argc, char** argv )
   db_file3.close();
   db_file5.close();
 
-  experiment_aqfp_exact_syn_2( gate_costs, splitters, db3, db5, epfl_small );
+  experiment_aqfp_exact_syn_2( gate_costs, splitters, db3, db5, mcnc );
 
   // experiment_aqfp_exact_syn_2_epfl( gate_costs, splitters, db3, db5, experiments::epfl_benchmarks() );
   // experiment_aqfp_exact_syn_2_epfl( gate_costs, splitters, db3, db5, experiments::iwls_benchmarks() );
+  // experiment_aqfp_exact_syn_2_epfl( gate_costs, splitters, db3, db5, { std::string(argv[3]) } );
+  // experiment_aqfp_exact_syn_2( gate_costs, splitters, db3, db5, { std::string(argv[3]) } );
+
+  std::ofstream db_stats("stats_" + (argc > 3 ? std::string(argv[3]) : std::string("mcnc")) + ".csv");
+  db3.print_usage_state(db_stats);
+  db5.print_usage_state(db_stats);
+  db_stats.close();
+
 
   /* Old Experiment */
 

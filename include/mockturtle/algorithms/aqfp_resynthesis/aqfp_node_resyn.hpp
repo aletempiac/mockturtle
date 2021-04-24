@@ -209,7 +209,7 @@ struct aqfp_node_resyn
 
 private:
   aqfp_node_resyn_param params;
-  aqfp_db<> db;
+  aqfp_db<>& db;
 };
 
 } // namespace mockturtle

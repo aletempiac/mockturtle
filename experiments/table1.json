@@ -1,0 +1,107 @@
+[
+  {
+    "entries": [
+      {
+        "Impr. Size": 12.745099067687988,
+        "Impr. depth": 49.411766052246094,
+        "Size Opt MIG": 890,
+        "benchmark": "adder",
+        "depth MIG": 255,
+        "depth Opt MIG": 129,
+        "eq cec": true,
+        "size MIG": 1020
+      },
+      {
+        "Impr. Size": 7.783018589019775,
+        "Impr. depth": 0.0,
+        "Size Opt MIG": 3128,
+        "benchmark": "bar",
+        "depth MIG": 12,
+        "depth Opt MIG": 12,
+        "eq cec": true,
+        "size MIG": 3392
+      },
+      {
+        "Impr. Size": -12.555747032165527,
+        "Impr. depth": 80.48780822753906,
+        "Size Opt MIG": 3281,
+        "benchmark": "max",
+        "depth MIG": 287,
+        "depth Opt MIG": 56,
+        "eq cec": true,
+        "size MIG": 2915
+      },
+      {
+        "Impr. Size": -0.5772005915641785,
+        "Impr. depth": 18.75,
+        "Size Opt MIG": 697,
+        "benchmark": "cavlc",
+        "depth MIG": 16,
+        "depth Opt MIG": 13,
+        "eq cec": true,
+        "size MIG": 693
+      },
+      {
+        "Impr. Size": 17.816091537475586,
+        "Impr. depth": 20.0,
+        "Size Opt MIG": 143,
+        "benchmark": "ctrl",
+        "depth MIG": 10,
+        "depth Opt MIG": 8,
+        "eq cec": true,
+        "size MIG": 174
+      },
+      {
+        "Impr. Size": 0.0,
+        "Impr. depth": 0.0,
+        "Size Opt MIG": 304,
+        "benchmark": "dec",
+        "depth MIG": 3,
+        "depth Opt MIG": 3,
+        "eq cec": true,
+        "size MIG": 304
+      },
+      {
+        "Impr. Size": -0.7446016073226929,
+        "Impr. depth": 35.0,
+        "Size Opt MIG": 1353,
+        "benchmark": "i2c",
+        "depth MIG": 20,
+        "depth Opt MIG": 13,
+        "eq cec": true,
+        "size MIG": 1343
+      },
+      {
+        "Impr. Size": 1.1538461446762085,
+        "Impr. depth": 37.5,
+        "Size Opt MIG": 257,
+        "benchmark": "int2float",
+        "depth MIG": 16,
+        "depth Opt MIG": 10,
+        "eq cec": true,
+        "size MIG": 260
+      },
+      {
+        "Impr. Size": 15.848670959472656,
+        "Impr. depth": 26.399999618530273,
+        "Size Opt MIG": 823,
+        "benchmark": "priority",
+        "depth MIG": 250,
+        "depth Opt MIG": 184,
+        "eq cec": true,
+        "size MIG": 978
+      },
+      {
+        "Impr. Size": 2.334630250930786,
+        "Impr. depth": 51.85185241699219,
+        "Size Opt MIG": 251,
+        "benchmark": "router",
+        "depth MIG": 54,
+        "depth Opt MIG": 26,
+        "eq cec": true,
+        "size MIG": 257
+      }
+    ],
+    "version": "286fe3a"
+  }
+]

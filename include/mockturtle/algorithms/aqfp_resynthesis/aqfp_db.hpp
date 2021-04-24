@@ -144,7 +144,10 @@ public:
     double best_cost = std::numeric_limits<double>::infinity();
     uint32_t best_lev = std::numeric_limits<uint32_t>::max();
     replacement best = db[npntt].begin()->second;
+    uint32_t best_ind = 0;
 
+
+    uint32_t temp_ind = 0;
     for ( auto it = db[npntt].begin(); it != db[npntt].end(); it++ )
     {
       const auto& lvl_cfg = it->first;
@@ -173,9 +176,12 @@ public:
         best_cost = cost;
         best_lev = max_lev;
         best = r;
+        best_ind = temp_ind;
       }
+      temp_ind ++;
     }
 
+    usage_stats[{npntt, best_ind}]++;
     return compute_replacement_structure( best, f );
   }
 
@@ -233,12 +239,22 @@ public:
     }
   }
 
+  void print_usage_state(std::ostream& os) {
+    os << "printing stats\n";
+    for (auto& x : usage_stats) {
+      os << fmt::format("{}, {}, {}\n", x.first.first, x.first.second, x.second);
+    }
+    os << "printing stats done\n";
+  }
+
 private:
   std::unordered_map<uint32_t, double> gate_costs;
   std::unordered_map<uint32_t, double> splitters;
   std::unordered_map<uint64_t, std::map<uint64_t, replacement>> db;
+  std::map<std::pair<uint64_t, uint32_t>, uint32_t> usage_stats;
   dag_aqfp_cost_and_depths<Ntk> cc;
   npn_cache<N> npndb;
+
 
   std::pair<bool, std::vector<uint32_t>> inverter_config_for_func( const std::vector<uint64_t>& input_tt, const Ntk& net, uint64_t func )
   {

@@ -1,0 +1,107 @@
+[
+  {
+    "entries": [
+      {
+        "Impr. jj": 32.70095443725586,
+        "Impr. jj levels": 32.984291076660156,
+        "benchmark": "adder",
+        "eq cec": true,
+        "jj MIG": 199670,
+        "jj Opt MIG": 134376,
+        "jj levels MIG": 382,
+        "jj levels Opt MIG": 256
+      },
+      {
+        "Impr. jj": 5.848463535308838,
+        "Impr. jj levels": 0.0,
+        "benchmark": "bar",
+        "eq cec": true,
+        "jj MIG": 22912,
+        "jj Opt MIG": 21572,
+        "jj levels MIG": 16,
+        "jj levels Opt MIG": 16
+      },
+      {
+        "Impr. jj": 68.87761688232422,
+        "Impr. jj levels": 72.87065887451172,
+        "benchmark": "max",
+        "eq cec": true,
+        "jj MIG": 160836,
+        "jj Opt MIG": 50056,
+        "jj levels MIG": 317,
+        "jj levels Opt MIG": 86
+      },
+      {
+        "Impr. jj": 8.151022911071777,
+        "Impr. jj levels": 30.000001907348633,
+        "benchmark": "cavlc",
+        "eq cec": true,
+        "jj MIG": 5668,
+        "jj Opt MIG": 5206,
+        "jj levels MIG": 20,
+        "jj levels Opt MIG": 14
+      },
+      {
+        "Impr. jj": 12.881806373596191,
+        "Impr. jj levels": 0.0,
+        "benchmark": "ctrl",
+        "eq cec": true,
+        "jj MIG": 1506,
+        "jj Opt MIG": 1312,
+        "jj levels MIG": 14,
+        "jj levels Opt MIG": 14
+      },
+      {
+        "Impr. jj": 0.0,
+        "Impr. jj levels": 0.0,
+        "benchmark": "dec",
+        "eq cec": true,
+        "jj MIG": 2176,
+        "jj Opt MIG": 2176,
+        "jj levels MIG": 6,
+        "jj levels Opt MIG": 6
+      },
+      {
+        "Impr. jj": 17.98979377746582,
+        "Impr. jj levels": 39.130435943603516,
+        "benchmark": "i2c",
+        "eq cec": true,
+        "jj MIG": 14108,
+        "jj Opt MIG": 11570,
+        "jj levels MIG": 23,
+        "jj levels Opt MIG": 14
+      },
+      {
+        "Impr. jj": 9.375,
+        "Impr. jj levels": 35.29411697387695,
+        "benchmark": "int2float",
+        "eq cec": true,
+        "jj MIG": 2048,
+        "jj Opt MIG": 1856,
+        "jj levels MIG": 17,
+        "jj levels Opt MIG": 11
+      },
+      {
+        "Impr. jj": 25.973546981811523,
+        "Impr. jj levels": 17.962465286254883,
+        "benchmark": "priority",
+        "eq cec": true,
+        "jj MIG": 27066,
+        "jj Opt MIG": 20036,
+        "jj levels MIG": 373,
+        "jj levels Opt MIG": 306
+      },
+      {
+        "Impr. jj": 41.829769134521484,
+        "Impr. jj levels": 40.5405387878418,
+        "benchmark": "router",
+        "eq cec": true,
+        "jj MIG": 4394,
+        "jj Opt MIG": 2556,
+        "jj levels MIG": 74,
+        "jj levels Opt MIG": 44
+      }
+    ],
+    "version": "286fe3a"
+  }
+]
