@@ -42,7 +42,7 @@ namespace mockturtle
 
 struct aqfp_fanout_resyn
 {
-  aqfp_fanout_resyn( uint32_t branching_factor ) : branching_factor( branching_factor ) {}
+  aqfp_fanout_resyn( uint32_t branching_factor, bool pi_splitters = false ) : branching_factor( branching_factor ), pi_splitters( pi_splitters ) {}
 
   /*! \brief Determines the relative levels of fanouts of a node assuming a nearly balanced splitter tree. */
   template<typename NtkSrc, typename NtkDest, typename FanoutNodeCallback, typename FanoutPoCallback>
@@ -53,6 +53,9 @@ struct aqfp_fanout_resyn
     static_assert( std::is_invocable_v<FanoutNodeCallback, node<NtkSrc>, uint32_t>, "FanoutNodeCallback is not callable with arguments (node, level)" );
     static_assert( std::is_invocable_v<FanoutPoCallback, uint32_t, uint32_t>, "FanoutNodeCallback is not callable with arguments (index, level)" );
 
+    if ( ntk_src.fanout_size( n ) == 0)
+      return;
+
     auto offsets = balanced_splitter_tree_offsets( ntk_src.fanout_size( n ) );
 
     std::vector<node<NtkSrc>> fanouts;
@@ -62,7 +65,7 @@ struct aqfp_fanout_resyn
     } );
 
     auto n_dest = ntk_dest.get_node( f );
-    auto no_splitters = ntk_dest.is_constant( n_dest ) || ntk_dest.is_ci( n_dest );
+    auto no_splitters = ntk_dest.is_constant( n_dest ) || ( !pi_splitters && ntk_dest.is_ci( n_dest ) );
 
     uint32_t foind = 0u;
     for ( auto fo : fanouts )
@@ -80,6 +83,7 @@ struct aqfp_fanout_resyn
 
 private:
   uint32_t branching_factor;
+  bool pi_splitters;
 
   /*! \brief Determines the relative levels of the fanouts of a balanced splitter tree with `num_fanouts` many fanouts. */
   std::vector<uint32_t> balanced_splitter_tree_offsets( uint32_t num_fanouts )

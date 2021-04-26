@@ -60,6 +60,7 @@ struct aqfp_node_resyn_param
 {
   std::unordered_map<uint32_t, double> splitters;
   aqfp_node_resyn_strategy strategy = aqfp_node_resyn_strategy::cost_based;
+  bool pi_splitters;
 };
 
 /*! \brief This datastructure can be passed to `aqfp_resynthesis` as the node resynthesis algorithm. */
@@ -88,7 +89,7 @@ struct aqfp_node_resyn
 
       leaves.push_back( leaf );
       leaf_levels.push_back( leaf_level );
-      leaf_no_splitters.push_back( ntk_dest.is_constant( ntk_dest.get_node( leaf ) ) || ntk_dest.is_ci( ntk_dest.get_node( leaf ) ) );
+      leaf_no_splitters.push_back( ntk_dest.is_constant( ntk_dest.get_node( leaf ) ) || ( ntk_dest.is_ci( ntk_dest.get_node( leaf ) ) && !params.pi_splitters));
     }
 
     // should not have more than 4 fanin nodes

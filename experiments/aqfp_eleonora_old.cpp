@@ -108,29 +108,20 @@ int main()
   int iteration;
 
   experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, bool>
-    exp1( "mcnc_table1", "benchmark", "size MIG", "Size Opt MIG", "Impr. Size", "depth MIG", "depth Opt MIG", "Impr. depth", "eq cec" );
+    exp1( "table1", "benchmark", "size MIG", "Size Opt MIG", "Impr. Size", "depth MIG", "depth Opt MIG", "Impr. depth", "eq cec" );
   experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, bool>
-    exp2( "mcnc_table3", "benchmark", "jj MIG", "jj Opt MIG", "Impr. jj", "jj levels MIG", "jj levels Opt MIG", "Impr. jj levels", "eq cec" );
+    exp2( "table3", "benchmark", "jj MIG", "jj Opt MIG", "Impr. jj", "jj levels MIG", "jj levels Opt MIG", "Impr. jj levels", "eq cec" );
 
-  auto benchmarks = aqfp_benchmarks();
-  std::map<std::string, uint32_t> sizes;
-
-  for (auto benchmark : benchmarks) {
-    mig_network mig;
-    lorina::read_verilog( benchmark_aqfp_path( benchmark ), verilog_reader( mig ) );
-    sizes[benchmark] = mig.size();
-  }
-
-  std::sort(benchmarks.begin(), benchmarks.end(), [&sizes](auto x, auto y) { return sizes[x] < sizes[y]; } );
-
-  for ( auto const& benchmark : benchmarks )
+  // for ( auto const& benchmark : aqfp_benchmarks() )
+  for ( auto const& benchmark : iwls_benchmarks() )
   {
     if ( verbose )
     {
       fmt::print( "[i] processing {}\n", benchmark );
     }
     mig_network mig;
-    lorina::read_verilog( benchmark_aqfp_path( benchmark ), verilog_reader( mig ) );
+    // lorina::read_verilog( benchmark_aqfp_path( benchmark ), verilog_reader( mig ) );
+    lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( mig ) );
 
     uint32_t size_before, depth_before, jj_before, jj_levels_before;
     {
@@ -144,6 +135,8 @@ int main()
       fmt::print( "--- Starting point: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", size_before, depth_before, jj_before, jj_levels_before );
       iteration = 0;
     }
+
+    if (size_before > 5000) { continue; }
 
     auto iter = 0;
     while ( true )
@@ -267,7 +260,7 @@ int main()
       fmt::print( "--- After AQFP flow: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", size_after, depth_after, jj_after, jj_levels_after );
     }
 
-    bool const cec = abc_cec_aqfp( mig, benchmark );
+    bool const cec = abc_cec( mig, benchmark );
     float const impr_size = ( (float)size_before - (float)size_after ) / (float)size_before * 100;
     float const impr_depth = ( (float)depth_before - (float)depth_after ) / (float)depth_before * 100;
     float const impr_jj = ( (float)jj_before - (float)jj_after ) / (float)jj_before * 100;
@@ -275,14 +268,6 @@ int main()
 
     exp1( benchmark, size_before, size_after, impr_size, depth_before, depth_after, impr_depth, cec );
     exp2( benchmark, jj_before, jj_after, impr_jj, jj_levels_before, jj_levels_after, impr_levels, cec );
-
-    fmt::print( "Table 1: Results for size and depth optimization over MIG\n" );
-    exp1.table();
-    exp1.save();
-
-    fmt::print( "Table 3: Results for area, delay, and number of buffers & splitters for MIGs mapped into AQFP technology\n" );
-    exp2.table();
-    exp2.save();
   }
 
   fmt::print( "Table 1: Results for size and depth optimization over MIG\n" );

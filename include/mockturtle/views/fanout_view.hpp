@@ -229,7 +229,7 @@ private:
     this->foreach_gate( [&]( auto const& n ){
         this->foreach_fanin( n, [&]( auto const& c ){
             auto& fanout = _fanout[c];
-            if ( std::find( fanout.begin(), fanout.end(), n ) == fanout.end() )
+            // if ( std::find( fanout.begin(), fanout.end(), n ) == fanout.end() )
             {
               fanout.push_back( n );
             }
