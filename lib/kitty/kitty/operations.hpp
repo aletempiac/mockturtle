@@ -1130,7 +1130,7 @@ inline TT shift_right( const TT& tt, uint64_t shift )
 template<class TTf, class TTv, typename = std::enable_if_t<is_complete_truth_table<TTf>::value>>
 inline auto compose_truth_table( const TTf& f, const std::vector<TTv>& vars )
 {
-  assert( vars.size() == static_cast<std::size_t>( f.num_vars() ) );
+  //assert( vars.size() == static_cast<std::size_t>( f.num_vars() ) );
   auto composed = vars[0].construct();
 
   for ( uint64_t i = 0u; i < composed.num_bits(); ++i )

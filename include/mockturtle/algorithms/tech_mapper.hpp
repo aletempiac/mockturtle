@@ -263,10 +263,28 @@ private:
     } );
   }
 
+  void print_cut_information( uint8_t index)
+  {
+
+      for ( auto& cut : cuts.cuts( index ) )
+      {
+          std::cout <<  "For node " << index << " cut " <<  *cut<< std::endl;
+          const auto tt = cuts.truth_table( *cut );
+
+          std::cout << "Begin Truth table "; 
+          kitty::print_binary(tt);
+          std::cout << std::endl;
+      }
+  }
+
 
   void compute_matches()
   {
     /* match gates */
+
+    uint32_t sd_count = 0;
+    uint32_t sd_matches = 0;
+    uint32_t sd_ignore = 0;
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
 
@@ -275,7 +293,8 @@ private:
       auto i = 0u;
       for ( auto& cut : cuts.cuts( index ) )
       {
-        if ( cut->size() == 1 )
+      //print_cut_information (index);
+      if ( cut->size() == 1 && *cut->begin() == index )
         {
           ( *cut )->data.ignore = true;
           continue;
@@ -288,17 +307,46 @@ private:
           continue;
         }
         const auto fe = kitty::extend_to<NInputs>( tt );
+        if  (tt.num_vars() > 3 &&  kitty::is_selfdual( fe ) )
+        {
+            sd_count++;
+        }
+        
         auto const supergates_pos = library.get_supergates( fe );
         auto const supergates_neg = library.get_supergates( ~fe );
+
         if ( supergates_pos != nullptr || supergates_neg != nullptr )
         {
-          supergate_t match{supergates_pos, supergates_neg};
+            if  (tt.num_vars() > 2 &&  kitty::is_selfdual( fe ) )
+            {
+                sd_matches++;
+            }
+            //std::cout << "match found " << std::endl;
+            //if(supergates_pos != nullptr)
+            //{
+            //    for (auto sg: *supergates_pos)
+            //    {
+            //        std::cout << "match pos " << sg.root->name << std::endl;
+            //    }
+            //}
+            //if(supergates_neg != nullptr)
+            //{
+            //    for (auto sg: *supergates_neg)
+            //    {
+            //        std::cout << "match neg " << sg.root->name << std::endl;
+            //    }
+            //}
+            supergate_t match{supergates_pos, supergates_neg};
 
-          node_matches.push_back( match );
-          ( *cut )->data.match_index = i++;
+            node_matches.push_back( match );
+            ( *cut )->data.match_index = i++;
         }
         else
         {
+            if  (tt.num_vars() > 2 &&  kitty::is_selfdual( fe ) )
+            {
+                sd_ignore++;
+            }
           /* Ignore not matched cuts */
           ( *cut )->data.ignore = true;
         }
@@ -306,6 +354,7 @@ private:
       
       matches[index] = node_matches;
     } );
+    fmt::print("[i] self dual cuts ({}) = sd_match({}) + sd_ignore({})\n",  sd_count, sd_matches, sd_ignore);
   }
 
   template<bool DO_AREA>
@@ -1339,11 +1388,19 @@ private:
     std::stringstream gates_usage;
     double tot_area = 0.0f;
     uint32_t tot_instances = 0u;
+    double sd_map_area = 0.0f;
     for ( auto i = 0u; i < gates_profile.size(); ++i ) 
     {
       if ( gates_profile[i] > 0u )
       {
         auto tot_gate_area = gates_profile[i] * gates[i].area;
+
+        if ( gates[i].num_vars > 2 && kitty::is_selfdual( gates[i].function ) )
+        {
+            sd_map_area += tot_gate_area; 
+
+        }
+
 
         gates_usage << fmt::format( "[i] {:<15}", gates[i].name )
                     << fmt::format( "\t Instance = {:>10d}", gates_profile[i] )
@@ -1361,7 +1418,10 @@ private:
                 << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_area )
                 << std::endl;
 
+    std::cout << "SD map area = " << sd_map_area / area * 100 << std::endl;
     st.gates_usage = gates_usage.str();
+    st.sd_map_area = sd_map_area;
+    st.sd_map_area = sd_map_area;
   }
 
 private:

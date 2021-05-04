@@ -77,6 +77,7 @@ struct cut_enumeration_update_cut<cut_enumeration_tech_map_cut>
   template<typename Cut, typename NetworkCuts, typename Ntk>
   static void apply( Cut& cut, NetworkCuts const& cuts, Ntk const& ntk, node<Ntk> const& n )
   {
+      //std::cout << "after apply call " << std::endl;
     uint32_t delay{0};
     float flow = cut->data.cost = cut.size() < 2 ? 0.0f : 1.0f;
 

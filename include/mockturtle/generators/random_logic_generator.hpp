@@ -34,6 +34,7 @@
 
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/xag.hpp>
+#include <mockturtle/networks/xmg.hpp>
 #include <mockturtle/networks/mig.hpp>
 #include <random>
 
@@ -157,16 +158,27 @@ inline random_logic_generator<xag_network> default_random_xag_generator()
   using gen_t = random_logic_generator<xag_network>;
 
   gen_t::rules_t rules;
-  rules.emplace_back( gen_t::rule{[]( xag_network& xag, std::vector<xag_network::signal> const& vs ) -> xag_network::signal
-    {
-      assert( vs.size() == 2u );
-      return xag.create_and( vs[0], vs[1] );
-    }, 2u} );
+  //rules.emplace_back( gen_t::rule{[]( xag_network& xag, std::vector<xag_network::signal> const& vs ) -> xag_network::signal
+  //  {
+  //    assert( vs.size() == 2u );
+  //    return xag.create_and( vs[0], vs[1] );
+  //  }, 2u} );
   rules.emplace_back( gen_t::rule{[]( xag_network& xag, std::vector<xag_network::signal> const& vs ) -> xag_network::signal
     {
       assert( vs.size() == 2u );
       return xag.create_xor( vs[0], vs[1] );
     }, 2u} );
+//rules.emplace_back( gen_t::rule{[]( xag_network& xag, std::vector<xag_network::signal> const& vs ) -> xag_network::signal
+  //  {
+  //    assert( vs.size() == 3u );
+  //    return xag.create_xor3( vs[0], vs[1], vs[2] );
+  //  }, 3u} );
+  
+  //rules.emplace_back( gen_t::rule{[]( xag_network& xag, std::vector<xag_network::signal> const& vs ) -> xag_network::signal
+  //  {
+  //    assert( vs.size() == 3u );
+  //    return xag.create_maj( vs[0], vs[1], vs[2] );
+  //  }, 3u} );
 
   return gen_t( rules );
 }
@@ -209,6 +221,26 @@ inline random_logic_generator<mig_network> mixed_random_mig_generator()
     }, 2u} );
 
   return random_logic_generator<mig_network>( rules );
+}
+
+/*! \brief Generates a random XMG network */
+inline random_logic_generator<xmg_network> default_random_xmg_generator()
+{
+  using gen_t = random_logic_generator<xmg_network>;
+
+  gen_t::rules_t rules;
+  rules.emplace_back( gen_t::rule{[]( xmg_network& xmg, std::vector<xmg_network::signal> const& vs ) -> xmg_network::signal
+    {
+      assert( vs.size() == 3u );
+      return xmg.create_maj( vs[0], vs[1], vs[2] );
+    }, 3u} );
+  rules.emplace_back( gen_t::rule{[]( xmg_network& xmg, std::vector<xmg_network::signal> const& vs ) -> xmg_network::signal
+    {
+      assert( vs.size() == 3u );
+      return xmg.create_xor3( vs[0], vs[1], vs[2] );
+    }, 3u} );
+
+  return random_logic_generator<xmg_network>( rules );
 }
 
 } // namespace mockturtle

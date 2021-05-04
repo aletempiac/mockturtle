@@ -275,6 +275,7 @@ inline return_code read_genlib( const std::string& filename, const genlib_reader
   std::ifstream in( detail::word_exp_filename( filename ), std::ifstream::in );
   if ( !in.is_open() )
   {
+      fmt::print("Problem here");
     if ( diag )
     {
       diag->report( diagnostic_level::fatal,

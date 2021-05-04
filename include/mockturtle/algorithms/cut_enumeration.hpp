@@ -340,9 +340,19 @@ public:
         {
           merge_cuts2( index );
         }
+        //if constexpr (Ntk::min_fanin_size == 3 && Ntk::max_fanin_size == 3)
+        //{
+        //    bool const_fanin = false;
+        //    ntk.foreach_fanin(  ntk.index_to_node( index ), [&]( auto const& f, auto i ) {
+        //            if (f.is_constant())
+        //              const_fanin = true; 
+        //            } );
+        //    if(const_fanin)
+        //        merge_cuts2(index);
+        //}
         else
         {
-          merge_cuts( index );
+            merge_cuts( index );
         }
       }
     } );
@@ -427,6 +437,7 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
+        //std::cout << "calling apply from merge_cuts2 " << std::endl;
         cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, index );
 
         rcuts.insert( new_cut );
@@ -444,11 +455,75 @@ private:
     }
   }
 
+  void merge_cuts3( uint32_t index )
+  {
+    const auto fanin = 3;
+    //std::cout << "IN merge cuts3" << std::endl;
+
+    uint32_t pairs{1};
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+      lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
+      pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+    } );
+    lcuts[3] = &cuts.cuts( index );
+    auto& rcuts = *lcuts[fanin];
+    rcuts.clear();
+
+    cut_t new_cut;
+
+    std::vector<cut_t const*> vcuts( fanin );
+
+    cuts._total_tuples += pairs;
+    for ( auto const& c1 : *lcuts[0] )
+    {
+      for ( auto const& c2 : *lcuts[1] )
+      {
+          for ( auto const& c3 : *lcuts[2] )
+          {
+              if ( !c1->merge( *c3, new_cut, ps.cut_size ) )
+              {
+                  continue;
+              }
+
+              if ( rcuts.is_dominated( new_cut ) )
+              {
+                  continue;
+              }
+
+              if constexpr ( ComputeTruth )
+              {
+                  vcuts[0] = c1;
+                  vcuts[1] = c2;
+                  vcuts[2] = c3;
+                  new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+              }
+
+              //std::cout << "calling apply from merge_cuts2 " << std::endl;
+              cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, index );
+
+              rcuts.insert( new_cut );
+          }
+      }
+    }
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_limit - 1 );
+
+    cuts._total_cuts += rcuts.size();
+
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      cuts.add_unit_cut( index );
+    }
+  }
+
+
   void merge_cuts( uint32_t index )
   {
     uint32_t pairs{1};
     std::vector<uint32_t> cut_sizes;
     ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &cut_sizes]( auto child, auto i ) {
+      //std::cout << "fanins" <<  std::endl;
       lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
       cut_sizes.push_back( static_cast<uint32_t>( lcuts[i]->size() ) );
       pairs *= cut_sizes.back();
@@ -500,6 +575,7 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
+        //std::cout << "calling apply from merge_cuts " << std::endl;
         cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, ntk.index_to_node( index ) );
 
         rcuts.insert( new_cut );

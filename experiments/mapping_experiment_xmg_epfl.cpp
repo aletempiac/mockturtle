@@ -143,11 +143,12 @@ Ntk ntk_optimization( Ntk const& ntk )
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::aig_network>::value )
       {
           //std::cout << "aig" << std::endl;
-          exact_resynthesis_params eps;
-          //eps.cache = std::make_shared<exact_resynthesis_params::cache_map_t>();
-          exact_aig_resynthesis<aig_network> aig_exact( false, eps );
-          mockturtle::cached_resynthesis<mockturtle::aig_network, decltype( aig_exact )> cached_aig_exact( aig_exact, 4, "exact_aig_cache4_cr.v" );
-          mockturtle::cut_rewriting( des, cached_aig_exact, cr_ps, &cr_st );
+          xag_npn_resynthesis<aig_network> xag_npn_resyn;
+          //exact_resynthesis_params eps;
+          ////eps.cache = std::make_shared<exact_resynthesis_params::cache_map_t>();
+          //exact_aig_resynthesis<aig_network> aig_exact( false, eps );
+          //mockturtle::cached_resynthesis<mockturtle::aig_network, decltype( aig_exact )> cached_aig_exact( aig_exact, 4, "exact_aig_cache4_cr.v" );
+          mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
           des = mockturtle::cleanup_dangling( des);
 
           aig_resubstitution( des, ps, &st );
@@ -266,6 +267,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     /* Option 2 */
     mockturtle::xmg3_npn_resynthesis<mockturtle::xmg_network> npn_resyn;
     mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
+    xag_npn_resynthesis<aig_network> aig_resyn;
 
     //if ( lorina::read_verilog( crypto_experiments::benchmark_path( benchmark ), mockturtle::verilog_reader( aig ) ) != lorina::return_code::success )
     //{
@@ -281,6 +283,19 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
       std::abort();
       return;
     }
+    //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( mig ) ) != lorina::return_code::success )
+    //{
+    //  std::cout << "ERROR IN reading benchmark" << std::endl;
+    //  std::abort();
+    //  return;
+    //}
+
+    //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( xmg ) ) != lorina::return_code::success )
+    //{
+    //  std::cout << "ERROR IN reading benchmark" << std::endl;
+    //  std::abort();
+    //  return;
+    //}
     balancing_params sps;
     balancing_stats st4;
     sop_rebalancing<aig_network> sop_balancing;    
@@ -292,22 +307,33 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     /* Calling Resynthesis engine */
     if(aig_or_klut == "aig")
     {
-        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, cached_xmg3_exact );
+        //xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, npn_resyn);
+        //xmg = cleanup_dangling( xmg );
+        balancing_params sps;
+        balancing_stats st4;
+        sop_rebalancing<xmg_network> xmg_balancing;    
+        xmg = balancing( xmg, {xmg_balancing}, sps, &st4 );
         xmg = cleanup_dangling( xmg );
 
-        aig = mockturtle::node_resynthesis<mockturtle::aig_network>( aig, cached_aig_exact );
+        //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( aig, aig_resyn );
+        //aig = cleanup_dangling( aig );
+        sop_rebalancing<aig_network> aig_balancing;    
+        aig = balancing( aig, {aig_balancing}, sps, &st4 );
         aig = cleanup_dangling( aig );
 
-        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
+        //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
+        //mig = cleanup_dangling( mig );
+        sop_rebalancing<mig_network> mig_balancing;    
+        mig = balancing( mig, {mig_balancing}, sps, &st4 );
         mig = cleanup_dangling( mig );
     }
     else
     {
-        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, cached_xmg3_exact );
+        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
         xmg = cleanup_dangling( xmg );
 
-        aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
-        aig = cleanup_dangling( aig );
+        //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
+        //aig = cleanup_dangling( aig );
 
         mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
         mig = cleanup_dangling( mig );
@@ -385,10 +411,10 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   }
   outs.close();
   outs.open(filename.c_str(), std::ios::app);
-  exp.save("1");
-  exp.table("1", outs); 
-  exp2.save("1");
-  exp2.table("1",outs); 
+  exp.save("2");
+  exp.table("2", outs); 
+  exp2.save("2");
+  exp2.table("2",outs); 
   outs.close();
 }
 

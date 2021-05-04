@@ -100,6 +100,7 @@ struct map_stats
   /*! \brief Area and delay results. */
   double area{0};
   double delay{0};
+  double sd_map_area{0};
 
   /*! \brief Runtime. */
   stopwatch<>::duration time_mapping{0};
@@ -120,6 +121,7 @@ struct map_stats
     std::cout << fmt::format( "[i] mapping time = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] total time = {:>5.2f} secs\n", to_seconds( time_total ) );
     std::cout << "[i] gates usage report:\n" << gates_usage;
+    std::cout << "[i] SD Map area:\n" << sd_map_area;
   }
 };
 

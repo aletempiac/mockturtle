@@ -193,6 +193,12 @@ void num_gate_profile( Ntk const& ntk, xmg_cost_params& xmg_ps )
 
   xmg_ps.total_xor3 = xmg_ps.actual_xor2 + xmg_ps.actual_xor3;
   xmg_ps.total_maj = xmg_ps.remaining_maj + xmg_ps.actual_maj;
+  std::cout << "total xor3 " << xmg_ps.total_xor3   << std::endl   
+            << "total maj  " << xmg_ps.total_maj    << std::endl
+            << "actual xor2 "<< xmg_ps.actual_xor2  << std::endl
+            << "actual xor3 "<< xmg_ps.actual_xor3  << std::endl
+            << "actual maj " << xmg_ps.actual_maj   << std::endl
+            << "rem maj "    << xmg_ps.remaining_maj<< std::endl;
 }
 
 } // namespace mockturtle

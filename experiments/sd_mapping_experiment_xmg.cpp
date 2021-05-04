@@ -36,6 +36,9 @@
 #include <mockturtle/views/depth_choice_view.hpp>
 #include <mockturtle/views/depth_view.hpp>
 #include <mockturtle/views/topo_view.hpp>
+#include <mockturtle/algorithms/balancing.hpp>
+//#include <mockturtle/algorithms/balancing/sop_balancing.hpp>
+//#include <mockturtle/algorithms/balancing/esop_balancing.hpp>
 
 #include <mockturtle/algorithms/resubstitution.hpp>
 #include <mockturtle/algorithms/aig_resub.hpp>
@@ -44,36 +47,48 @@
 #include <mockturtle/algorithms/cut_rewriting.hpp>
 
 std::vector<std::string> local_benchmarks = {
-    "benchmarks_12_512_131_10",
-    "benchmarks_12_512_131_1",
-    "benchmarks_12_512_131_2",
-    "benchmarks_12_512_131_3",
-    "benchmarks_12_512_131_4",
-    "benchmarks_12_512_131_5",
-    "benchmarks_12_512_131_6",
-    "benchmarks_12_512_131_7",
-    "benchmarks_12_512_131_8",
-    "benchmarks_12_512_131_9",
-    "benchmarks_128_231_131_10",
-    "benchmarks_128_231_131_1",
-    "benchmarks_128_231_131_2",
-    "benchmarks_128_231_131_3",
-    "benchmarks_128_231_131_4",
-    "benchmarks_128_231_131_5",
-    "benchmarks_128_231_131_6",
-    "benchmarks_128_231_131_7",
-    "benchmarks_128_231_131_8",
-    "benchmarks_128_231_131_9",
-    "benchmarks_255_399_131_10",
-    "benchmarks_255_399_131_1",
-    "benchmarks_255_399_131_2",
-    "benchmarks_255_399_131_3",
-    "benchmarks_255_399_131_4",
-    "benchmarks_255_399_131_5",
-    "benchmarks_255_399_131_6",
-    "benchmarks_255_399_131_7",
-    "benchmarks_255_399_131_8",
-    "benchmarks_255_399_131_9" };
+"benchmarks_4_4_3_10",
+"benchmarks_4_4_3_1",
+"benchmarks_4_4_3_2",
+"benchmarks_4_4_3_3",
+"benchmarks_4_4_3_4",
+"benchmarks_4_4_3_5",
+"benchmarks_4_4_3_6",
+"benchmarks_4_4_3_7",
+//"benchmarks_4_4_3_8",
+"benchmarks_4_4_3_9", 
+};
+
+   // "benchmarks_12_512_131_10",
+   // "benchmarks_12_512_131_1",
+   // "benchmarks_12_512_131_2",
+   // "benchmarks_12_512_131_3",
+   // "benchmarks_12_512_131_4",
+   // "benchmarks_12_512_131_5",
+   // "benchmarks_12_512_131_6",
+   // "benchmarks_12_512_131_7",
+   // "benchmarks_12_512_131_8",
+   // "benchmarks_12_512_131_9",
+   // "benchmarks_128_231_131_10",
+   // "benchmarks_128_231_131_1",
+   // "benchmarks_128_231_131_2",
+   // "benchmarks_128_231_131_3",
+   // "benchmarks_128_231_131_4",
+   // "benchmarks_128_231_131_5",
+   // "benchmarks_128_231_131_6",
+   // "benchmarks_128_231_131_7",
+   // "benchmarks_128_231_131_8",
+   // "benchmarks_128_231_131_9",
+   // "benchmarks_255_399_131_10",
+   // "benchmarks_255_399_131_1",
+   // "benchmarks_255_399_131_2",
+   // "benchmarks_255_399_131_3",
+   // "benchmarks_255_399_131_4",
+   // "benchmarks_255_399_131_5",
+   // "benchmarks_255_399_131_6",
+   // "benchmarks_255_399_131_7",
+   // "benchmarks_255_399_131_8",
+   // "benchmarks_255_399_131_9" };
 //
 //
 //std::vector<std::string> local_benchmarks_iwls = {
@@ -226,13 +241,26 @@ void tech_map()
     //    return;
     //}
 
-    for ( auto const& g : gates1 )
-    {
-        std::cout << g.name << std::endl;
-    }
+    //for ( auto const& g : gates1 )
+    //{
+    //    std::cout << g.name << std::endl;
+    //}
     mockturtle::tech_library_params lib_ps;
-    lib_ps.very_verbose = false;
+    lib_ps.very_verbose = true;
+    lib_ps.levels = 2;
+    lib_ps.compute_supergates = true;
     mockturtle::tech_library<5> lib1( gates1, lib_ps );
+
+    std::cout << "checking For each" << std::endl;
+    std::for_each(std::begin(gates1), std::end(gates1), [&](const mockturtle::gate& g ){
+      std::cout << g.name << std::endl; 
+      kitty::print_binary(g.function);
+      std::cout << std::endl;
+      });
+    std::cout << "For each done" << std::endl;
+
+
+
     //mockturtle::tech_library<5> lib2( gates2, lib_ps );
 
     /* Option 1 */
@@ -255,6 +283,8 @@ void tech_map()
     //    //    continue;
     for ( const auto& b : local_benchmarks )
     {
+         //if (b != "benchmarks_4_4_3_10")
+         //    continue;
         std::string filename{"../experiments/self_dual_benchmarks/"};
         filename = filename + b + ".v";
 
@@ -267,16 +297,17 @@ void tech_map()
         mockturtle::mig_network mig;
 
         /* Option 2 */
-        mockturtle::xmg3_npn_resynthesis<mockturtle::xmg_network> npn_resyn;
+        mockturtle::xag_npn_resynthesis<mockturtle::aig_network> xag_npn_resyn;
+        mockturtle::xmg_npn_resynthesis npn_resyn;
         mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
 
-        if ( lorina::read_verilog( filename, mockturtle::verilog_reader( aig ) ) != lorina::return_code::success )
+        if ( lorina::read_verilog( filename, mockturtle::verilog_reader( xmg) ) != lorina::return_code::success )
         {
             std::cout << "ERROR IN reading benchmark" << std::endl;
             std::abort();
             return;
         }
-
+        mockturtle::write_verilog( xmg, std::cout);
 
         //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( aig ) ) != lorina::return_code::success )
         //{
@@ -284,22 +315,37 @@ void tech_map()
         //  std::abort();
         //  return;
         //}
-        auto klut = lut_map( aig, 4u );
+        auto klut = lut_map( xmg, 4u );
 
         //imig = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn );
-        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, cached_xmg3_exact );
-        xmg = cleanup_dangling( xmg );
+        aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, xag_npn_resyn );
+        aig = cleanup_dangling( aig);
 
-        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
-        mig = cleanup_dangling( mig );
+        //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+        //mig = cleanup_dangling( mig );
+
+        ////balancing_params sps;
+        ////balancing_stats st4;
+        //////sop_rebalancing<mig_network> mig_balancing;    
+        //////mig = balancing( mig, {mig_balancing}, sps, &st4 );
+
+        //////sop_rebalancing<aig_network> sop_balancing;    
+        //////aig = balancing( aig, {sop_balancing}, sps, &st4 );
+
+        ////esop_rebalancing<xmg_network> xmg_balancing;    
+        ////xmg = balancing( xmg, {xmg_balancing}, sps, &st4 );
+        ////mockturtle::write_verilog( xmg, std::cout);
+
 
         aig = ntk_optimization<mockturtle::aig_network> ( aig );
-        mig = ntk_optimization<mockturtle::mig_network> ( mig );
+        //mig = ntk_optimization<mockturtle::mig_network> ( mig );
         xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
 
         aig = cleanup_dangling( aig );
-        mig = cleanup_dangling( mig );
+        ////mig = cleanup_dangling( mig );
         xmg = cleanup_dangling( xmg );
+        ////mockturtle::write_verilog( xmg, std::cout);
+        ////mockturtle::write_verilog( mig, std::cout);
 
         mockturtle::depth_view xmg_d{ xmg };
         mockturtle::depth_view mig_d{ mig };
@@ -315,15 +361,15 @@ void tech_map()
 
         mockturtle::map_params ps;
         ps.cut_enumeration_ps.cut_size = 5;
-        ps.cut_enumeration_ps.cut_limit = 8;
+        ps.cut_enumeration_ps.cut_limit = 25;
         ps.verbose = true;
         ps.skip_delay_round = true;
         mockturtle::map_stats aig_mst, mig_mst, xmg_mst;
 
         mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
         fflush( stdout );
-        mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
-        fflush( stdout );
+        //mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
+        //fflush( stdout );
         mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
         fflush( stdout );
 
@@ -332,7 +378,7 @@ void tech_map()
                 aig_mst.area, mig_mst.area, xmg_mst.area,
                 aig_mst.delay, mig_mst.delay, xmg_mst.delay );
 
-        //mockturtle::tech_mapping( xmg, lib2, ps, &mst );
+        ////mockturtle::tech_mapping( xmg, lib2, ps, &mst );
         exp.save();
         exp.table();
     }
