@@ -326,14 +326,14 @@ private:
             //{
             //    for (auto sg: *supergates_pos)
             //    {
-            //        std::cout << "match pos " << sg.root->name << std::endl;
+            //        std::cout << "match pos " << sg.root->name << " area " << sg.area << std::endl;
             //    }
             //}
             //if(supergates_neg != nullptr)
             //{
             //    for (auto sg: *supergates_neg)
             //    {
-            //        std::cout << "match neg " << sg.root->name << std::endl;
+            //        std::cout << "match neg " << sg.root->name << " area " << sg.area << std::endl;
             //    }
             //}
             supergate_t match{supergates_pos, supergates_neg};
@@ -533,6 +533,7 @@ private:
         area += node_data.area[use_phase];
       }
     }
+    std::cout << "Final area in set_mapping_refs " << area << std::endl;
 
     /* blend estimated references */
     for ( auto i = 0u; i < ntk.size(); ++i )
@@ -1370,7 +1371,22 @@ private:
 
       if ( node_data.same_match || node_data.map_refs[phase] > 0 )
       {
-        ++gates_profile[node_data.best_supergate[phase]->root->id];
+        if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
+        {
+            std::cout << " It is a comb supergate " <<  std::endl;
+            ++gates_profile[node_data.best_supergate[phase]->root->id];
+            auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
+            for (auto i: fanin_list)
+            {
+                if ( i > 0 )
+                {
+                    std::cout << "Gate name " << gates[i].name << std::endl;
+                    ++gates_profile[i];
+                }
+            }
+        }
+        else
+            ++gates_profile[node_data.best_supergate[phase]->root->id];
 
         if ( node_data.same_match && node_data.map_refs[phase ^ 1] > 0 )
           ++gates_profile[lib_inv_id];
@@ -1379,7 +1395,22 @@ private:
       phase = phase ^ 1;
       if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
       {
-        ++gates_profile[node_data.best_supergate[phase]->root->id];
+        if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
+        {
+            std::cout << " It is a comb supergate " <<  std::endl;
+            ++gates_profile[node_data.best_supergate[phase]->root->id];
+            auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
+            for (auto i: fanin_list)
+            {
+                if (i > 0)
+                {
+                    std::cout << "Gate name " << gates[i].name << std::endl;
+                    ++gates_profile[i];
+                }
+            }
+        }
+        else
+            ++gates_profile[node_data.best_supergate[phase]->root->id];
       }
 
       return true;
@@ -1418,7 +1449,7 @@ private:
                 << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_area )
                 << std::endl;
 
-    std::cout << "SD map area = " << sd_map_area / area * 100 << std::endl;
+    std::cout << "SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
     st.gates_usage = gates_usage.str();
     st.sd_map_area = sd_map_area;
     st.sd_map_area = sd_map_area;

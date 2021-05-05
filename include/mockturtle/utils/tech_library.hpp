@@ -142,6 +142,7 @@ public:
   tech_library( std::vector<gate> const gates, tech_library_params const ps = {} )
     : _gates( gates ),
       _ps ( ps ),
+      _lsg(),
       _super_lib()
   {
     generate_library();
@@ -172,7 +173,7 @@ public:
 
 private:
 
-  void compute_supergates( list_supergate_t lsg, uint32_t levels = 1 )
+  void compute_supergates( uint32_t levels = 1 )
   {
       assert( levels != 0 );
       
@@ -195,7 +196,7 @@ private:
                    * and so forth*/
                   for (auto const& g0: _gates)
                   {
-                      if ( g0.num_vars < 2)
+                      if ( g0.num_vars < 1)
                           continue;
                       comb_supergate c0;
                       c0.num_vars = nfanins + g0.num_vars - 1;
@@ -203,16 +204,16 @@ private:
                           break;
                       c0.fanin_list.emplace_back( g0.id );
                       c0.root_id = index;
-                      c0.id = lsg.size();
+                      c0.id = _lsg.size();
                       c0.is_comb_supergate = true;
 
                       c0.fanin_list.emplace_back( -1 );
                       
-                      lsg.emplace_back( c0 );
+                      _lsg.emplace_back( c0 );
 
                       for (auto const& g1: _gates)
                       {
-                          if ( g1.num_vars < 2)
+                          if ( g1.num_vars < 1)
                               continue;
                           comb_supergate c1;
                           c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
@@ -221,9 +222,9 @@ private:
                           c1.fanin_list.emplace_back( g0.id );
                           c1.fanin_list.emplace_back( g1.id );
                           c1.root_id = index;
-                          c1.id = lsg.size();
+                          c1.id = _lsg.size();
                           c1.is_comb_supergate = true;
-                          lsg.emplace_back( c1 );
+                          _lsg.emplace_back( c1 );
                       }
 
                   }
@@ -231,7 +232,7 @@ private:
               case 3: /* Three input gates */  
                   for (auto const& g0: _gates)
                   {
-                      if ( g0.num_vars < 2)
+                      if ( g0.num_vars < 1)
                           continue;
                       comb_supergate c0;
                       c0.num_vars = nfanins + g0.num_vars - 1;
@@ -239,16 +240,16 @@ private:
                           break;
                       c0.fanin_list.emplace_back( g0.id );
                       c0.root_id = index;
-                      c0.id = lsg.size();
+                      c0.id = _lsg.size();
                       c0.is_comb_supergate = true;
 
                       c0.fanin_list.emplace_back( -1 );
                       c0.fanin_list.emplace_back( -2 );
-                      lsg.emplace_back( c0 );
+                      _lsg.emplace_back( c0 );
 
                       for (auto const& g1: _gates)
                       {
-                          if ( g1.num_vars < 2)
+                          if ( g1.num_vars < 1)
                               continue;
                           comb_supergate c1;
                           c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
@@ -258,13 +259,13 @@ private:
                           c1.fanin_list.emplace_back( g1.id );
                           c1.fanin_list.emplace_back( -1 );
                           c1.root_id = index; 
-                          c1.id = lsg.size();
+                          c1.id = _lsg.size();
                           c1.is_comb_supergate = true;
-                          lsg.emplace_back( c1 );
+                          _lsg.emplace_back( c1 );
 
                           for (auto const& g2: _gates)
                           {
-                              if ( g2.num_vars < 2)
+                              if ( g2.num_vars < 1)
                                   continue;
                               comb_supergate c2;
                               c2.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars - 3;
@@ -274,9 +275,9 @@ private:
                               c2.fanin_list.emplace_back( g1.id );
                               c2.fanin_list.emplace_back( g2.id );
                               c2.root_id = index; 
-                              c2.id = lsg.size();
+                              c2.id = _lsg.size();
                               c2.is_comb_supergate = true;
-                              lsg.emplace_back( c2 );
+                              _lsg.emplace_back( c2 );
                           }
                       }
 
@@ -285,7 +286,7 @@ private:
               case 4: /* Four input gates */
                   for (auto const& g0: _gates )
                   {
-                      if ( g0.num_vars < 2)
+                      if ( g0.num_vars < 1)
                           continue;
                       comb_supergate c0;
                       c0.num_vars = nfanins + g0.num_vars - 1;
@@ -293,17 +294,17 @@ private:
                           break;
                       c0.fanin_list.emplace_back( g0.id );
                       c0.root_id = index;
-                      c0.id = lsg.size();
+                      c0.id = _lsg.size();
                       c0.is_comb_supergate = true;
 
                       c0.fanin_list.emplace_back( -1 );
                       c0.fanin_list.emplace_back( -2 );
                       c0.fanin_list.emplace_back( -3 );
-                      lsg.emplace_back( c0 );
+                      _lsg.emplace_back( c0 );
 
                       for (auto const& g1: _gates)
                       {
-                          if ( g1.num_vars < 2)
+                          if ( g1.num_vars < 1)
                               continue;
                           comb_supergate c1;
                           c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
@@ -314,13 +315,13 @@ private:
                           c1.fanin_list.emplace_back( -1 );
                           c1.fanin_list.emplace_back( -2 );
                           c1.root_id = index; 
-                          c1.id = lsg.size();
+                          c1.id = _lsg.size();
                           c1.is_comb_supergate = true;
-                          lsg.emplace_back( c1 );
+                          _lsg.emplace_back( c1 );
 
                           for (auto const& g2: _gates)
                           {
-                              if ( g2.num_vars < 2)
+                              if ( g2.num_vars < 1)
                                   continue;
                               comb_supergate c2;
                               c2.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars - 3;
@@ -331,13 +332,13 @@ private:
                               c2.fanin_list.emplace_back( g2.id );
                               c2.fanin_list.emplace_back( -1 );
                               c2.root_id = index; 
-                              c2.id = lsg.size();
+                              c2.id = _lsg.size();
                               c2.is_comb_supergate = true;
-                              lsg.emplace_back( c2 );
+                              _lsg.emplace_back( c2 );
 
                               for (auto const& g3: _gates)
                               {
-                                  if( g3.num_vars < 2)
+                                  if( g3.num_vars < 1)
                                       continue;
                                   comb_supergate c3;
                                   c3.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars + g3.num_vars - 4;
@@ -348,9 +349,9 @@ private:
                                   c3.fanin_list.emplace_back( g2.id );
                                   c3.fanin_list.emplace_back( g3.id );
                                   c3.root_id = index; 
-                                  c3.id = lsg.size();
+                                  c3.id = _lsg.size();
                                   c3.is_comb_supergate = true;
-                                  lsg.emplace_back( c3 );
+                                  _lsg.emplace_back( c3 );
                               }
                           }
                       }
@@ -365,9 +366,9 @@ private:
 
       if ( _ps.very_verbose )
       {
-          std::cout << "size of supergate " << lsg.size() << std::endl;
+          std::cout << "size of supergate " << _lsg.size() << std::endl;
 
-          for (auto const& t : lsg)
+          for (auto const& t : _lsg)
           {
               //auto c = std::get<0> ( t );
               auto c =  t ;
@@ -435,27 +436,26 @@ private:
 
   void generate_library()
   {
-    list_supergate_t lsg; 
-
     for (auto const g: _gates)
     {
         comb_supergate c;
         c.root_id = g.id;
-        c.id = lsg.size();
+        c.id = _lsg.size();
         c.is_comb_supergate = false;
         c.num_vars = g.num_vars;
         for (uint8_t i = 0 ; i < g.num_vars; i++)
             c.fanin_list.emplace_back( i );
-        lsg.emplace_back( c ); 
+        _lsg.emplace_back( c ); 
     }
 
 
     if( _ps.compute_supergates )
     {
-        compute_supergates( lsg );
+        std::cout << "Computing Combinational supergates " << std::endl; 
+        compute_supergates( );
     }
         
-    for ( auto const& cg : lsg )
+    for ( auto const& cg : _lsg )
     {
       auto const& gate = _gates[cg.root_id];
 
@@ -560,6 +560,7 @@ private:
       }
     }
 
+    std::cout << "Size of superlib " << _super_lib.size() << std::endl;
     if ( _ps.very_verbose )
     {
       for ( auto const& entry : _super_lib )
@@ -656,6 +657,7 @@ private:
 
   std::vector<gate> const _gates; /* collection of gates */
   tech_library_params const _ps;
+  list_supergate_t _lsg;
   lib_t _super_lib; /* library of enumerated gates */
 };
 

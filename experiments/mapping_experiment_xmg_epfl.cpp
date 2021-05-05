@@ -55,30 +55,6 @@ std::vector<std::string> local_benchmarks = {
     "sin",
     "sqrt",
     "square" };
-//
-//
-//std::vector<std::string> local_benchmarks_iwls = {
-//  "aes_core",
-//  "mem_ctrl",
-//  "voter"
-//};
-//
-//
-//std::vector<std::string> benchmarks_aqfp_v = {
-//    //"5xp1",
-//    "C1908_orig",
-//    "C432_orig",
-//    "C880_orig",
-//    "C5315_orig",
-//    "count_orig",
-//    //"dist_orig",
-//    "i5_orig",
-//    "i6_orig",
-//    "k2_orig",
-//    "majority_orig",
-//    "x1_orig"
-//};
-//
 using namespace mockturtle;
 using namespace experiments;
 
@@ -192,10 +168,8 @@ Ntk ntk_optimization( Ntk const& ntk )
 
 void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 {
-
     std::string filename = "epfl";
     filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
-    //std::cout << "log file" << filename;
     std::ofstream outs;
     outs.open(filename.c_str());
 
@@ -216,21 +190,11 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     std::abort();
     return;
   }
-  //if ( lorina::read_genlib( "mcnc_smaller.genlib", mockturtle::genlib_reader( gates2 ) ) != lorina::return_code::success )
-  //{
-  //    std::cout << "ERROR IN" << std::endl;
-  //    std::abort();
-  //    return;
-  //}
 
-  //for ( auto const& g : gates1 )
-  //{
-  //  std::cout << g.name << std::endl;
-  //}
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
-  mockturtle::tech_library<5> lib1( gates1, lib_ps );
-  //mockturtle::tech_library<5> lib2( gates2, lib_ps );
+  lib_ps.compute_supergates = true;
+  mockturtle::tech_library<6> lib1( gates1, lib_ps );
 
   /* Option 1 */
   mockturtle::exact_xmg_resynthesis_params xmg3_exact_ps;
@@ -296,13 +260,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     //  std::abort();
     //  return;
     //}
-    balancing_params sps;
-    balancing_stats st4;
-    sop_rebalancing<aig_network> sop_balancing;    
-    aig = balancing( aig, {sop_balancing}, sps, &st4 );
-
     auto klut = lut_map( aig, 4u );
-
 
     /* Calling Resynthesis engine */
     if(aig_or_klut == "aig")
@@ -349,13 +307,13 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     std::string sd_before = fmt::format( "{}/{} = {}", ( ps1.actual_maj + ps1.actual_xor3 ),  size_before, sd_rat );
 
 
-    aig = ntk_optimization<mockturtle::aig_network> ( aig );
-    mig = ntk_optimization<mockturtle::mig_network> ( mig );
-    xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
+    //aig = ntk_optimization<mockturtle::aig_network> ( aig );
+    //mig = ntk_optimization<mockturtle::mig_network> ( mig );
+    //xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
 
-    aig = cleanup_dangling( aig );
-    mig = cleanup_dangling( mig );
-    xmg = cleanup_dangling( xmg );
+    //aig = cleanup_dangling( aig );
+    //mig = cleanup_dangling( mig );
+    //xmg = cleanup_dangling( xmg );
 
     ps2.reset();
     num_gate_profile( xmg, ps2);
