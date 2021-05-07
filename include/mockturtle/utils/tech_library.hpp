@@ -126,6 +126,7 @@ struct comb_supergate
     uint32_t root_id;
     uint32_t num_vars{0};
     bool is_comb_supergate{false};
+    bool is_neg{false};
     std::vector<int32_t> fanin_list{};
 };
 
@@ -210,6 +211,9 @@ private:
                       c0.fanin_list.emplace_back( -1 );
                       
                       _lsg.emplace_back( c0 );
+                      comb_supergate c01{c0};
+                      c01.is_neg = true;
+                      _lsg.emplace_back( c01 );
 
                       for (auto const& g1: _gates)
                       {
@@ -225,6 +229,9 @@ private:
                           c1.id = _lsg.size();
                           c1.is_comb_supergate = true;
                           _lsg.emplace_back( c1 );
+                          comb_supergate c11{c1};
+                          c11.is_neg = true;
+                          _lsg.emplace_back( c11 );
                       }
 
                   }
@@ -389,22 +396,29 @@ private:
       }
   }
 
-  kitty::dynamic_truth_table compute_tt( comb_supergate const& cg)
+  std::vector<kitty::dynamic_truth_table> compute_tt( comb_supergate const& cg)
   {
+      std::vector<kitty::dynamic_truth_table> res_tt;
       auto root_gate = _gates[cg.root_id];
 
       if ( !cg.is_comb_supergate )
-          return root_gate.function;
+      {
+          res_tt.emplace_back( root_gate.function );
+          return res_tt;
+      }
       else
       {
           std::vector<kitty::dynamic_truth_table> ttv;
+          std::vector<std::vector<kitty::dynamic_truth_table>> multi_ttv;
           std::vector<kitty::dynamic_truth_table> a( NInputs, kitty::dynamic_truth_table( NInputs ) );
 
+          auto pos = 0u;
           for (auto const leaf: cg.fanin_list)
           {
               /* Case 1:  When one of the fanin of the comb_supergate is another gate primitive */
-              if ( leaf > 0 )
+              if ( leaf >= 0 )
               {
+                  ++pos;
                   auto gate = _gates[leaf];
                   if( gate.num_vars > root_gate.num_vars )
                       ttv.emplace_back( kitty::shrink_to( gate.function, root_gate.num_vars ) );
@@ -428,11 +442,34 @@ private:
                       ++val;
                   }
               }
+
+              /* Computing all combinations of intermediary negations */
+              multi_ttv.emplace_back( generate_all_combinations(pos, ttv, 0 ) );
           }
 
-          return kitty::compose_truth_table( root_gate.function, ttv );
+          for (auto i:multi_ttv)
+          {
+              res_tt.emplace_back( kitty::compose_truth_table( root_gate.function, i ) );
+          }
+          return res_tt;
       }
   }
+
+  std::vector<kitty::dynamic_truth_table> generate_all_combinations(uint32_t pos, std::vector<kitty::dynamic_truth_table>& ttv, uint32_t i)
+  {
+      std::vector<kitty::dynamic_truth_table> tt1{ttv} ;
+      if (i == pos)
+      {
+          return tt1;
+      }
+      tt1[i] = ttv[i];
+      generate_all_combinations(pos, tt1, i + 1);
+
+      tt1[i] = ~ttv[i];
+      generate_all_combinations(pos, tt1, i + 1);
+  }
+
+
 
   void generate_library()
   {
@@ -551,8 +588,11 @@ private:
       };
 
       ///* NP enumeration of the function */
-      const auto tt = compute_tt( cg );
-      kitty::exact_np_enumeration( tt, on_np );
+       auto tt_list = compute_tt( cg );
+      for (auto const& tt: tt_list)
+      {
+          kitty::exact_np_enumeration( tt, on_np );
+      }
 
       if ( _ps.verbose )
       {
