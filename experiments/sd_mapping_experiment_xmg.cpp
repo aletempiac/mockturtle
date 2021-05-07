@@ -26,6 +26,7 @@
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/io/write_blif.hpp>
+#include <mockturtle/io/write_bench.hpp>
 #include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/mig.hpp>
@@ -54,7 +55,7 @@ std::vector<std::string> local_benchmarks = {
 "benchmarks_4_4_3_5",
 "benchmarks_4_4_3_6",
 "benchmarks_4_4_3_7",
-//"benchmarks_4_4_3_8",
+"benchmarks_4_4_3_8",
 "benchmarks_4_4_3_9", 
 "benchmarks_4_4_3_10",
 //};
@@ -262,8 +263,8 @@ void tech_map()
     //    //    continue;
     for ( const auto& b : local_benchmarks )
     {
-         //if (b != "benchmarks_4_4_3_10")
-         //    continue;
+         if (b != "benchmarks_4_4_3_8")
+             continue;
         std::string filename{"../experiments/self_dual_benchmarks/"};
         filename = filename + b + ".v";
 
@@ -288,7 +289,7 @@ void tech_map()
             std::abort();
             return;
         }
-        //mockturtle::write_verilog( xmg, std::cout);
+        mockturtle::write_verilog( xmg, "resyn_fail.v");
 
         //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( aig ) ) != lorina::return_code::success )
         //{
@@ -297,16 +298,20 @@ void tech_map()
         //  return;
         //}
         auto klut = lut_map( xmg, 4u );
+        std::cout << "Before Resyn done " << std::endl;
 
+        mockturtle::write_bench( klut, std::cout);
         //imig = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn );
         aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, aig_npn_resyn );
         aig = cleanup_dangling( aig);
 
-        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
-        mig = cleanup_dangling( mig );
+        //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+        //mig = cleanup_dangling( mig );
 
-        xag = mockturtle::node_resynthesis<mockturtle::xag_network>( klut, xag_npn_resyn );
-        xag = cleanup_dangling( xag );
+        //xag = mockturtle::node_resynthesis<mockturtle::xag_network>( klut, xag_npn_resyn );
+        //xag = cleanup_dangling( xag );
+
+        std::cout << "Resyn done " << std::endl;
 
         ////balancing_params sps;
         ////balancing_stats st4;

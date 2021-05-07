@@ -18,6 +18,7 @@
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
 #include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
@@ -210,7 +211,7 @@ Ntk ntk_optimization( Ntk const& ntk )
 void tech_map()
 {
 
-  experiments::experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, float, float, float, float, float, float, float, float, float, float, float, float> exp( "Mapper Comparison", "benchmark", "size AIG", "size MIG", "Size XMG", "Size XAG", "depth AIG", "depth MIG", "depth XMG", "depth XAG", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
+  experiments::experiment<std::string, float, float, float, float, float, float, float, float> exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
 
   std::vector<mockturtle::gate> gates1, gates2;
   if ( lorina::read_genlib( "smaller.genlib", mockturtle::genlib_reader( gates1 ) ) != lorina::return_code::success )
@@ -232,15 +233,15 @@ void tech_map()
   }
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
-  mockturtle::tech_library<5> lib1( gates1, lib_ps );
+  lib_ps.compute_supergates = true;
+  mockturtle::tech_library<6> lib1( gates1, lib_ps );
   //mockturtle::tech_library<5> lib2( gates2, lib_ps );
 
   /* Option 1 */
   mockturtle::exact_xmg_resynthesis_params xmg3_exact_ps;
   xmg3_exact_ps.use_xor3 = true;
   //xmg3_exact_ps.num_candidates = 10u;
-  mockturtle::exact_xmg_resynthesis<mockturtle::xmg_network> xmg3_exact( xmg3_exact_ps );
-  mockturtle::cached_resynthesis<mockturtle::xmg_network, decltype( xmg3_exact )> cached_xmg3_exact( xmg3_exact, 4, "exact_xmg3_cache4.v" );
+  mockturtle::xmg_npn_resynthesis npn_resyn;
 
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::epfl_benchmarks() )
@@ -280,62 +281,29 @@ void tech_map()
       std::abort();
       return;
     }
-    if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( mig ) ) != lorina::return_code::success )
-    {
-      std::cout << "ERROR IN reading benchmark" << std::endl;
-      std::abort();
-      return;
-    }
-    if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( xmg ) ) != lorina::return_code::success )
-    {
-      std::cout << "ERROR IN reading benchmark" << std::endl;
-      std::abort();
-      return;
-    }
-    if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( xag ) ) != lorina::return_code::success )
-    {
-      std::cout << "ERROR IN reading benchmark" << std::endl;
-      std::abort();
-      return;
-    }
 
-    balancing_params sps;
-    balancing_stats st4;
-
-    sop_rebalancing<aig_network> aig_balancing;    
-    aig = balancing( aig, {aig_balancing}, sps, &st4 );
-    
-    sop_rebalancing<mig_network> mig_balancing;    
-    mig = balancing( mig, {mig_balancing}, sps, &st4 );
-
-    sop_rebalancing<xmg_network> xmg_balancing;    
-    xmg = balancing( xmg, {xmg_balancing}, sps, &st4 );
-
-    sop_rebalancing<xag_network> xag_balancing;    
-    xag = balancing( xag, {xag_balancing}, sps, &st4 );
-
-    //auto klut = lut_map( aig, 4u );
+    auto klut = lut_map( aig, 4u );
 
 
     //imig = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn );
-    //xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, cached_xmg3_exact );
-    //xmg = cleanup_dangling( xmg );
+    xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn );
+    xmg = cleanup_dangling( xmg );
 
-    //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
-    //mig = cleanup_dangling( mig );
+    mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+    mig = cleanup_dangling( mig );
 
-    //xag = mockturtle::node_resynthesis<mockturtle::xag_network>( aig, xag_npn_resyn );
-    //xag = cleanup_dangling( xag);
+    xag = mockturtle::node_resynthesis<mockturtle::xag_network>( klut, xag_npn_resyn );
+    xag = cleanup_dangling( xag);
 
     //aig = ntk_optimization<mockturtle::aig_network> ( aig );
     //mig = ntk_optimization<mockturtle::mig_network> ( mig );
     //xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
     //xag = ntk_optimization<mockturtle::xag_network> ( xag );
 
-    aig = cleanup_dangling( aig );
-    mig = cleanup_dangling( mig );
-    xmg = cleanup_dangling( xmg );
-    xag = cleanup_dangling( xag );
+    //aig = cleanup_dangling( aig );
+    //mig = cleanup_dangling( mig );
+    //xmg = cleanup_dangling( xmg );
+    //xag = cleanup_dangling( xag );
 
     mockturtle::depth_view xmg_d{ xmg };
     mockturtle::depth_view xag_d{ xag };
@@ -369,8 +337,7 @@ void tech_map()
     mockturtle::tech_mapping( xag, lib1, ps, &xag_mst );
     fflush( stdout );
 
-    exp( benchmark, aig.size(), mig.size(), xmg.size(), xag.size(),
-         aig_d.depth(), mig_d.depth(), xmg_d.depth(), xag_d.depth(),
+    exp( benchmark, 
          aig_mst.area, mig_mst.area, xmg_mst.area, xag_mst.area, 
          aig_mst.delay, mig_mst.delay, xmg_mst.delay, xag_mst.delay );
 

@@ -247,7 +247,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   //}
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
-  lib_ps.compute_supergates = true;
+  lib_ps.compute_supergates = false;
   mockturtle::tech_library<6> lib1( gates1, lib_ps );
 
   /* Option 1 */
@@ -323,7 +323,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     else
     {
         xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
-        //xmg = cleanup_dangling( xmg );
+        xmg = cleanup_dangling( xmg );
 
         //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
         //aig = cleanup_dangling( aig );
@@ -353,13 +353,13 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     xmg = cleanup_dangling( xmg );
 
 
-    //aig = ntk_optimization<mockturtle::aig_network> ( aig );
-    //mig = ntk_optimization<mockturtle::mig_network> ( mig );
-    //xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
+    aig = ntk_optimization<mockturtle::aig_network> ( aig );
+    mig = ntk_optimization<mockturtle::mig_network> ( mig );
+    xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
 
-    //aig = cleanup_dangling( aig );
-    //mig = cleanup_dangling( mig );
-    //xmg = cleanup_dangling( xmg );
+    aig = cleanup_dangling( aig );
+    mig = cleanup_dangling( mig );
+    xmg = cleanup_dangling( xmg );
 
     ps2.reset();
     num_gate_profile( xmg, ps2);

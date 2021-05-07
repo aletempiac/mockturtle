@@ -61,8 +61,8 @@ using namespace experiments;
 template<class Ntk>
 bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
 {
-  mockturtle::write_bench( ntk, "/tmp/xmg_test.bench" );
-  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/xmg_test.bench\"", benchmark );
+  mockturtle::write_bench( ntk, "/tmp/xmg__epfl_test.bench" );
+  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/xmg__epfl_test.bench\"", benchmark );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -83,10 +83,10 @@ bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
 template<typename Ntk>
 mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4 )
 {
-  mockturtle::write_verilog( ntk, "/tmp/xmg_network.v" );
-  system( fmt::format( "abc -q \"/tmp/xmg_network.v; &get; &if -a -K {}; &put; write_blif /tmp/xmg_output.blif\"", k ).c_str() );
+  mockturtle::write_verilog( ntk, "/tmp/xmg__epfl_network.v" );
+  system( fmt::format( "abc -q \"read /tmp/xmg__epfl_network.v; if -K {}; write_blif /tmp/xmg__epfl_output.blif\"", k ).c_str() );
   mockturtle::klut_network klut;
-  if ( lorina::read_blif( "/tmp/xmg_output.blif", mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
+  if ( lorina::read_blif( "/tmp/xmg__epfl_output.blif", mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
   {
     std::cout << "ERROR LUT" << std::endl;
     std::abort();
@@ -145,7 +145,7 @@ Ntk ntk_optimization( Ntk const& ntk )
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xmg_network>::value )
       {
           //std::cout << "xmg" << std::endl;
-          mockturtle::xmg3_npn_resynthesis<mockturtle::xmg_network> xmg_npn_resyn;
+          mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
           mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
           des = mockturtle::cleanup_dangling( des);
           
@@ -197,18 +197,8 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   mockturtle::tech_library<6> lib1( gates1, lib_ps );
 
   /* Option 1 */
-  mockturtle::exact_xmg_resynthesis_params xmg3_exact_ps;
-  xmg3_exact_ps.use_xor3 = true;
-  xmg3_exact_ps.num_candidates = 10u;
-  mockturtle::exact_xmg_resynthesis<mockturtle::xmg_network> xmg3_exact( xmg3_exact_ps );
-  mockturtle::cached_resynthesis<mockturtle::xmg_network, decltype( xmg3_exact )> cached_xmg3_exact( xmg3_exact, 4, "exact_xmg3_cache4.v" );
   mockturtle::xmg_cost_params ps1, ps2;
   
-
-  exact_resynthesis_params eps;
-  //eps.cache = std::make_shared<exact_resynthesis_params::cache_map_t>();
-  exact_aig_resynthesis<aig_network> aig_exact( false, eps );
-  mockturtle::cached_resynthesis<mockturtle::aig_network, decltype( aig_exact )> cached_aig_exact( aig_exact, 4, "exact_aig_cache4_cr.v" );
 
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::epfl_benchmarks() )
@@ -227,11 +217,13 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     mockturtle::xmg_network xmg;
     mockturtle::aig_network aig;
     mockturtle::mig_network mig;
+    mockturtle::mig_network xag;
 
     /* Option 2 */
-    mockturtle::xmg3_npn_resynthesis<mockturtle::xmg_network> npn_resyn;
+    mockturtle::xmg_npn_resynthesis npn_resyn;
     mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
     xag_npn_resynthesis<aig_network> aig_resyn;
+    xag_npn_resynthesis<xag_network> xag_resyn;
 
     //if ( lorina::read_verilog( crypto_experiments::benchmark_path( benchmark ), mockturtle::verilog_reader( aig ) ) != lorina::return_code::success )
     //{
@@ -247,56 +239,18 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
       std::abort();
       return;
     }
-    //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( mig ) ) != lorina::return_code::success )
-    //{
-    //  std::cout << "ERROR IN reading benchmark" << std::endl;
-    //  std::abort();
-    //  return;
-    //}
-
-    //if ( lorina::read_aiger( experiments::benchmark_path( benchmark ), mockturtle::aiger_reader( xmg ) ) != lorina::return_code::success )
-    //{
-    //  std::cout << "ERROR IN reading benchmark" << std::endl;
-    //  std::abort();
-    //  return;
-    //}
     auto klut = lut_map( aig, 4u );
 
     /* Calling Resynthesis engine */
-    if(aig_or_klut == "aig")
-    {
-        //xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( aig, npn_resyn);
-        //xmg = cleanup_dangling( xmg );
-        balancing_params sps;
-        balancing_stats st4;
-        sop_rebalancing<xmg_network> xmg_balancing;    
-        xmg = balancing( xmg, {xmg_balancing}, sps, &st4 );
-        xmg = cleanup_dangling( xmg );
+    xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
+    xmg = cleanup_dangling( xmg );
 
-        //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( aig, aig_resyn );
-        //aig = cleanup_dangling( aig );
-        sop_rebalancing<aig_network> aig_balancing;    
-        aig = balancing( aig, {aig_balancing}, sps, &st4 );
-        aig = cleanup_dangling( aig );
+    //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
+    //aig = cleanup_dangling( aig );
 
-        //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( aig, mig_npn_resyn );
-        //mig = cleanup_dangling( mig );
-        sop_rebalancing<mig_network> mig_balancing;    
-        mig = balancing( mig, {mig_balancing}, sps, &st4 );
-        mig = cleanup_dangling( mig );
-    }
-    else
-    {
-        xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
-        xmg = cleanup_dangling( xmg );
+    mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+    mig = cleanup_dangling( mig );
 
-        //aig = mockturtle::node_resynthesis<mockturtle::aig_network>( klut, cached_aig_exact );
-        //aig = cleanup_dangling( aig );
-
-        mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
-        mig = cleanup_dangling( mig );
-
-    }
 
     /* measuring sd ratios */
     ps1.reset();

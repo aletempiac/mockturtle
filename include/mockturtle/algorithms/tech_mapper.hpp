@@ -1373,14 +1373,12 @@ private:
       {
         if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
         {
-            std::cout << " It is a comb supergate " <<  std::endl;
             ++gates_profile[node_data.best_supergate[phase]->root->id];
             auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
             for (auto i: fanin_list)
             {
                 if ( i > 0 )
                 {
-                    std::cout << "Gate name " << gates[i].name << std::endl;
                     ++gates_profile[i];
                 }
             }
@@ -1397,14 +1395,12 @@ private:
       {
         if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
         {
-            std::cout << " It is a comb supergate " <<  std::endl;
             ++gates_profile[node_data.best_supergate[phase]->root->id];
             auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
             for (auto i: fanin_list)
             {
                 if (i > 0)
                 {
-                    std::cout << "Gate name " << gates[i].name << std::endl;
                     ++gates_profile[i];
                 }
             }
