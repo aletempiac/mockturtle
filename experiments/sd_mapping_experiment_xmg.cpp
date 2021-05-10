@@ -242,6 +242,7 @@ void tech_map()
 		mockturtle::aig_network aig;
 		mockturtle::mig_network mig;
 		mockturtle::xag_network xag;
+    mockturtle::xmg_cost_params ps1, ps2;
 
 		/* Option 2 */
 		mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
