@@ -437,27 +437,33 @@ private:
               }
               /* Computing all combinations of intermediary negations */
           }
-          multi_ttv.emplace_back( generate_all_combinations(pos, ttv, 0 ) );
 
-          for (auto i:multi_ttv)
+          generate_all_combinations(pos, multi_ttv, ttv, 0);
+
+          for (auto i: multi_ttv)
           {
               res_tt.emplace_back( kitty::compose_truth_table( root_gate.function, i ) );
           }
       }
   }
 
-  std::vector<kitty::dynamic_truth_table> generate_all_combinations(uint32_t pos, std::vector<kitty::dynamic_truth_table>& ttv, uint32_t i)
-  {
-      std::vector<kitty::dynamic_truth_table> tt1{ttv} ;
-      if (i == pos)
-      {
-          return tt1;
-      }
-      tt1[i] = ttv[i];
-      auto res_pos = generate_all_combinations(pos, tt1, i + 1);
 
-      tt1[i] = ~ttv[i];
-      auto res_neg = generate_all_combinations(pos, tt1, i + 1);
+  void generate_all_combinations(uint32_t const& pos, std::vector<std::vector<kitty::dynamic_truth_table>>& multi_ttv, std::vector<kitty::dynamic_truth_table>& ttv, uint32_t i)
+  {
+      std::vector<kitty::dynamic_truth_table> tt1;
+      tt1 = ttv;
+      if (i >= pos)
+      {
+          multi_ttv.emplace_back(ttv);
+      }
+      else
+      {
+          tt1[i] = ttv[i];
+          generate_all_combinations(pos, multi_ttv, tt1, i + 1);
+
+          tt1[i] = ~ttv[i];
+          generate_all_combinations(pos, multi_ttv, tt1, i + 1);
+      }
   }
 
 
