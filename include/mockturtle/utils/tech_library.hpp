@@ -396,18 +396,17 @@ private:
       }
   }
 
-  std::vector<kitty::dynamic_truth_table> compute_tt( comb_supergate const& cg)
+  void compute_tt( comb_supergate const& cg, std::vector<kitty::dynamic_truth_table>& res_tt )
   {
-      std::vector<kitty::dynamic_truth_table> res_tt;
       auto root_gate = _gates[cg.root_id];
 
       if ( !cg.is_comb_supergate )
       {
           res_tt.emplace_back( root_gate.function );
-          return res_tt;
       }
       else
       {
+          
           std::vector<kitty::dynamic_truth_table> ttv;
           std::vector<std::vector<kitty::dynamic_truth_table>> multi_ttv;
           std::vector<kitty::dynamic_truth_table> a( NInputs, kitty::dynamic_truth_table( NInputs ) );
@@ -429,29 +428,21 @@ private:
               /* Case 2: When it is nth variable */
               else
               {
-                  auto i = 0u;
-                  auto val = leaf;
-                  while (val < 0)
-                  {
-                      kitty::create_nth_var( a[i], i );
-                      if( a[i].num_vars() > root_gate.num_vars )
-                          ttv.emplace_back( kitty::shrink_to( a[i], root_gate.num_vars ) );
-                      else 
-                          ttv.emplace_back( kitty::extend_to( a[i], root_gate.num_vars ) );
-                      ++i;
-                      ++val;
-                  }
+                  auto val =  std::abs( leaf );
+                  kitty::create_nth_var( a[val], val );
+                  if( a[val].num_vars() > root_gate.num_vars )
+                      ttv.emplace_back( kitty::shrink_to( a[val], root_gate.num_vars ) );
+                  else 
+                      ttv.emplace_back( kitty::extend_to( a[val], root_gate.num_vars ) );
               }
-
               /* Computing all combinations of intermediary negations */
-              multi_ttv.emplace_back( generate_all_combinations(pos, ttv, 0 ) );
           }
+          multi_ttv.emplace_back( generate_all_combinations(pos, ttv, 0 ) );
 
           for (auto i:multi_ttv)
           {
               res_tt.emplace_back( kitty::compose_truth_table( root_gate.function, i ) );
           }
-          return res_tt;
       }
   }
 
@@ -463,10 +454,10 @@ private:
           return tt1;
       }
       tt1[i] = ttv[i];
-      generate_all_combinations(pos, tt1, i + 1);
+      auto res_pos = generate_all_combinations(pos, tt1, i + 1);
 
       tt1[i] = ~ttv[i];
-      generate_all_combinations(pos, tt1, i + 1);
+      auto res_neg = generate_all_combinations(pos, tt1, i + 1);
   }
 
 
@@ -588,7 +579,8 @@ private:
       };
 
       ///* NP enumeration of the function */
-       auto tt_list = compute_tt( cg );
+      std::vector<kitty::dynamic_truth_table> tt_list;
+      compute_tt( cg, tt_list );
       for (auto const& tt: tt_list)
       {
           kitty::exact_np_enumeration( tt, on_np );

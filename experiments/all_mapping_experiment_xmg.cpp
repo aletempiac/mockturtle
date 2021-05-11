@@ -64,8 +64,8 @@ using namespace experiments;
 template<class Ntk>
 bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
 {
-  mockturtle::write_bench( ntk, "/tmp/xmg__epfl_test.bench" );
-  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/xmg__epfl_test.bench\"", benchmark );
+  mockturtle::write_bench( ntk, "/tmp/xmg_all_test.bench" );
+  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/xmg_all_test.bench\"", benchmark );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -86,10 +86,10 @@ bool abc_cec_benchmark( Ntk const& ntk, std::string const& benchmark )
 template<typename Ntk>
 mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4 )
 {
-  mockturtle::write_verilog( ntk, "/tmp/xmg__epfl_network.v" );
-  system( fmt::format( "abc -q \"read /tmp/xmg__epfl_network.v; if -K {}; write_blif /tmp/xmg__epfl_output.blif\"", k ).c_str() );
+  mockturtle::write_verilog( ntk, "/tmp/xmg_all_network.v" );
+  system( fmt::format( "abc -q \"read /tmp/xmg_all_network.v; if -K {}; write_blif /tmp/xmg_all_output.blif\"", k ).c_str() );
   mockturtle::klut_network klut;
-  if ( lorina::read_blif( "/tmp/xmg__epfl_output.blif", mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
+  if ( lorina::read_blif( "/tmp/xmg_all_output.blif", mockturtle::blif_reader( klut ) ) != lorina::return_code::success )
   {
     std::cout << "ERROR LUT" << std::endl;
     std::abort();
@@ -336,13 +336,14 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   outs.close();
 }
 
-int main( int argc, char* argv[])
+int main() 
 {
-  std::cout << "aig(0) or klut(1)   "      << argv[1] << std::endl;
-  std::cout << "cut size = "               << argv[2] << std::endl;
-  std::cout << "delay round (0/1)=  "      << argv[3] << std::endl;
-  std::cout << "required time (def/max)= " << argv[4] << std::endl;
+  //std::cout << "aig(0) or klut(1)   "      << argv[1] << std::endl;
+  //std::cout << "cut size = "               << argv[2] << std::endl;
+  //std::cout << "delay round (0/1)=  "      << argv[3] << std::endl;
+  //std::cout << "required time (def/max)= " << argv[4] << std::endl;
 
-  tech_map( argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
+  //tech_map( argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
+  tech_map( "klut", 6, 0 ,1 );
   return 0;
 }
