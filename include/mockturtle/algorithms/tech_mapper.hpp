@@ -307,7 +307,7 @@ private:
           continue;
         }
         const auto fe = kitty::extend_to<NInputs>( tt );
-        if  (tt.num_vars() > 3 &&  kitty::is_selfdual( fe ) )
+        if  (tt.num_vars() > 2 &&  kitty::is_selfdual( fe ) )
         {
             sd_count++;
         }
