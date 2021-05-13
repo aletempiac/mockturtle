@@ -35,7 +35,9 @@
 
 #include "../utils/node_map.hpp"
 #include "../utils/index_list.hpp"
+#include "../networks/events.hpp"
 #include "cnf.hpp"
+
 #include <bill/sat/interface/abc_bsat2.hpp>
 #include <bill/sat/interface/common.hpp>
 #include <bill/sat/interface/glucose.hpp>
@@ -116,11 +118,10 @@ public:
       static_assert( has_foreach_fanout_v<Ntk>, "Ntk does not implement the foreach_fanout method" );
     }
 
-    event_ptr = ntk._events->on_add.size();
-    ntk._events->on_add.emplace_back( [&]( const auto& n ) {
+    add_event = ntk.events().register_add_event( [&]( node const& n ) {
       (void)n;
       literals.resize();
-    });
+    } );
 
     /* constants are mapped to var 0 */
     literals[ntk.get_constant( false )] = bill::lit_type( 0, bill::lit_type::polarities::positive );
@@ -139,7 +140,13 @@ public:
 
   ~circuit_validator()
   {
-    ntk._events->on_add.erase( ntk._events->on_add.begin() + event_ptr );
+    ntk.events().release_add_event( add_event );
+  }
+
+  /*! \brief Set ODC levels */
+  void set_odc_levels( uint32_t odc_levels )
+  {
+    ps.odc_levels = odc_levels;
   }
 
   /*! \brief Validate functional equivalence of signals `f` and `d`. */
@@ -202,7 +209,7 @@ public:
   template<class iterator_type, class index_list_type>
   std::optional<bool> validate( node const& root, iterator_type divs_begin, iterator_type divs_end, index_list_type const& id_list, bool inverted = false )
   {
-    static_assert( std::is_same_v<index_list_type, abc_index_list> || std::is_same_v<index_list_type, mig_index_list> || std::is_same_v<index_list_type, xag_index_list>, "Unknown type of index list" );
+    static_assert( std::is_same_v<index_list_type, abc_index_list> || std::is_same_v<index_list_type, mig_index_list> || std::is_same_v<index_list_type, xag_index_list<true>> || std::is_same_v<index_list_type, xag_index_list<false>>, "Unknown type of index list" );
     assert( uint64_t( std::distance( divs_begin, divs_end ) ) == id_list.num_pis() && "Size of the provided divisor list does not match number of PIs of the index list" );
     assert( id_list.num_pos() == 1u && "Index list must have exactly one PO" );
 
@@ -228,7 +235,7 @@ public:
       push();
     }
 
-    if constexpr ( std::is_same_v<index_list_type, abc_index_list> || std::is_same_v<index_list_type, xag_index_list> )
+    if constexpr ( std::is_same_v<index_list_type, abc_index_list> || std::is_same_v<index_list_type, xag_index_list<true>> || std::is_same_v<index_list_type, xag_index_list<false>> )
     {
       id_list.foreach_gate( [&]( uint32_t id_lit0, uint32_t id_lit1 ){
         uint32_t const node_pos0 = id_lit0 >> 1;
@@ -692,7 +699,7 @@ private:
 private:
   Ntk const& ntk;
 
-  validator_params const& ps;
+  validator_params ps;
 
   node_map<bill::lit_type, Ntk> literals;
   unordered_node_map<bool, Ntk> constructed;
@@ -704,7 +711,7 @@ private:
   bool between_push_pop = false;
   std::vector<node> tmp;
 
-  uint32_t event_ptr;
+  std::shared_ptr<typename network_events<Ntk>::add_event_type> add_event;
 
 public:
   std::vector<bool> cex;
