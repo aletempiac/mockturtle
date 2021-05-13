@@ -49,6 +49,11 @@ bool has_better_level( Result& current, Result& previous )
   return current.first < previous.first;
 }
 
+std::map<mockturtle::aqfp_node_resyn_strategy, std::string> strategy_name = {
+    { mockturtle::aqfp_node_resyn_strategy::cost_based, "cost" },
+    { mockturtle::aqfp_node_resyn_strategy::level_based, "level" },
+};
+
 std::vector<std::string> mcnc = {
     "5xp1",
     "c1908",
@@ -71,10 +76,10 @@ std::vector<std::string> mcnc = {
 };
 
 template<class Ntk>
-bool abc_cec_with_path( const Ntk& ntk, std::string benchmark_path )
+bool abc_cec_with_path( const Ntk& ntk, std::string benchmark_path, std::string benchmark_name )
 {
-  mockturtle::write_bench( ntk, "/tmp/test.bench" );
-  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/test.bench\"", benchmark_path );
+  mockturtle::write_bench( ntk, fmt::format("/tmp/test_{}.bench", benchmark_name ) );
+  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/test_{}.bench\"", benchmark_path, benchmark_name );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -240,21 +245,16 @@ void do_experiment(
 
   auto t2 = std::chrono::high_resolution_clock::now();
 
-  bool cec = abc_cec_with_path( opt_aqfp5, benchmark_path );
-  //bool cec = experiments::abc_cec_with_path( opt_aqfp5, benchmark_path );
+  bool cec = abc_cec_with_path( opt_aqfp5, benchmark_path, benchmark_name );
 
   auto t3 = std::chrono::high_resolution_clock::now();
 
   auto exp_time = std::chrono::duration_cast<std::chrono::milliseconds>( t2 - t1 ).count();
   auto ver_time = std::chrono::duration_cast<std::chrono::milliseconds>( t3 - t2 ).count();
 
-  exp( benchmark_name, (uint32_t)res_opt.first, res_opt.second, maj_counts[3], maj_counts[5], exp_time / 1000.0, ver_time / 1000.0, cec );
+  exp( benchmark_name, strategy_name[strategy], iterations, lutmap, pi_buffers, pi_splitters, po_buffers, (uint32_t)res_opt.first, res_opt.second, maj_counts[3], maj_counts[5], exp_time / 1000.0, ver_time / 1000.0, cec );
 }
 
-std::map<mockturtle::aqfp_node_resyn_strategy, std::string> strategy_name = {
-    { mockturtle::aqfp_node_resyn_strategy::cost_based, "cost" },
-    { mockturtle::aqfp_node_resyn_strategy::level_based, "level" },
-};
 
 int main( int argc, char** argv )
 {
@@ -294,15 +294,15 @@ int main( int argc, char** argv )
 
   std::vector<std::string> lutmaps = {
       "new",
-      "new-a",
-      "old",
-      "old-a",
+      // "new-a",
+      // "old",
+      // "old-a",
   };
 
   std::vector<std::tuple<bool, bool, bool>> configs = {
       { false, false, true },
-//      { false, true, true },
-//      { false, true, false },
+      { false, true, true },
+      { false, true, false },
   };
 
   std::vector<std::string> benchmarks;
@@ -319,6 +319,11 @@ int main( int argc, char** argv )
     {
       benchmarks.push_back( experiments::benchmark_path( b ) );
     }
+
+    // strategies = { std::string(argv[5]) == "cost" ? strategies[0] : strategies[1] };
+    // iterations = { std::stoul(std::string(argv[6])) };
+    // lutmaps = { std::string(argv[7]) };
+    // configs = { {argv[8][0] == '1', argv[8][1] == '1', argv[8][2] == '1'} };
   }
   else
   {
@@ -328,6 +333,10 @@ int main( int argc, char** argv )
     }
   }
 
+  // std::string exp_name = fmt::format( "aqfp_resyn strategy={} iter={} lutmap={} pi_buffers={} pi_splitters={} po_buffers={}", strategy_name[s], iter, lm, pib, pis, pob );
+
+  std::string exp_name = fmt::format( "aqfp_resyn_{}", argv[3]);
+  experiments::experiment<std::string, std::string, uint32_t, std::string, bool, bool, bool, uint32_t, uint32_t, uint32_t, uint32_t, double, double, bool> exp( exp_name, "benchmark", "strategy", "iterations", "lutmap", "pi_buffers", "pi_splitters", "po_buffers", "JJ count", "JJ level", "maj 3 count", "maj 5 count", "resyn time", "verify time", "cec" );
   for ( auto s : strategies )
   {
     for ( auto iter : iterations )
@@ -336,8 +345,6 @@ int main( int argc, char** argv )
       {
         for ( auto [pib, pis, pob] : configs )
         {
-          std::string exp_name = fmt::format( "aqfp_resyn strategy={} iter={} lutmap={} pi_buffers={} pi_splitters={} po_buffers={}", strategy_name[s], iter, lm, pib, pis, pob );
-          experiments::experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, double, double, bool> exp( exp_name, "benchmark", "JJ count", "JJ level", "maj 3 count", "maj 5 count", "resyn time", "verify time", "cec" );
           fmt::print( "\n\n\nexperiment: {}\n", exp_name );
           for ( auto path : benchmarks )
           {

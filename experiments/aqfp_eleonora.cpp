@@ -81,6 +81,31 @@ struct fanout_cost_depth_local
   }
 };
 
+template<class Ntk>
+bool abc_cec_with_path( const Ntk& ntk, std::string benchmark_path, std::string benchmark_name )
+{
+  mockturtle::write_bench( ntk, fmt::format("/tmp/test_{}.bench", benchmark_name ) );
+  std::string command = fmt::format( "abc -q \"cec -n {} /tmp/test_{}.bench\"", benchmark_path, benchmark_name );
+
+  std::array<char, 128> buffer;
+  std::string result;
+  std::unique_ptr<FILE, decltype( &pclose )> pipe( popen( command.c_str(), "r" ), pclose );
+  if ( !pipe )
+  {
+    throw std::runtime_error( "popen() failed" );
+  }
+  while ( fgets( buffer.data(), buffer.size(), pipe.get() ) != nullptr )
+  {
+    result += buffer.data();
+  }
+
+  if ( result.size() >= 23 && result.substr( 0u, 23u ) == "Networks are equivalent" )
+  {
+    return true;
+  }
+  return false;
+}
+
 using namespace mockturtle;
 
 using cost_fn_t = fanout_cost_depth_local<mig_network>;
@@ -89,10 +114,13 @@ using aqfp_view_t = aqfp_view<limit_view_t, true>;
 using depth_view_t = depth_view<limit_view_t>;
 using jj_depth_view_t = depth_view<limit_view_t, cost_fn_t>;
 
+aqfp_view_params params;
+
 void get_statistics( mig_network const& mig, uint32_t& size, uint32_t& depth, uint32_t& jj_count, uint32_t& jj_depth )
 {
+
   limit_view_t mig_limited = cleanup_dangling<mig_network, limit_view_t>( mig );
-  aqfp_view_t mig_aqfp( mig_limited );
+  aqfp_view_t mig_aqfp( mig_limited, params );
   depth_view_t mig_depth( mig_limited );
   jj_depth_view_t mig_jj_depth( mig_limited, cost_fn_t() );
 
@@ -102,8 +130,8 @@ void get_statistics( mig_network const& mig, uint32_t& size, uint32_t& depth, ui
   jj_depth = mig_jj_depth.depth();
 }
 
-template<typename Fn1, typename Fn2>
-void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
+template<typename Fn2>
+void do_experiment( std::string benchmark_path, Fn2& callback2 )
 {
   auto last_dir_delim_ind = benchmark_path.find_last_of( "/" );
   std::string benchmark_name = ( last_dir_delim_ind == std::string::npos ) ? benchmark_path : benchmark_path.substr( last_dir_delim_ind + 1 );
@@ -118,8 +146,6 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
   }
   benchmark_name = benchmark_name.substr( 0, last_ext_delim_ind );
 
-  std::cerr << "reading the benchmark\n";
-
   mockturtle::mig_network mig;
   if ( is_verilog )
   {
@@ -130,20 +156,16 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
     lorina::read_aiger( benchmark_path, mockturtle::aiger_reader( mig ) );
   }
 
-  std::cerr << "reading the benchmark done\n";
-
   uint32_t size_before, depth_before, jj_before, jj_levels_before;
   {
     get_statistics( mig, size_before, depth_before, jj_before, jj_levels_before );
   }
 
-  return;
   auto t1 = std::chrono::high_resolution_clock::now();
 
   auto iteration = 0u;
-  std::cerr << fmt::format( "benchmark {} starting point: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", benchmark_name, size_before, depth_before, jj_before, jj_levels_before );
+  std::cout << fmt::format( "benchmark {} starting point: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", benchmark_name, size_before, depth_before, jj_before, jj_levels_before );
 
-  auto iter = 0;
   while ( true )
   {
     uint32_t size, depth, jj_count, jj_depth;
@@ -151,11 +173,11 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
     auto const jj_depth_before_rewrite = jj_depth;
 
     ++iteration;
-    std::cerr << fmt::format( "benchmark {} iteration {}: size = {}, JJ depth = {}\n", benchmark_name, iteration, size, jj_depth );
+    std::cout << fmt::format( "benchmark {} iteration {}: size = {}, JJ depth = {}\n", benchmark_name, iteration, size, jj_depth );
 
     /* Section 3.2: Depth optimization with algebraic rewriting -- limiting fanout size increase */
     {
-      std::cerr << fmt::format( "benchmark {} starting algebraic rewriting\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} starting algebraic rewriting\n", benchmark_name );
 
       mig_algebraic_depth_rewriting_params ps_alg_rewrite;
       ps_alg_rewrite.overhead = 1.5;
@@ -167,7 +189,7 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
       mig_algebraic_depth_rewriting_splitters( mig_jj_depth, ps_alg_rewrite );
       mig = cleanup_dangling<jj_depth_view_t, mig_network>( mig_jj_depth );
 
-      // std::cerr << fmt::format( "benchmark {} done algebraic rewriting\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} done algebraic rewriting\n", benchmark_name );
     }
 
     get_statistics( mig, size, depth, jj_count, jj_depth );
@@ -176,7 +198,7 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
 
     /* Section 3.3: Size optimization with Boolean resubstitution -- considering fanout size limitation */
     {
-      std::cerr << fmt::format( "benchmark {} starting resubstitution\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} starting resubstitution\n", benchmark_name );
 
       resubstitution_params ps_resub;
       ps_resub.max_divisors = 250;
@@ -188,7 +210,7 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
       mig_resubstitution_splitters( mig_jj_depth, ps_resub );
       mig = cleanup_dangling<jj_depth_view_t, mig_network>( mig_jj_depth );
 
-      //  std::cerr << fmt::format( "benchmark {} done resubstitution\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} done resubstitution\n", benchmark_name );
     }
 
     get_statistics( mig, size, depth, jj_count, jj_depth );
@@ -201,14 +223,14 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
     auto const jj_depth_before_refactor = jj_depth;
 
     {
-      std::cerr << fmt::format( "benchmark {} starting akers synthesis\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} starting akers synthesis\n", benchmark_name );
 
       limit_view_t mig_limited = cleanup_dangling<mig_network, limit_view_t>( mig );
       akers_resynthesis<mig_network> resyn;
       refactoring( mig_limited, resyn, {}, nullptr, jj_cost<mig_network>() );
       mig = cleanup_dangling<limit_view_t, mig_network>( mig_limited );
 
-            std::cerr << fmt::format( "benchmark {} done akers synthesis\n", benchmark_name );
+      std::cout << fmt::format( "benchmark {} done akers synthesis\n", benchmark_name );
     }
 
     get_statistics( mig, size, depth, jj_count, jj_depth );
@@ -232,14 +254,14 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
 
   auto t2 = std::chrono::high_resolution_clock::now();
 
-  bool const cec = true; // experiments::abc_cec_impl( mig, benchmark_path );
+  bool const cec = abc_cec_with_path( mig, benchmark_path, benchmark_name );
 
   auto t3 = std::chrono::high_resolution_clock::now();
 
   auto exp_time = std::chrono::duration_cast<std::chrono::milliseconds>( t2 - t1 ).count();
   auto ver_time = std::chrono::duration_cast<std::chrono::milliseconds>( t3 - t2 ).count();
 
-  write_verilog( mig, benchmark_name + "_after_eleonora.v" );
+  write_verilog( mig, fmt::format("eleonora/{}_{}{}{}.v", benchmark_name, (int)params.balance_pis, (int)params.branch_pis, (int)params.balance_pos ));
 
   uint32_t size_after, depth_after, jj_after, jj_levels_after;
   {
@@ -247,35 +269,33 @@ void do_experiment( std::string benchmark_path, Fn1& callback1, Fn2& callback2 )
   }
 
 
-  std::cerr << fmt::format( "benchmark {} after AQFP flow: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", benchmark_name, size_after, depth_after, jj_after, jj_levels_after );
+  std::cout << fmt::format( "benchmark {} after AQFP flow: size = {}, depth = {}, JJ count = {}, JJ depth = {}\n", benchmark_name, size_after, depth_after, jj_after, jj_levels_after );
 
-  float const impr_size = ( (float)size_before - (float)size_after ) / (float)size_before * 100;
-  float const impr_depth = ( (float)depth_before - (float)depth_after ) / (float)depth_before * 100;
-  float const impr_jj = ( (float)jj_before - (float)jj_after ) / (float)jj_before * 100;
-  float const impr_levels = ( (float)jj_levels_before - (float)jj_levels_after ) / (float)jj_levels_before * 100;
+  // float const impr_size = ( (float)size_before - (float)size_after ) / (float)size_before * 100;
+  // float const impr_depth = ( (float)depth_before - (float)depth_after ) / (float)depth_before * 100;
+  // float const impr_jj = ( (float)jj_before - (float)jj_after ) / (float)jj_before * 100;
+  // float const impr_levels = ( (float)jj_levels_before - (float)jj_levels_after ) / (float)jj_levels_before * 100;
 
-  callback1( benchmark_name, size_before, size_after, impr_size, depth_before, depth_after, impr_depth, cec );
-  callback2( benchmark_name, jj_before, jj_after, impr_jj, jj_levels_before, jj_levels_after, impr_levels, exp_time / 1000.0, ver_time / 1000.0, cec );
+  // callback1( benchmark_name, size_before, size_after, impr_size, depth_before, depth_after, impr_depth, cec );
+  callback2( benchmark_name, size_before, depth_before, size_after, depth_after, jj_before,  jj_levels_before, jj_after, jj_levels_after, exp_time / 1000.0, ver_time / 1000.0, cec );
 }
 
 int main( int argc, char** argv )
 {
   using namespace experiments;
 
-  bool const verbose = true; // turn on/off verbose printing of intermediate results
-  int iteration;
-
-  experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, bool>
-      exp1( "mcnc_table1", "benchmark", "size MIG", "Size Opt MIG", "Impr. Size", "depth MIG", "depth Opt MIG", "Impr. depth", "eq cec" );
-  experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, double, double, bool>
-      exp2( "mcnc_table3", "benchmark", "jj MIG", "jj Opt MIG", "Impr. jj", "jj levels MIG", "jj levels Opt MIG", "Impr. jj levels", "exp time", "verif time", "eq cec" );
+  // experiment<std::string, uint32_t, uint32_t, float, uint32_t, uint32_t, float, bool>
+  //     exp1( "mcnc_table1", "benchmark", "size MIG", "Size Opt MIG", "Impr. Size", "depth MIG", "depth Opt MIG", "Impr. depth", "eq cec" );
 
   std::vector<std::string> benchmark_paths;
 
   if ( argc > 1 )
   {
+    if (argc < 4) {
+      std::cerr << fmt::format("Not enough arguments! Usage: {} benchmark verilong/aiger flags\n", argv[0]);
+    }
     std::string b( argv[1] );
-    bool is_verilog = std::string( argv[4] ) == "verilog";
+    bool is_verilog = std::string( argv[2] ) == "verilog";
     if ( is_verilog )
     {
       benchmark_paths.push_back( fmt::format( "./benchmarks/{}.v", b ) );
@@ -284,44 +304,48 @@ int main( int argc, char** argv )
     {
       benchmark_paths.push_back( experiments::benchmark_path( b ) );
     }
+
+    params.balance_pis = (argv[3][0] == '1');
+    params.branch_pis = (argv[3][1] == '1');
+    params.balance_pos = (argv[3][2] == '1');
+
+    fmt::print( "using pi_buffers={} pi_splitters={} po_buffers={}\n", params.balance_pis, params.branch_pis, params.balance_pos);
   }
   else
   {
-    for ( auto benchmark : epfl_benchmarks() )
+    for ( auto benchmark : aqfp_benchmarks() )
     {
-      benchmark_paths.push_back( experiments::benchmark_path( benchmark ) );
-      if ( benchmark_paths.size() == 3 )
-        break;
+      
+      benchmark_paths.push_back( benchmark_aqfp_path( benchmark ) );
     }
   }
 
-  std::mutex mu;
+  experiment<std::string, uint32_t, uint32_t, bool, bool, bool, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, double, bool>
+      exp2( fmt::format("eleonora_{}_{}", argv[1], argv[3]), "benchmark", "orig size", "orig depth", "pi_buffers", "pi_splitters", "po_buffers", "opt size", "opt depth", "orig jj", "orig jj lev", "opt jj",  "opt jj lev", "exp time", "verif time", "eq cec" );
 
-  std::vector<std::thread> res;
-    auto cb1 = [&]( std::string a, uint32_t b, uint32_t c, float d, uint32_t e, uint32_t f, float g, float h ) {
-      fmt::print( "Table 1" );
-      exp1( a, b, c, d, e, f, g, h );
-      exp1.save();
-      exp1.table();
-    };
+    // auto cb1 = [&]( std::string a, uint32_t b, uint32_t c, float d, uint32_t e, uint32_t f, float g, float h ) {
+    //   fmt::print( "Table 1" );
+    //   exp1( a, b, c, d, e, f, g, h );
+    //   exp1.save();
+    //   exp1.table();
+    // };
 
-    auto cb2 = [&]( std::string a, uint32_t b, uint32_t c, float d, uint32_t e, uint32_t f, float g, double h, double i, bool j ) {
-      fmt::print( "Table 2" );
-      exp2( a, b, c, d, e, f, g, h, i, j );
+    auto cb2 = [&]( std::string a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f, uint32_t g, uint32_t h, uint32_t i, double j, double k, bool l ) {
+      exp2( a, b, c, params.balance_pis, params.branch_pis, params.balance_pos, d, e, f, g, h, i, j, k, l );
       exp2.save();
       exp2.table();
     };
 
   for ( auto const& benchmark_path : benchmark_paths )
   {
-    do_experiment(benchmark_path, cb1, cb2);
+    do_experiment(benchmark_path, cb2);
   }
 
-  fmt::print( "Table 1: Results for size and depth optimization over MIG\n" );
-  exp1.save();
-  exp1.table();
+  // fmt::print( "Table 1: Results for size and depth optimization over MIG\n" );
+  // exp1.save();
+  // exp1.table();
 
-  fmt::print( "Table 3: Results for area, delay, and number of buffers & splitters for MIGs mapped into AQFP technology\n" );
+  fmt::print( "Final results\n" );
   exp2.save();
   exp2.table();
 
