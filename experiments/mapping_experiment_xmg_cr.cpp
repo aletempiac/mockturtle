@@ -343,12 +343,8 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     ps.cut_enumeration_ps.cut_limit = 25;
     ps.verbose = true;
 
-    if (delay_round)
-        ps.skip_delay_round = true;
-    else
-        ps.skip_delay_round = false;
-    if (req_time)
-        ps.required_time = std::numeric_limits<float>::max();
+    ps.skip_delay_round = false;
+    ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 

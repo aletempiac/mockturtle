@@ -97,6 +97,22 @@ mockturtle::klut_network lut_map( Ntk const& ntk, uint32_t k = 4 )
 }
 
 template<typename Ntk>
+mockturtle::aig_network abc_c2rs( Ntk const& ntk )
+{
+  mockturtle::write_verilog( ntk, "/tmp/abc_optimum_all_network.v" );
+  system( fmt::format( "abc -q \"read /tmp/abc_optimum_all_network.v; strash; compress2rs; write_aiger /tmp/abc_optimum_all_output.aig\"").c_str() );
+  mockturtle::aig_network aig;
+  if ( lorina::read_aiger( "/tmp/abc_optimum_all_output.aig", mockturtle::aiger_reader( aig ) ) != lorina::return_code::success )
+  {
+    std::cout << "ERROR LUT" << std::endl;
+    std::abort();
+    return aig;
+  }
+  return aig;
+}
+
+
+template<typename Ntk>
 Ntk ntk_optimization( Ntk const& ntk )
 {
   auto des = ntk;
@@ -177,19 +193,6 @@ Ntk ntk_optimization( Ntk const& ntk )
 
 void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 {
-    std::string filename = "epfl";
-    filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
-    std::ofstream outs;
-    outs.open(filename.c_str());
-
-    outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
-    outs << "cut size = "               << cut_size    << std::endl;
-    outs << "delay round (0/1)=  "      << (delay_round ? "true" : "false") << std::endl;
-    outs << "required time (def/max)= " << (req_time ? "true" : "false")  << std::endl;
-
-    experiments::experiment<std::string, std::string, std::string>
-         exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
-
     experiments::experiment<std::string, float, float, float, float, float, float, float, float > exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
 
   std::vector<mockturtle::gate> gates1;
@@ -236,7 +239,10 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
       std::abort();
       return;
     }
+    aig = abc_c2rs( aig ); 
+
     auto klut = lut_map( aig, 4u );
+
 
     /* Calling Resynthesis engine */
     xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
@@ -249,35 +255,15 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     xag = cleanup_dangling( xag );
 
 
-    /* measuring sd ratios */
-    ps1.reset();
-    num_gate_profile( xmg, ps1 );
-    ps1.report();
-    auto size_before = xmg.num_gates();
-    double sd_rat = ( double( ps1.actual_maj + ps1.actual_xor3 )/  size_before ) * 100;
-    std::string sd_before = fmt::format( "{}/{} = {}", ( ps1.actual_maj + ps1.actual_xor3 ),  size_before, sd_rat );
-    aig = cleanup_dangling( aig );
-    mig = cleanup_dangling( mig );
-    xmg = cleanup_dangling( xmg );
-    xag = cleanup_dangling( xag );
+    //aig = ntk_optimization<mockturtle::aig_network> ( aig );
+    //mig = ntk_optimization<mockturtle::mig_network> ( mig );
+    //xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
+		//xag = ntk_optimization<mockturtle::xag_network> ( xag );
 
-    aig = ntk_optimization<mockturtle::aig_network> ( aig );
-    mig = ntk_optimization<mockturtle::mig_network> ( mig );
-    xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
-		xag = ntk_optimization<mockturtle::xag_network> ( xag );
-
-    aig = cleanup_dangling( aig );
-    mig = cleanup_dangling( mig );
-    xmg = cleanup_dangling( xmg );
-		xag = cleanup_dangling( xag );
-
-    ps2.reset();
-    num_gate_profile( xmg, ps2);
-    ps2.report();
-    auto size_after = xmg.num_gates();
-    sd_rat = ( double( ps2.actual_maj + ps2.actual_xor3 )/  size_after ) * 100;
-    std::string sd_after = fmt::format( "{}/{} = {}", ( ps2.actual_maj + ps2.actual_xor3 ),  size_after, sd_rat );
-
+    //aig = cleanup_dangling( aig );
+    //mig = cleanup_dangling( mig );
+    //xmg = cleanup_dangling( xmg );
+		//xag = cleanup_dangling( xag );
 
     mockturtle::depth_view xmg_d{ xmg };
     mockturtle::depth_view mig_d{ mig };
@@ -293,15 +279,11 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     fflush( stdout );
 
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = cut_size;
+    ps.cut_enumeration_ps.cut_size = 5;
     ps.cut_enumeration_ps.cut_limit = 25;
     ps.verbose = true;
-    if (delay_round)
-        ps.skip_delay_round = true;
-    else
-        ps.skip_delay_round = false;
-    if (req_time)
-        ps.required_time = std::numeric_limits<float>::max();
+    ps.skip_delay_round = true;
+    ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
@@ -318,20 +300,12 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
             aig_mst.area, mig_mst.area, xmg_mst.area, xag_mst.area,
 				aig_mst.delay, mig_mst.delay, xmg_mst.delay, xag_mst.delay );
 
-    exp2 (benchmark, sd_before, sd_after);
     //mockturtle::tech_mapping( xmg, lib2, ps, &mst );
     exp.save();
     exp.table();
-    exp2.save();
-    exp2.table();
   }
-  outs.close();
-  outs.open(filename.c_str(), std::ios::app);
-  exp.save("2");
-  exp.table("2", outs); 
-  exp2.save("2");
-  exp2.table("2",outs); 
-  outs.close();
+  exp.save();
+  exp.table();
 }
 
 int main() 
@@ -342,6 +316,6 @@ int main()
   //std::cout << "required time (def/max)= " << argv[4] << std::endl;
 
   //tech_map( argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
-  tech_map( "klut", 6, 0 ,1 );
+  tech_map( "klut", 5, 0 ,1 );
   return 0;
 }

@@ -533,7 +533,6 @@ private:
         area += node_data.area[use_phase];
       }
     }
-    std::cout << "Final area in set_mapping_refs " << area << std::endl;
 
     /* blend estimated references */
     for ( auto i = 0u; i < ntk.size(); ++i )
