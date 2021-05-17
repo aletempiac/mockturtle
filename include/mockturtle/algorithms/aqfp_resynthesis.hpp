@@ -262,8 +262,6 @@ public:
       auto const o = ntk_src.is_complemented( f ) ? !node2new[f] : node2new[f];
       ntk_dest.create_po( o );
 
-//      fmt::print("node {} has a po\n", ntk_dest.get_node(o));
-
       assert(ntk_dest.is_constant(ntk_dest.get_node(o)) || po_level_of_node.count(ntk_dest.get_node(o)) > 0);
       assert(ntk_dest.is_constant(ntk_dest.get_node(o)) || po_level_of_node.at(ntk_dest.get_node(o)) >= level_of_node.at(ntk_dest.get_node(o)));
 
