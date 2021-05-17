@@ -24,8 +24,8 @@
  */
 
 /*!
-  \file tech_map_cut.hpp
-  \brief Cut enumeration for technology mapping
+  \file exact_map_cut.hpp
+  \brief Cut enumeration for mapping with exact synthesis
 
   \author Alessandro Tempia Calvino
 */
@@ -43,7 +43,11 @@
 namespace mockturtle
 {
 
-struct cut_enumeration_tech_map_cut
+/*! \brief Cut implementation based on ABC's giaMf.c
+
+  See <a href="https://github.com/berkeley-abc/abc/blob/master/src/aig/gia/giaMf.c">giaMf.c</a> in ABC's repository.
+*/
+struct cut_enumeration_exact_map_cut
 {
   uint32_t delay{ 0 };
   float flow{ 0 };
@@ -52,22 +56,22 @@ struct cut_enumeration_tech_map_cut
 };
 
 template<bool ComputeTruth>
-bool operator<( cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c1, cut_type<ComputeTruth, cut_enumeration_tech_map_cut> const& c2 )
+bool operator<( cut_type<ComputeTruth, cut_enumeration_exact_map_cut> const& c1, cut_type<ComputeTruth, cut_enumeration_exact_map_cut> const& c2 )
 {
   constexpr auto eps{ 0.005f };
-  if ( c1.size() < c2.size() )
+  if ( c1->data.flow < c2->data.flow - eps )
     return true;
-  if ( c1.size() > c2.size() )
+  if ( c1->data.flow > c2->data.flow + eps )
     return false;
   if ( c1->data.delay < c2->data.delay )
     return true;
   if ( c1->data.delay > c2->data.delay )
     return false;
-  return c1->data.flow < c2->data.flow - eps;
+  return c1.size() < c2.size();
 }
 
 template<>
-struct cut_enumeration_update_cut<cut_enumeration_tech_map_cut>
+struct cut_enumeration_update_cut<cut_enumeration_exact_map_cut>
 {
   template<typename Cut, typename NetworkCuts, typename Ntk>
   static void apply( Cut& cut, NetworkCuts const& cuts, Ntk const& ntk, node<Ntk> const& n )
@@ -88,7 +92,7 @@ struct cut_enumeration_update_cut<cut_enumeration_tech_map_cut>
 };
 
 template<int MaxLeaves>
-std::ostream& operator<<( std::ostream& os, cut<MaxLeaves, cut_data<false, cut_enumeration_tech_map_cut>> const& c )
+std::ostream& operator<<( std::ostream& os, cut<MaxLeaves, cut_data<false, cut_enumeration_exact_map_cut>> const& c )
 {
   os << "{ ";
   std::copy( c.begin(), c.end(), std::ostream_iterator<uint32_t>( os, " " ) );

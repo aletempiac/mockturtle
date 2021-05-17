@@ -131,7 +131,7 @@ struct comb_supergate
 };
 
 
-template<unsigned NInputs = 5u>
+template<unsigned NInputs = 4u>
 class tech_library
 {
   using supergates_list_t = std::vector<supergate<NInputs>>;
@@ -140,7 +140,7 @@ class tech_library
   using list_supergate_t = std::vector<comb_supergate>;
 
 public:
-  tech_library( std::vector<gate> const gates, tech_library_params const ps = {} )
+  explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {} )
     : _gates( gates ),
       _ps ( ps ),
       _lsg(),
@@ -488,6 +488,8 @@ private:
         std::cout << "Computing Combinational supergates " << std::endl; 
         compute_supergates( );
     }
+
+    bool inv = false;
         
     for ( auto const& cg : _lsg )
     {
@@ -507,9 +509,14 @@ private:
         /* extract inverter delay and area */
         if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
         {
-          inv_area = gate.area;
-          inv_delay = worst_delay;
-          inv_id = gate.id;
+          /* get the smallest area inverter */
+          if ( !inv || gate.area < inv_area )
+          {
+            inv_area = gate.area;
+            inv_delay = worst_delay;
+            inv_id = gate.id;
+            inv = true;
+          }
         }
       }
 
@@ -596,6 +603,11 @@ private:
       {
         std::cout << "Gate " << gate.name << ", num_vars = " << gate.num_vars << ", np entries = " << np_count << std::endl;
       }
+    }
+
+    if ( !inv )
+    {
+      std::cerr << "[i] WARNING: inverter gate has not been detected in the library" << std::endl;
     }
 
     std::cout << "Size of superlib " << _super_lib.size() << std::endl;
@@ -687,9 +699,9 @@ private:
 
 private:
   /* inverter info */
-  float inv_area{0.0};
-  float inv_delay{0.0};
-  uint32_t inv_id{0};
+  float inv_area{ 0.0 };
+  float inv_delay{ 0.0 };
+  uint32_t inv_id{ UINT32_MAX };
 
   unsigned max_size{0}; /* max #fanins of the gates in the library */
 
@@ -706,44 +718,57 @@ struct exact_supergate
   signal<Ntk> const root;
 
   /* number of inputs of the supergate */
-  unsigned n_inputs : 3;
+  uint8_t n_inputs{ 0 };
   /* saved polarities for inputs and/or outputs */
-  unsigned polarity : 8;
-  
+  uint8_t polarity{ 0 };
+
   /* area */
-  float area;
+  float area{ 0 };
   /* worst delay */
-  float worstDelay;
+  float worstDelay{ 0 };
   /* pin-to-pin delay */
-  float tdelay[NInputs];
+  std::array<float, NInputs> tdelay{ 0 };
 
   exact_supergate( signal<Ntk> const root )
-  : root( root ),
-    n_inputs( 0u ),
-    polarity( 0u ),
-    area( 0.0f ),
-    worstDelay( 0.0f )
-    {
-      for ( auto i = 0u; i < NInputs; i++ )
-      {
-        tdelay[i] = 0.0f;
-      }
-    }
+      : root( root ) {}
 };
 
 struct exact_library_params
 {
-  float area_gate{2.5f};
-  float area_inverter{0.0f};
-  float delay_gate{1.0f};
-  float delay_inverter{0.0f};
+  /* area of a gate */
+  float area_gate{ 1.0f };
+  /* area of an inverter */
+  float area_inverter{ 0.0f };
+  /* delay of a gate */
+  float delay_gate{ 1.0f };
+  /* delay of an inverter */
+  float delay_inverter{ 0.0f };
 
-  bool np_classification{true};
-  bool verbose{false};
+  /* classify in NP instead of NPN */
+  bool np_classification{ true };
+  /* verbose */
+  bool verbose{ false };
 };
 
+/*! \brief Library of exact synthesis supergates
+ *
+ * This class creates a technology library from an exact
+ * synthesis database. Each NPN-entry in the database is
+ * stored in its NP class by removing the output inverter
+ * if present. The class creates supergates from the
+ * database computing area and delay information.
+ *
+   \verbatim embed:rst
 
-template<typename Ntk, class RewritingFn, unsigned NInputs>
+   Example
+
+   .. code-block:: c++
+
+      mockturtle::mig_npn_resynthesis mig_resyn{true};
+      mockturtle::exact_library<mockturtle::mig_network, mockturtle::mig_npn_resynthesis, 4> lib( mig_resyn );
+   \endverbatim
+ */
+template<typename Ntk, class RewritingFn, unsigned NInputs = 4u>
 class exact_library
 {
   using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
@@ -751,32 +776,31 @@ class exact_library
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
 
 public:
-  exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
-  : database(),
-    rewriting_fn( rewriting_fn ),
-    ps( ps ),
-    super_lib()
-
+  explicit exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
+      : _database(),
+        _rewriting_fn( rewriting_fn ),
+        _ps( ps ),
+        _super_lib()
   {
     generate_library();
   }
 
   const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
-    auto match = super_lib.find( tt );
-    if ( match != super_lib.end() )
+    auto match = _super_lib.find( tt );
+    if ( match != _super_lib.end() )
       return &match->second;
     return nullptr;
   }
 
-  const Ntk &get_database() const
+  const Ntk& get_database() const
   {
-    return database;
+    return _database;
   }
 
   const std::tuple<float, float> get_inverter_info() const
   {
-    return std::make_pair( ps.area_inverter, ps.delay_inverter );
+    return std::make_pair( _ps.area_inverter, _ps.delay_inverter );
   }
 
 private:
@@ -785,7 +809,7 @@ private:
     std::vector<signal<Ntk>> pis;
     for ( auto i = 0u; i < NInputs; ++i )
     {
-      pis.push_back( database.create_pi() );
+      pis.push_back( _database.create_pi() );
     }
 
     /* Compute NPN classes */
@@ -799,21 +823,22 @@ private:
     } while ( !kitty::is_const0( tt ) );
 
     /* Constuct supergates */
-    for ( auto const &entry : classes )
+    for ( auto const& entry : classes )
     {
       supergates_list_t supergates_pos;
       supergates_list_t supergates_neg;
       auto const not_entry = ~entry;
 
       const auto add_supergate = [&]( auto const& f_new ) {
-        bool complemented = database.is_complemented( f_new );
+        bool complemented = _database.is_complemented( f_new );
         auto f = f_new;
-        if ( ps.np_classification && complemented ) {
+        if ( _ps.np_classification && complemented )
+        {
           f = !f;
         }
         exact_supergate<Ntk, NInputs> sg( f );
         compute_info( sg );
-        if ( ps.np_classification && complemented )
+        if ( _ps.np_classification && complemented )
         {
           supergates_neg.push_back( sg );
         }
@@ -821,27 +846,27 @@ private:
         {
           supergates_pos.push_back( sg );
         }
-        database.create_po( f );
+        _database.create_po( f );
         return true;
       };
 
       kitty::dynamic_truth_table function = kitty::extend_to( entry, NInputs );
-      rewriting_fn( database, function, pis.begin(), pis.end(), add_supergate );
+      _rewriting_fn( _database, function, pis.begin(), pis.end(), add_supergate );
       if ( supergates_pos.size() > 0 )
-        super_lib.insert( {entry, supergates_pos} );
-      if ( ps.np_classification && supergates_neg.size() > 0 )
-        super_lib.insert( {not_entry, supergates_neg} );
+        _super_lib.insert( { entry, supergates_pos } );
+      if ( _ps.np_classification && supergates_neg.size() > 0 )
+        _super_lib.insert( { not_entry, supergates_neg } );
     }
 
-    if ( ps.verbose )
+    if ( _ps.verbose )
     {
-      std::cout << "Classified in " << super_lib.size() << " entries" << std::endl;
-      for ( auto const &pair : super_lib )
+      std::cout << "Classified in " << _super_lib.size() << " entries" << std::endl;
+      for ( auto const& pair : _super_lib )
       {
         kitty::print_hex( pair.first );
         std::cout << ": ";
 
-        for ( auto const&  gate : pair.second )
+        for ( auto const& gate : pair.second )
         {
           printf( "%.2f,%.2f,%d,%d,:", gate.worstDelay, gate.area, gate.polarity, gate.n_inputs );
           for ( auto j = 0u; j < NInputs; ++j )
@@ -854,66 +879,66 @@ private:
   }
 
   /* Computes delay and area info */
-  void compute_info( exact_supergate<Ntk, NInputs> &sg )
+  void compute_info( exact_supergate<Ntk, NInputs>& sg )
   {
-    database.incr_trav_id();
+    _database.incr_trav_id();
     /* info does not consider input and output inverters */
-    bool compl_root = database.is_complemented( sg.root );
+    bool compl_root = _database.is_complemented( sg.root );
     auto const root = compl_root ? !sg.root : sg.root;
     sg.area = compute_info_rec( sg, root, 0.0f );
 
     /* output polarity */
     sg.polarity |= ( unsigned( compl_root ) ) << NInputs;
     /* number of inputs */
-    for( auto i = 0u; i < NInputs; ++i )
+    for ( auto i = 0u; i < NInputs; ++i )
     {
-      sg.tdelay[i] *= -1;   /* invert to positive value */
+      sg.tdelay[i] *= -1; /* invert to positive value */
       if ( sg.tdelay[i] != 0.0f )
         sg.n_inputs++;
     }
+    sg.worstDelay *= -1;
   }
 
-
-  float compute_info_rec( exact_supergate<Ntk, NInputs> &sg, signal<Ntk> const& root, float delay )
+  float compute_info_rec( exact_supergate<Ntk, NInputs>& sg, signal<Ntk> const& root, float delay )
   {
-    auto n = database.get_node( root );
+    auto n = _database.get_node( root );
 
-    if ( database.is_constant( n ) )
+    if ( _database.is_constant( n ) )
       return 0.0f;
 
     float area = 0.0f;
     float tdelay = delay;
 
-    if ( database.is_pi( n ) )
+    if ( _database.is_pi( n ) )
     {
-      sg.tdelay[database.index_to_node( n ) - 1u] = std::min(sg.tdelay[database.index_to_node( n ) - 1u], tdelay);
-      sg.worstDelay = std::min(sg.worstDelay, tdelay);
-      sg.polarity |= ( unsigned( database.is_complemented( root ) ) ) << ( database.index_to_node( n ) - 1u );
+      sg.tdelay[_database.index_to_node( n ) - 1u] = std::min( sg.tdelay[_database.index_to_node( n ) - 1u], tdelay );
+      sg.worstDelay = std::min( sg.worstDelay, tdelay );
+      sg.polarity |= ( unsigned( _database.is_complemented( root ) ) ) << ( _database.index_to_node( n ) - 1u );
       return area;
     }
 
-    tdelay -= ps.delay_gate;
+    tdelay -= _ps.delay_gate;
 
     /* add gate area once */
-    if ( database.visited( n ) != database.trav_id() )
+    if ( _database.visited( n ) != _database.trav_id() )
     {
-      area += ps.area_gate;
-      database.set_value( n, 0u );
-      database.set_visited( n, database.trav_id() );
+      area += _ps.area_gate;
+      _database.set_value( n, 0u );
+      _database.set_visited( n, _database.trav_id() );
     }
 
-    if ( database.is_complemented( root ) )
+    if ( _database.is_complemented( root ) )
     {
-      tdelay -= ps.delay_inverter;
+      tdelay -= _ps.delay_inverter;
       /* add inverter area only once (shared by fanout) */
-      if ( database.value( n ) == 0u )
+      if ( _database.value( n ) == 0u )
       {
-        area += ps.area_inverter;
-        database.set_value( n, 1u );
+        area += _ps.area_inverter;
+        _database.set_value( n, 1u );
       }
     }
 
-    database.foreach_fanin( n, [&]( auto const& child ) {
+    _database.foreach_fanin( n, [&]( auto const& child ) {
       area += compute_info_rec( sg, child, tdelay );
     } );
 
@@ -921,10 +946,10 @@ private:
   }
 
 private:
-  Ntk database;
-  RewritingFn const& rewriting_fn;
-  exact_library_params const& ps;
-  lib_t super_lib;
+  Ntk _database;
+  RewritingFn const& _rewriting_fn;
+  exact_library_params const _ps;
+  lib_t _super_lib;
 };
 
-}
+} // namespace mockturtle

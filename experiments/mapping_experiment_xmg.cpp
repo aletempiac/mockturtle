@@ -18,7 +18,7 @@
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
+// #include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
@@ -323,11 +323,11 @@ void tech_map()
     ps.skip_delay_round = true;
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst;
 
-    mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
+    mockturtle::map( aig, lib1, ps, &aig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
+    mockturtle::map( mig, lib1, ps, &mig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
+    mockturtle::map( xmg, lib1, ps, &xmg_mst );
     fflush( stdout );
 
     exp( benchmark, aig.size(), mig.size(), xmg.size(),
@@ -336,7 +336,7 @@ void tech_map()
          aig_mst.delay, mig_mst.delay, xmg_mst.delay );
 
     exp2 (benchmark, sd_before, sd_after);
-    //mockturtle::tech_mapping( xmg, lib2, ps, &mst );
+    //mockturtle::map( xmg, lib2, ps, &mst );
     exp.save();
     exp.table();
     exp2.save();

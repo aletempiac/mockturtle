@@ -120,33 +120,6 @@ namespace mockturtle
 namespace detail
 {
 
-template<unsigned NInputs>
-struct node_match_tech
-{
-  /* best supergate match for positive and negative output phases */
-  supergate<NInputs> const* best_supergate[2] = {nullptr, nullptr};
-  /* fanin pin phases for both output phases */
-  uint8_t phase[2];
-  /* best cut index for both phases */
-  uint32_t best_cut[2];
-  /* node is mapped using only one phase */
-  bool same_match{false};
-
-  /* arrival time at node output */
-  float arrival[2];
-  /* required time at node output */
-  float required[2];
-  /* area of the best matches */
-  float area[2];
-
-  /* number of references in the cover 0: pos, 1: neg, 2: pos+neg */
-  uint32_t map_refs[3];
-  /* references estimation */
-  float est_refs[3];
-  /* area flow */
-  float flows[3];
-};
-
 
 template<class Ntk, unsigned NInputs, typename CutData>
 class tech_mapping_impl
@@ -167,7 +140,7 @@ public:
         matches(),
         cuts( cut_enumeration<Ntk, true, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
   {
-    map_update_cuts<CutData>().apply( cuts, ntk );
+    // map_update_cuts<CutData>().apply( cuts, ntk );
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
   }
 
