@@ -17,7 +17,7 @@
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
+//#include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
@@ -159,9 +159,21 @@ Ntk ntk_optimization( Ntk const& ntk )
       if constexpr( std::is_same<typename Ntk::base_type, mockturtle::mig_network>::value )
       {
           std::cout << "mig" << std::endl;
-          mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
-          mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
-          des = mockturtle::cleanup_dangling( des);
+          std::cout << "size of mig before opt" << des.num_gates() << std::endl;
+
+          mockturtle::mig_npn_resynthesis mig_resyn{true};
+          mockturtle::exact_library<mockturtle::mig_network, mockturtle::mig_npn_resynthesis, 4> exact_lib( mig_resyn );
+
+          map_params ps1;
+          ps1.skip_delay_round = true;
+          ps1.required_time = std::numeric_limits<float>::max();
+          map_stats st1;
+          auto res = mockturtle::map( des, exact_lib, ps1, &st1 );
+          des = cleanup_dangling( res );
+          std::cout << "size of mig after opt" << des.num_gates() << std::endl;
+          //mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
+          //mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
+          //des = mockturtle::cleanup_dangling( des);
           depth_view depth_mig{des};
           fanout_view fanout_mig{depth_mig};
 
@@ -185,7 +197,7 @@ Ntk ntk_optimization( Ntk const& ntk )
       improv_per = 100 * (double(diff/size_before)); //100 * (double((std::abs(improv)) improv/ size_before ));
       std::cout << " improvement " << improv << " improv_per " << improv_per << std::endl;
       std::cout << "Iterations # " << iter++ << std::endl; 
-      if (improv_per <= 0.5 )
+      if (improv_per <= 0.01 )
           break;
   }
   return des;
@@ -196,7 +208,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     experiments::experiment<std::string, float, float, float, float, float, float, float, float > exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
 
   std::vector<mockturtle::gate> gates1;
-  if ( lorina::read_genlib( "smaller.genlib", mockturtle::genlib_reader( gates1 ) ) != lorina::return_code::success )
+  if ( lorina::read_genlib( "mcnc.genlib", mockturtle::genlib_reader( gates1 ) ) != lorina::return_code::success )
   {
     std::cout << "ERROR IN" << std::endl;
     std::abort();
@@ -206,7 +218,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
   lib_ps.compute_supergates = true;
-  mockturtle::tech_library<6> lib1( gates1, lib_ps );
+  mockturtle::tech_library<5> lib1( gates1, lib_ps );
 
   /* Option 1 */
   mockturtle::xmg_cost_params ps1, ps2;
@@ -222,7 +234,7 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     fflush( stdout );
 
     mockturtle::xmg_network xmg;
-    mockturtle::aig_network aig;
+    mockturtle::aig_network aig, aig_opt;
     mockturtle::mig_network mig;
     mockturtle::xag_network xag;
 
@@ -239,24 +251,32 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
       std::abort();
       return;
     }
+
     aig = abc_c2rs( aig ); 
+
+    if ( lorina::read_aiger( "/tmp/abc_optimum_all_output.aig", mockturtle::aiger_reader( mig ) ) != lorina::return_code::success )
+    {
+        std::cout << "ERROR MIG" << std::endl;
+        std::abort();
+        return ;
+    }
 
     auto klut = lut_map( aig, 4u );
 
 
     /* Calling Resynthesis engine */
-    xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
-    xmg = cleanup_dangling( xmg );
+    //xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
+    //xmg = cleanup_dangling( xmg );
 
-    mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
-    mig = cleanup_dangling( mig );
+    //mig = mockturtle::node_resynthesis<mockturtle::mig_network>( klut, mig_npn_resyn );
+    //mig = cleanup_dangling( mig );
 
-    xag = mockturtle::node_resynthesis<mockturtle::xag_network>( klut, xag_npn_resyn );
-    xag = cleanup_dangling( xag );
+    //xag = mockturtle::node_resynthesis<mockturtle::xag_network>( klut, xag_npn_resyn );
+    //xag = cleanup_dangling( xag );
 
 
     //aig = ntk_optimization<mockturtle::aig_network> ( aig );
-    //mig = ntk_optimization<mockturtle::mig_network> ( mig );
+    mig = ntk_optimization<mockturtle::mig_network> ( mig );
     //xmg = ntk_optimization<mockturtle::xmg_network> ( xmg );
 		//xag = ntk_optimization<mockturtle::xag_network> ( xag );
 
@@ -287,14 +307,14 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
-    mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
+    mockturtle::map( aig, lib1, ps, &aig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
+    mockturtle::map( mig, lib1, ps, &mig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
-    fflush( stdout );
-    mockturtle::tech_mapping( xag, lib1, ps, &xag_mst );
-		fflush( stdout );
+    //mockturtle::map( xmg, lib1, ps, &xmg_mst );
+    //fflush( stdout );
+    //mockturtle::map( xag, lib1, ps, &xag_mst );
+		//fflush( stdout );
 
     exp( benchmark,
             aig_mst.area, mig_mst.area, xmg_mst.area, xag_mst.area,
