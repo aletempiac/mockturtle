@@ -553,4 +553,117 @@ private:
   lib_t _super_lib;
 };
 
+template<typename Ntk, unsigned NInputs = 4u>
+class aqfp_exact_library
+{
+  using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
+  using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
+  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
+
+public:
+  template<typename AqfpDbT>
+  explicit aqfp_exact_library( AqfpDbT& db )
+      : _database(),
+        _super_lib()
+  {
+    generate_library( db );
+  }
+
+  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  {
+    auto match = _super_lib.find( tt );
+    if ( match != _super_lib.end() )
+      return &match->second;
+    return nullptr;
+  }
+
+  const Ntk& get_database() const
+  {
+    return _database;
+  }
+
+  const std::tuple<float, float> get_inverter_info() const
+  {
+    return std::make_pair( 0.0f, 0.0f );
+  }
+
+private:
+template <typename AqfpDbT>
+  void generate_library( AqfpDbT& db )
+  {
+    std::vector<signal<Ntk>> pis;
+    for ( auto i = 0u; i < NInputs; ++i )
+    {
+      pis.push_back( _database.create_pi() );
+    }
+
+    db.for_each_db_entry( [&]( auto npn_class, auto mig_structure, auto cost ) {
+      auto [mig, depths, output_inv] = mig_structure;
+      std::vector<signal<Ntk>> sig_map( mig.size() );
+      sig_map[0] = _database.get_constant( false );
+      for ( auto i = 1u; i <= 4u; i++ )
+      {
+        sig_map[i] = pis[i - 1];
+      }
+      for ( auto i = 5u; i < mig.size(); i++ )
+      {
+        std::vector<signal<Ntk>> fanin;
+        for ( auto fin : mig[i] )
+        {
+          const auto fin_inv = ( ( fin & 1u ) == 1u );
+          const auto fin_id = ( fin >> 1 );
+          fanin.push_back( fin_inv ? !sig_map[fin_id] : sig_map[fin_id] );
+        }
+        sig_map[i] = _database.create_maj( fanin );
+        /* put the relative depth (with respect to root) of this node */
+        _database.set_value( _database.get_node( sig_map[i] ), depths[i] );
+      }
+
+      auto root = sig_map[sig_map.size() - 1];
+      bool complemented = _database.is_complemented( root );
+
+      auto func = kitty::static_truth_table<NInputs>();
+      func._bits = npn_class;
+
+      if ( complemented )
+      {
+        root = !root;
+        func = ~func;
+      }
+
+      exact_supergate<Ntk, NInputs> sg( root );
+      sg.n_inputs = NInputs;
+      sg.polarity = 0u;
+      sg.area = (float)cost;
+      sg.worstDelay = *std::max_element( depths.begin() + 1, depths.begin() + NInputs );
+      for ( auto i = 0u; i < NInputs; i++ )
+      {
+        sg.tdelay[i] = depths[i + 1];
+      }
+
+      _super_lib[func].push_back( sg );
+    } );
+
+    std::cout << "Classified in " << _super_lib.size() << " entries" << std::endl;
+    for ( auto const& pair : _super_lib )
+    {
+      kitty::print_hex( pair.first );
+      std::cout << ": ";
+
+      for ( auto const& gate : pair.second )
+      {
+        printf( "%.2f,%.2f,%d,%d,:", gate.worstDelay, gate.area, gate.polarity, gate.n_inputs );
+        for ( auto j = 0u; j < NInputs; ++j )
+          printf( "%.2f/", gate.tdelay[j] );
+        std::cout << " ";
+      }
+      std::cout << std::endl;
+    }
+  }
+
+private:
+  Ntk _database;
+  lib_t _super_lib;
+};
+
 } // namespace mockturtle
