@@ -619,7 +619,7 @@ template <typename AqfpDbT>
         _database.set_value( _database.get_node( sig_map[i] ), depths[i] );
       }
 
-      auto root = sig_map[sig_map.size() - 1];
+      auto root = output_inv ? !sig_map[sig_map.size() - 1] : sig_map[sig_map.size() - 1];
       bool complemented = _database.is_complemented( root );
 
       auto func = kitty::static_truth_table<NInputs>();
