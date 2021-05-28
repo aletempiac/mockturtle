@@ -127,6 +127,9 @@ struct map_stats
   /*! \brief Gates usage stats. */
   std::string gates_usage{};
 
+  /*! \brief combinational supergates usage stats. */
+  std::string supergates_usage{};
+
   /*! \brief Mapping error. */
   bool mapping_error{ false };
 
@@ -146,6 +149,9 @@ struct map_stats
     if ( !gates_usage.empty() )
       std::cout << "[i] Gates usage report:\n"
                 << gates_usage;
+    if ( !supergates_usage.empty() )
+      std::cout << "[i] SuperGates usage report:\n"
+                << supergates_usage;
     std::cout << "[i] SD Map area:\n" << sd_map_area;
   }
 };
@@ -1444,6 +1450,7 @@ private:
 void compute_gates_usage()
   {
     auto const& gates = library.get_gates();
+    std::vector<uint32_t> csg_usage( gates.size(), 0u);
     std::vector<uint32_t> gates_profile( gates.size(), 0u );
 
     ntk.foreach_node( [&]( auto const& n, auto ) {
@@ -1472,6 +1479,7 @@ void compute_gates_usage()
       {
         if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
         {
+          ++csg_usage[node_data.best_supergate[phase]->root->id];
           ++gates_profile[node_data.best_supergate[phase]->root->id];
           auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
           for (auto i: fanin_list)
@@ -1479,6 +1487,7 @@ void compute_gates_usage()
             if ( i > 0 )
             {
               ++gates_profile[i];
+              ++csg_usage[i];
             }
           }
         }
@@ -1494,6 +1503,7 @@ void compute_gates_usage()
       {
         if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
         {
+          ++csg_usage[node_data.best_supergate[phase]->root->id];
           ++gates_profile[node_data.best_supergate[phase]->root->id];
           auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
           for (auto i: fanin_list)
@@ -1501,6 +1511,7 @@ void compute_gates_usage()
             if (i > 0)
             {
               ++gates_profile[i];
+              ++csg_usage[i];
             }
           }
         }
@@ -1512,7 +1523,9 @@ void compute_gates_usage()
     } );
 
     std::stringstream gates_usage;
+    std::stringstream supergates_usage;
     double tot_area = 0.0f;
+    double tot_csg_area = 0.0f;
     uint32_t tot_instances = 0u;
     double sd_map_area = 0.0f;
     for ( auto i = 0u; i < gates_profile.size(); ++i ) 
@@ -1538,13 +1551,28 @@ void compute_gates_usage()
       }
     }
 
+    for ( auto i = 0u; i < csg_usage.size(); ++i ) 
+    {
+        if ( csg_usage[i] > 0u )
+        {
+            auto csg_area = csg_usage[i] * gates[i].area;
+            tot_csg_area += csg_area;
+        }
+    }
+
     gates_usage << fmt::format( "[i] {:<15}", "TOTAL" )
                 << fmt::format( "\t Instance = {:>10d}", tot_instances )
                 << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_area )
                 << std::endl;
 
-    std::cout << "SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
+    supergates_usage << fmt::format( "[i] {:<15}", "TOTAL CSG Area" )
+                << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_csg_area )
+                << std::endl;
+
+    std::cout << "[i] SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
+    std::cout << "[i] Combinational supergate area = \t " << tot_csg_area  << std::endl;
     st.gates_usage = gates_usage.str();
+    st.supergates_usage = supergates_usage.str();
     st.sd_map_area = sd_map_area;
     st.sd_map_area = sd_map_area;
   }

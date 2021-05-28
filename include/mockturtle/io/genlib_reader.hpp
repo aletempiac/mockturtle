@@ -69,6 +69,18 @@ struct gate
   kitty::dynamic_truth_table function;
   double area;
   std::vector<pin> pins;
+
+  float compute_worst_delay( ) const
+  {
+    float worst_delay = 0.0f;
+    for ( auto const& pin : pins )
+        {
+            float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
+            worst_delay = std::max( worst_delay, worst_pin_delay );
+        }
+    return worst_delay;
+
+  }
 }; /* gate */
 
 /*! \brief lorina callbacks for GENLIB files.

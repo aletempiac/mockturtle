@@ -17,7 +17,7 @@
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
+//#include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
@@ -177,16 +177,6 @@ Ntk ntk_optimization( Ntk const& ntk )
 
 void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 {
-    std::string filename = "epfl";
-    filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
-    std::ofstream outs;
-    outs.open(filename.c_str());
-
-    outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
-    outs << "cut size = "               << cut_size    << std::endl;
-    outs << "delay round (0/1)=  "      << (delay_round ? "true" : "false") << std::endl;
-    outs << "required time (def/max)= " << (req_time ? "true" : "false")  << std::endl;
-
     experiments::experiment<std::string, std::string, std::string>
          exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
 
@@ -293,25 +283,20 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     fflush( stdout );
 
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = cut_size;
     ps.cut_enumeration_ps.cut_limit = 25;
-    ps.verbose = true;
-    if (delay_round)
-        ps.skip_delay_round = true;
-    else
-        ps.skip_delay_round = false;
-    if (req_time)
-        ps.required_time = std::numeric_limits<float>::max();
+    ps.verbose = false;
+    ps.skip_delay_round = true;
+    ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
-    mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
+    mockturtle::map<mockturtle::aig_network, 6u>( aig, lib1, ps, &aig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
+    mockturtle::map<mockturtle::mig_network, 6u>( mig, lib1, ps, &mig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
+    mockturtle::map<mockturtle::xmg_network, 6u>( xmg, lib1, ps, &xmg_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xag, lib1, ps, &xag_mst );
+    mockturtle::map<mockturtle::xag_network, 6u>( xag, lib1, ps, &xag_mst );
 		fflush( stdout );
 
     exp( benchmark,
@@ -325,13 +310,10 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     exp2.save();
     exp2.table();
   }
-  outs.close();
-  outs.open(filename.c_str(), std::ios::app);
-  exp.save("2");
-  exp.table("2", outs); 
-  exp2.save("2");
-  exp2.table("2",outs); 
-  outs.close();
+    exp.save();
+    exp.table();
+    exp2.save();
+    exp2.table();
 }
 
 int main() 
