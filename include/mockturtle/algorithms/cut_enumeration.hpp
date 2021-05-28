@@ -1237,16 +1237,34 @@ public:
       }
       else
       {
-        if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+        if constexpr ( has_foreach_choice_v<Ntk> )
         {
-          merge_cuts2( index );
+          if ( ntk.is_choice_representative( node ) )
+          {
+            if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+            {
+              merge_eqcuts2( index );
+            }
+            else
+            {
+              merge_eqcuts( index );
+            }
+          }
         }
         else
         {
-          merge_cuts( index );
+          if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+          {
+            merge_cuts2( index );
+          }
+          else
+          {
+            merge_cuts( index );
+          }
         }
       }
     } );
+    // std::cout << "Total cuts: " << cuts.total_cuts() << std::endl;
   }
 
 private:
@@ -1431,6 +1449,215 @@ private:
     cuts._total_cuts += static_cast<uint32_t>( rcuts.size() );
 
     cuts.add_unit_cut( index );
+  }
+
+  void merge_eqcuts2( uint32_t repr )
+  {
+    auto repr_cuts = &cuts.cuts( repr );
+    bool eligible = true;
+    const auto fanin = 2;
+
+    /* compute the cuts for all the choices and merge them */
+    ntk.foreach_choice( repr, [&]( auto const index ) {
+      uint32_t pairs{1};
+      ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &eligible]( auto child, auto i ) {
+        lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
+        if ( static_cast<uint32_t>( lcuts[i]->size() ) == 0 ) {
+          /* node fanins have not been explored yet, don't consider */
+          eligible = false;
+          return false;
+        }
+        pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+      } );
+
+      if ( !eligible ) {
+        /* if not eligible, go to the next choice node */
+        return true;
+      }
+
+      lcuts[2] = &cuts.cuts( index );
+      auto& rcuts = *lcuts[fanin];
+      rcuts.clear();
+
+      cut_t new_cut;
+
+      std::vector<cut_t const*> vcuts( fanin );
+
+      cuts._total_tuples += pairs;
+      for ( auto const& c1 : *lcuts[0] )
+      {
+        for ( auto const& c2 : *lcuts[1] )
+        {
+          if ( !c1->merge( *c2, new_cut, ps.cut_size ) )
+          {
+            continue;
+          }
+
+          if ( rcuts.is_dominated( new_cut ) )
+          {
+            continue;
+          }
+
+          if constexpr ( ComputeTruth )
+          {
+            vcuts[0] = c1;
+            vcuts[1] = c2;
+            new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, index );
+
+          rcuts.insert( new_cut );
+        }
+      }
+
+      /* limit the maximum number of cuts */
+      rcuts.limit( ps.cut_limit - 1 );
+
+      /* merge rcuts to cuts of the representative */
+      if ( index != repr ) {
+        //std::cout << "Merging cuts " << repr << ": " << repr_cuts->size() << "/";
+        for ( auto const& cut : rcuts ) {
+          if ( !repr_cuts->is_dominated( *cut ) ) {
+            repr_cuts->insert( *cut );
+          }
+        }
+        //std::cout << repr_cuts->size() << std::endl;
+      }
+
+      return true;
+    } );
+
+    cuts._total_cuts += static_cast<uint32_t>( repr_cuts->size() );
+
+    if ( repr_cuts.size() > 1 || ( *repr_cuts.begin() )->size() > 1 )
+    {
+      cuts.add_unit_cut( repr );
+    }
+  }
+
+
+  void merge_eqcuts( uint32_t repr )
+  {
+    auto repr_cuts = &cuts.cuts( repr );
+
+    /* compute the cuts for all the choices and merge them */
+    ntk.foreach_choice( repr, [&]( auto const index ) {
+      std::vector<uint32_t> cut_sizes;
+      uint32_t pairs{1};
+      bool eligible = true;
+
+      //std::cout << index << ":";
+      ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &cut_sizes, &eligible]( auto child, auto i ) {
+        lcuts[i] = &cuts.cuts( ntk.node_to_index( ntk.get_node( child ) ) );
+        if ( static_cast<uint32_t>( lcuts[i]->size() ) == 0 ) {
+          /* node fanins have not been explored yet, don't consider */
+          eligible = false;
+          return false;
+        }
+        cut_sizes.push_back( static_cast<uint32_t>( lcuts[i]->size() ) );
+        pairs *= cut_sizes.back();
+        return true;
+      } );
+
+      if ( !eligible ) {
+        /* if not eligible, go to the next choice node */
+        return true;
+      }
+
+      const auto fanin = cut_sizes.size();
+      lcuts[fanin] = &cuts.cuts( index );
+
+      auto& rcuts = *lcuts[fanin];
+
+      if ( fanin > 1 && fanin <= ps.fanin_limit )
+      {
+        rcuts.clear();
+
+        cut_t new_cut, tmp_cut;
+
+        std::vector<cut_t const*> vcuts( fanin );
+
+        cuts._total_tuples += pairs;
+        foreach_mixed_radix_tuple( cut_sizes.begin(), cut_sizes.end(), [&]( auto begin, auto end ) {
+          auto it = vcuts.begin();
+          auto i = 0u;
+          while ( begin != end )
+          {
+            *it++ = &( ( *lcuts[i++] )[*begin++] );
+          }
+
+          if ( !vcuts[0]->merge( *vcuts[1], new_cut, ps.cut_size ) )
+          {
+            return true; /* continue */
+          }
+
+          for ( i = 2; i < fanin; ++i )
+          {
+            tmp_cut = new_cut;
+            if ( !vcuts[i]->merge( tmp_cut, new_cut, ps.cut_size ) )
+            {
+              return true; /* continue */
+            }
+          }
+
+          if ( rcuts.is_dominated( new_cut ) )
+          {
+            return true; /* continue */
+          }
+
+          if constexpr ( ComputeTruth )
+          {
+            new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, ntk.index_to_node( repr ) );
+
+          rcuts.insert( new_cut );
+
+          return true;
+        } );
+
+        /* limit the maximum number of cuts */
+        rcuts.limit( ps.cut_limit - 1 );
+      } else if ( fanin == 1 ) {
+        rcuts.clear();
+
+        for ( auto const& cut : *lcuts[0] ) {
+          cut_t new_cut = *cut;
+
+          if constexpr ( ComputeTruth )
+          {
+            new_cut->func_id = compute_truth_table( index, {cut}, new_cut );
+          }
+
+          cut_enumeration_update_cut<CutData>::apply( new_cut, cuts, ntk, ntk.index_to_node( repr ) );
+
+          rcuts.insert( new_cut );
+        }
+
+        /* limit the maximum number of cuts */
+        rcuts.limit( ps.cut_limit - 1 );
+      }
+
+      /* merge rcuts to cuts of the representative */
+      if ( index != repr ) {
+        // std::cout << "Merging cuts " << repr << ": " << repr_cuts->size() << "/";
+        for ( auto const& cut : rcuts ) {
+          if ( !repr_cuts->is_dominated( *cut ) ) {
+            repr_cuts->insert( *cut );
+          }
+        }
+        // std::cout << repr_cuts->size() << std::endl;
+      }
+      repr_cuts->limit( ps.cut_limit - 1 );
+      return true;
+    } );
+
+    // repr_cuts->limit( ps.cut_limit - 1 );
+    cuts.add_unit_cut( repr );
+
+    cuts._total_cuts += static_cast<uint32_t>( repr_cuts->size() );
   }
 
 private:
