@@ -41,6 +41,7 @@
 #include <kitty/static_truth_table.hpp>
 #include <kitty/npn.hpp>
 #include <kitty/print.hpp>
+#include <lorina/lorina.hpp>
 
 #include "../io/genlib_reader.hpp"
 #include "../traits.hpp"
@@ -545,6 +546,10 @@ private:
   }
 
 
+  int read_super( std::ifstream in )
+  {
+  }
+
 
   void generate_library( const std::string& filename = "" )
   {
@@ -557,7 +562,7 @@ private:
         }
         else
         {
-            //auto const ret = read_super( in );
+            auto const ret = read_super( in );
             in.close();
         }
     }
