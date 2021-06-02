@@ -44,6 +44,7 @@
 #include <lorina/lorina.hpp>
 
 #include "../io/genlib_reader.hpp"
+#include "../utils/super.hpp"
 #include "../traits.hpp"
 #include "../utils/truth_table_cache.hpp"
 
@@ -152,13 +153,17 @@ class tech_library
   using list_supergate_t = std::vector<comb_supergate<NInputs>>;
 
 public:
-  explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {} )
+  explicit tech_library( std::vector<gate> const& gates, std::vector<mockturtle::map_superGate>vec_superGates, mockturtle::super_info const& vals, tech_library_params const ps = {} )
     : _gates( gates ),
+      _superGates( vec_superGates ),
       _ps ( ps ),
       _lsg(),
       _super_lib()
   {
-    generate_library();
+    if( vec_superGates.size() != 0 )
+        auto res = generate_library_with_super( gates, vec_superGates, vals );
+    else
+        generate_library();
   }
 
   const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
@@ -545,29 +550,8 @@ private:
       return true;
   }
 
-
-  int read_super( std::ifstream in )
-  {
-  }
-
-
   void generate_library( const std::string& filename = "" )
   {
-    if ( !filename.empty( ) )
-    {
-        std::ifstream in( filename , std::ifstream::in );
-        if ( !in.is_open() )
-        {
-            fmt::print("Problem here");
-        }
-        else
-        {
-            auto const ret = read_super( in );
-            in.close();
-        }
-    }
-
-    
     for (auto const g: _gates)
     {
         comb_supergate<NInputs> c;
@@ -881,6 +865,7 @@ private:
   unsigned max_size{0}; /* max #fanins of the gates in the library */
 
   std::vector<gate> const _gates; /* collection of gates */
+  std::vector<map_superGate> const _superGates;
   tech_library_params const _ps;
   list_supergate_t _lsg;
   lib_t _super_lib; /* library of enumerated gates */

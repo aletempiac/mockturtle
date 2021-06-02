@@ -27,7 +27,7 @@
   \file genlib_reader.hpp
   \brief Reader visitor for GENLIB files
 
-  \author Heinz Riener
+  \author Shubham Rai  
 */
 
 #pragma once
@@ -75,20 +75,6 @@ public:
         val.max_num_vars      = max_num_vars;
         val.num_superGates    = max_superGates; 
         val.num_lines         = num_lines;
-
-        /* Emplacing elementary gates */ 
-        for(uint8_t i = 0; i < val.max_num_vars; ++i)
-        {
-            map_superGate s;
-            s.id       = superGates.size();
-            s.num_vars = val.max_num_vars;
-
-            for (uint32_t k = 0; k < val.max_num_vars; ++k)
-            {
-                s.fanins_id.emplace_back( k );
-            }
-            superGates.emplace_back( s );
-        }
     }
 
     virtual void on_line ( std::string const& name, bool const& is_super, std::vector<uint32_t> const& fanins_id ) const override
