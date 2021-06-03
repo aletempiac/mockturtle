@@ -161,7 +161,9 @@ public:
       _super_lib()
   {
     if( vec_superGates.size() != 0 )
-        auto res = generate_library_with_super( gates, vec_superGates, vals );
+    {
+        superGate_library<NInputs> sg_lib( gates, vals, vec_superGates );
+    }
     else
         generate_library();
   }
