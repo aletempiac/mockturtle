@@ -204,7 +204,7 @@ private:
 
     for (auto k = i ; k < tokens.size(); k++)
     {
-        fanins_id.emplace_back( std::stod( tokens[i] ) );
+        fanins_id.emplace_back( std::stod( tokens[k] ) );
     }
 
     if( fanins_id.size() == 0 )

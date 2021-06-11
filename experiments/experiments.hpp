@@ -538,10 +538,10 @@ bool abc_cec( Ntk const& ntk, std::string const& benchmark )
 }
 
 template <class Ntk>
-std::pair<float,float>  abc_map (Ntk const& ntk, std::string const& genlib_path )
+std::tuple<float, float, float>  abc_map (Ntk const& ntk, std::string const& genlib_path )
 {
   mockturtle::write_bench( ntk, "/tmp/compare_sg_test.bench" );
-  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {}; map ; print_stats\"", genlib_path );
+  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {}; map ; time; print_stats;\"", genlib_path );
   //std::string command = fmt::format( "abc -q \"read /tmp/epfl_test.bench; strash; read_genlib {} ; map -a ; print_gates\"", genlib_path);
   //std::string command = fmt::format( "abc -q \"read /tmp/epfl_test.bench; strash; ifraig; &get -n; read_genlib {} ; &nf ; &put; print_gates\"", genlib_path);
   
@@ -562,6 +562,8 @@ std::pair<float,float>  abc_map (Ntk const& ntk, std::string const& genlib_path 
   std::cout << "area_str " << area_str << std::endl;
   std::string delay_str = result.substr ( result.find( "delay =" ) );
   std::cout << "delay_str " << delay_str << std::endl;
+  std::string time_str = result.substr ( result.find( "total:" ) );
+  std::cout << "time_str " << time_str << std::endl;
   if (!area_str.empty())
   {
       uint32_t sp = area_str.find( "=" );
@@ -576,17 +578,24 @@ std::pair<float,float>  abc_map (Ntk const& ntk, std::string const& genlib_path 
       std::string str2 = delay_str.substr ( ( sp + 1 ), ( lp - sp - 1  ) ); // 6 as to ignore "=" 
       std::cout << " value of str2 = " << str2 << std::endl;
 
-      return std::make_pair( std::stof( str1 ), std::stof( str2 ) ); 
+      sp = time_str.find( ":" );
+      lp = time_str.find( "seconds" );
+      std::cout << " sp "<< sp << " lp " << lp << std::endl;
+      std::string str3 = time_str.substr ( ( sp + 1 ), ( lp - sp - 1  ) ); // 6 as to ignore "=" 
+      std::cout << " value of str3 = " << str3 << std::endl;
+      
+
+      return std::make_tuple( std::stof( str1 ), std::stof( str2 ), std::stof( str3 ) ); 
   }
   else 
-      return std::make_pair(0.0f,0.0f);
+      return std::make_tuple(0.0f,0.0f, 0.0f);
 }
 
 template <class Ntk>
-std::pair<float,float>  abc_supermap (Ntk const& ntk, std::string const& genlib_path )
+std::tuple<float, float, float>  abc_supermap (Ntk const& ntk, std::string const& genlib_path )
 {
   mockturtle::write_bench( ntk, "/tmp/compare_sg_test.bench" );
-  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; read {}; map ; print_stats\"", genlib_path,"orig_mcnc_k.super" );
+  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; read {}; map ; time;print_stats\"", genlib_path,"orig_mcnc.super" );
   //std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; map ; print_stats\"", genlib_path);
   //std::string command = fmt::format( "abc -q \"read /tmp/epfl_test.bench; strash; ifraig; &get -n; read_genlib {} ; &nf ; &put; print_gates\"", genlib_path);
   
@@ -603,10 +612,12 @@ std::pair<float,float>  abc_supermap (Ntk const& ntk, std::string const& genlib_
   }
 
   std :: cout << "results for mapping ============ Super_Map" <<  std::endl << result << std::endl;
-  std::string area_str = result.substr ( result.find( "area =" ) + 1);
+  std::string area_str = result.substr ( result.find( "area =" ) );
   std::cout << "area_str " << area_str << std::endl;
-  std::string delay_str = result.substr ( result.find( "delay =" ) + 1);
+  std::string delay_str = result.substr ( result.find( "delay =" ) );
   std::cout << "delay_str " << delay_str << std::endl;
+  std::string time_str = result.substr ( result.find( "total:" ) );
+  std::cout << "time_str " << time_str << std::endl;
   if (!area_str.empty())
   {
       uint32_t sp = area_str.find( "=" );
@@ -621,10 +632,17 @@ std::pair<float,float>  abc_supermap (Ntk const& ntk, std::string const& genlib_
       std::string str2 = delay_str.substr ( ( sp + 1 ), ( lp - sp - 1  ) ); // 6 as to ignore "=" 
       std::cout << " value of str2 = " << str2 << std::endl;
 
-      return std::make_pair( std::stof( str1 ), std::stof( str2 ) ); 
+      sp = time_str.find( ":" );
+      lp = time_str.find( "seconds" );
+      std::cout << " sp "<< sp << " lp " << lp << std::endl;
+      std::string str3 = time_str.substr ( ( sp + 1 ), ( lp - sp - 1  ) ); // 6 as to ignore "=" 
+      std::cout << " value of str3 = " << str3 << std::endl;
+
+
+      return std::make_tuple( std::stof( str1 ), std::stof( str2 ), std::stof( str3 ) ); 
   }
   else 
-      return std::make_pair(0.0f,0.0f);
+      return std::make_tuple(0.0f,0.0f, 0.0f);
 }
 
 

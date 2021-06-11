@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <lorina/genlib.hpp>
+#include <lorina/super.hpp>
 #include <lorina/lorina.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
@@ -19,9 +20,9 @@
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
+#include <mockturtle/io/super_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/io/write_blif.hpp>
@@ -177,35 +178,44 @@ Ntk ntk_optimization( Ntk const& ntk )
   return des;
 }
 
-void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
+//void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
+void tech_map()
 {
-    std::string filename = "epfl";
-    filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
-    std::ofstream outs;
-    outs.open(filename.c_str());
+    //std::string filename = "epfl";
+    //filename = filename + aig_or_klut + std::to_string(cut_size) + (delay_round == 0 ? "_false" : "_true") + (req_time == 0 ? "_def": "_max") + ".txt" ;
+    //std::ofstream outs;
+    //outs.open(filename.c_str());
 
-    outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
-    outs << "cut size = "               << cut_size    << std::endl;
-    outs << "delay round (0/1)=  "      << (delay_round ? "true" : "false") << std::endl;
-    outs << "required time (def/max)= " << (req_time ? "true" : "false")  << std::endl;
+    //outs << "aig(0) or klut(1)   "      << aig_or_klut << std::endl;
+    //outs << "cut size = "               << cut_size    << std::endl;
+    //outs << "delay round (0/1)=  "      << (delay_round ? "true" : "false") << std::endl;
+    //outs << "required time (def/max)= " << (req_time ? "true" : "false")  << std::endl;
 
     experiments::experiment<std::string, std::string, std::string>
          exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
 
     experiments::experiment<std::string, float, float, float, float, float, float, float, float > exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
 
-  std::vector<mockturtle::gate> gates1;
-  if ( lorina::read_genlib( "smaller.genlib", mockturtle::genlib_reader( gates1 ) ) != lorina::return_code::success )
+  std::vector<mockturtle::gate> gates;
+  if ( lorina::read_genlib( "smaller.genlib", mockturtle::genlib_reader( gates ) ) != lorina::return_code::success )
   {
     std::cout << "ERROR IN" << std::endl;
     std::abort();
     return;
   }
 
+  std::vector<mockturtle::map_superGate> supergates;
+  mockturtle::super_info vals;
+  if ( lorina::read_super( "orig_smaller.super", mockturtle::super_reader( supergates, vals ) ) != lorina::return_code::success )
+  {
+      std::cout << "ERROR IN super " << std::endl;
+      std::abort();
+      return;
+  }
+
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
-  lib_ps.compute_supergates = true;
-  mockturtle::tech_library<6> lib1( gates1, lib_ps );
+  mockturtle::tech_library<5> lib1( gates, lib_ps, supergates, vals);
 
   /* Option 1 */
   mockturtle::xmg_cost_params ps1, ps2;
@@ -295,25 +305,19 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     fflush( stdout );
 
     mockturtle::map_params ps;
-    ps.cut_enumeration_ps.cut_size = cut_size;
-    ps.cut_enumeration_ps.cut_limit = 25;
-    ps.verbose = true;
-    if (delay_round)
-        ps.skip_delay_round = true;
-    else
-        ps.skip_delay_round = false;
-    if (req_time)
-        ps.required_time = std::numeric_limits<float>::max();
+    //ps.verbose = true;
+    //ps.skip_delay_round = true;
+    //ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
-    mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
+    mockturtle::map( aig, lib1, ps, &aig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
+    mockturtle::map( mig, lib1, ps, &mig_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
+    mockturtle::map( xmg, lib1, ps, &xmg_mst );
     fflush( stdout );
-    mockturtle::tech_mapping( xag, lib1, ps, &xag_mst );
+    mockturtle::map( xag, lib1, ps, &xag_mst );
 		fflush( stdout );
 
     exp( benchmark,
@@ -327,22 +331,16 @@ void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_rou
     exp2.save();
     exp2.table();
   }
-  outs.close();
-  outs.open(filename.c_str(), std::ios::app);
-  exp.save("2");
-  exp.table("2", outs); 
-  exp2.save("2");
-  exp2.table("2",outs); 
-  outs.close();
+  exp.save();
+  exp.table();
+  exp2.save();
+  exp2.table();
 }
 
-int main( int argc, char* argv[])
+//int main( int argc, char* argv[])
+int main() 
 {
-  std::cout << "aig(0) or klut(1)   "      << argv[1] << std::endl;
-  std::cout << "cut size = "               << argv[2] << std::endl;
-  std::cout << "delay round (0/1)=  "      << argv[3] << std::endl;
-  std::cout << "required time (def/max)= " << argv[4] << std::endl;
 
-  tech_map( argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
+  tech_map( );//argv[1], std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4]));
   return 0;
 }

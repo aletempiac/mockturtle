@@ -45,6 +45,7 @@
 
 #include "../io/genlib_reader.hpp"
 #include "../utils/super.hpp"
+//#include "../utils/compute_super.hpp"
 #include "../traits.hpp"
 #include "../utils/truth_table_cache.hpp"
 
@@ -82,6 +83,9 @@ struct tech_library_params
   /*! \brief reports np enumerations */
   bool verbose{false};
 
+  /*brief use abc generated .super file */
+  bool use_abc_super{false};
+
   /*! \brief allows computing supergates */
   bool compute_supergates{false};
 
@@ -105,30 +109,9 @@ struct tech_library_params
 };
 
 template<unsigned NInputs>
-struct comb_supergate
-{
-    uint32_t id;
-    uint32_t root_id;
-    uint32_t num_vars{0};
-    bool is_comb_supergate{false};
-    double area{0.0f};
-    /* worst delay */
-    float worst_delay{0.0f};
-    ///* pin-to-pin delay */
-    std::array<float, NInputs> tdelay;
-    std::vector<int32_t> fanin_list{};
-    kitty::dynamic_truth_table function;
-};
-
-
-
-template<unsigned NInputs>
 struct supergate
 {
-  struct gate const* root;
-
-  /* pointer to the comb_supergate */
-  struct comb_supergate<NInputs> const* root_cg;
+  sGate const* root;
 
   /* area */
   float area;
@@ -150,23 +133,29 @@ class tech_library
   using supergates_list_t = std::vector<supergate<NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
-  using list_supergate_t = std::vector<comb_supergate<NInputs>>;
 
 public:
-  explicit tech_library( std::vector<gate> const& gates, std::vector<mockturtle::map_superGate>vec_superGates, mockturtle::super_info const& vals, tech_library_params const ps = {} )
+  explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, std::vector<mockturtle::map_superGate>vec_superGates = {}, mockturtle::super_info const& vals= {} )
     : _gates( gates ),
-      _superGates( vec_superGates ),
       _ps ( ps ),
-      _lsg(),
+      _superGates( vec_superGates ),
+      _vals( vals ),
+      _sgates( ),
       _super_lib()
   {
-    if( vec_superGates.size() != 0 )
-    {
-        superGate_library<NInputs> sg_lib( gates, vals, vec_superGates );
-    }
-    else
-        generate_library();
+      generate_library();
   }
+
+  //explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {} )
+  //  : _gates( gates ),
+  //    _ps ( ps ),
+  //    _vals( ),
+  //    _superGates( ),
+  //    _super_lib()
+  //{
+  //    generate_library<mockturtle::gate>();
+  //}
+
 
   const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
@@ -190,416 +179,94 @@ public:
   {
       return _gates;
   }
+  
+  const std::vector<sGate>& get_sgates() const
+  {
+      return _sgates;
+  }
 
 private:
 
-  void compute_supergates( uint32_t levels = 1 )
+  void generate_library( )
   {
-      assert( levels != 0 );
+    //if( _ps.compute_supergates )
+    //{
+    //    std::cout << "Computing Combinational supergates " << std::endl; 
+    //    for (auto const g: _gates)
+    //    {
+    //        comb_supergate<NInputs> c;
+    //        c.root_id = g.id;
+    //        c.area = g.area;
+    //        c.id = _lsg.size();
+    //        c.is_comb_supergate = false;
+    //        c.num_vars = g.num_vars;
+    //        c.function = kitty::extend_to( g.function, NInputs );
+    //        c.worst_delay = compute_worst_delay( c );
+    //        int fanin_index = -1;
+    //        for (uint8_t i = 0 ; i < g.num_vars; i++)
+    //        {
+    //            c.fanin_list.emplace_back( fanin_index );
+    //            --fanin_index;
+    //            c.tdelay[i] = c.worst_delay;
+    //        }
+    //        _lsg.emplace_back( c ); 
+    //    }
+    //    compute_supergates( );
+    //}
 
-      
-      /* TODO Sort the gates in order of increasing delay */
-      
+    superGate_library<NInputs> sg_lib( _gates, _vals, _superGates);
 
-       
-      /* computing level0 combination supergates */
-			for (auto const& g: _gates)
-      {
-          auto nfanins = g.num_vars; 
-          auto index = g.id; 
-          auto root_area = g.area;
-          auto root_delay = g.compute_worst_delay();
-
-          if ( nfanins < 1 )
-              continue;
-          /* Root gates with more than prune_limit fanins would not be considered */
-          if ( nfanins >= _ps.prune_limit )
-              continue;
-
-          /* have to update the csg_limit with filtering methods 
-           * Only those gates which are possible with the current
-           * root gates shall be considered 
-           */
-          list_supergate_t csg_list;
-          for(auto l: _lsg)
-          {
-              if ( l.num_vars >= _ps.prune_limit )
-              {
-                  continue;
-              }
-              if( l.worst_delay + root_delay > _ps.max_delay )
-              {
-                  csg_list.emplace_back( l );
-              }
-
-          }
-          std::cout << "CSG size " << csg_list.size() << "\t lsg size " << _lsg.size() << std::endl;
-          switch( nfanins )
-          {
-              case 0: // Constants 
-                  assert( 0 );
-                  break;
-              case 1: // Inverters 
-                  for ( auto const& g0: csg_list )
-                  {
-                      /* skipping constants  and inverters */
-                      if ( g0.num_vars <= 1)
-                          continue;
-                      if( compute_worst_delay( g0 ) == 0)
-                          continue;
-
-                      comb_supergate<NInputs> c0;
-                      c0.num_vars = nfanins + g0.num_vars - 1;
-                      if ( c0.num_vars > NInputs )
-                          continue;
-
-                      c0.root_id            = index;
-                      c0.id                 = _lsg.size();
-                      c0.is_comb_supergate  = true;
-                      c0.fanin_list.emplace_back( g0.id );
-                      c0.worst_delay        = compute_worst_delay( c0 ); 
-                      c0.area               = compute_area ( c0 );
-                      c0.function           = compute_tt(c0);
-
-                      if ( !is_dominated( c0 ) )
-                          continue;
-                      _lsg.emplace_back( g0 );
-                  }
-                  break;
-              case 2:  /* Two input gates */
-                  /* when constants or the input variable are considered as one of the inputs, 
-                   * then following considerations are made
-                   * 0th variable will be given -1, 1th variable will be given -2 and so on 
-                   * and so forth*/
-                  for (auto const& g0: csg_list)
-                  {
-                      if ( g0.num_vars < 1)
-                          continue;
-                      comb_supergate<NInputs> c0;
-                      c0.num_vars = nfanins + g0.num_vars - 1;
-                      if ( c0.num_vars > NInputs )
-                          continue;
-                      c0.fanin_list.emplace_back( g0.id );
-                      c0.root_id = index;
-                      c0.id = _lsg.size();
-                      c0.is_comb_supergate = true;
-                      c0.fanin_list.emplace_back( -1 );
-                      c0.worst_delay        = compute_worst_delay( c0 ); 
-                      c0.area               = compute_area( c0 );
-                      c0.function           = compute_tt(c0);
-
-                      if ( !is_dominated( c0 ) )
-                          continue;
-                      _lsg.emplace_back( c0 );
-
-                      for (auto const& g1: csg_list)
-                      {
-                          if ( g1.num_vars < 1)
-                              continue;
-                          comb_supergate<NInputs> c1;
-                          c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
-                          if ( c1.num_vars > NInputs )
-                              break;
-                          c1.fanin_list.emplace_back( g0.id );
-                          c1.fanin_list.emplace_back( g1.id );
-                          c1.root_id = index;
-                          c1.id = _lsg.size();
-                          c1.is_comb_supergate = true;
-                          c1.worst_delay        = compute_worst_delay( c1 );
-                          c1.area               = compute_area( c1 );
-                          c1.function           = compute_tt( c1 );
-                          if ( !is_dominated( c1 ) )
-                              continue;
-                          _lsg.emplace_back( c1 );
-                      }
-
-                  }
-                  break;
-              case 3: /* Three input gates */  
-                  std::cout << "three input gates " << std::endl;
-                  for (auto const& g0: _lsg)
-                  {
-                      if ( g0.num_vars < 1)
-                          continue;
-                      comb_supergate<NInputs> c0;
-                      c0.num_vars = nfanins + g0.num_vars - 1;
-                      if ( c0.num_vars > NInputs )
-                          break;
-                      c0.fanin_list.emplace_back( g0.id );
-                      c0.root_id = index;
-                      c0.id = _lsg.size();
-                      c0.is_comb_supergate = true;
-
-                      c0.fanin_list.emplace_back( -1 );
-                      c0.fanin_list.emplace_back( -2 );
-                      _lsg.emplace_back( c0 );
-
-                      for (auto const& g1: _lsg)
-                      {
-                          if ( g1.num_vars < 1)
-                              continue;
-                          comb_supergate<NInputs> c1;
-                          c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
-                          if( c1.num_vars >  NInputs ) 
-                              break;
-                          c1.fanin_list.emplace_back( g0.id );
-                          c1.fanin_list.emplace_back( g1.id );
-                          c1.fanin_list.emplace_back( -1 );
-                          c1.root_id = index; 
-                          c1.id = _lsg.size();
-                          c1.is_comb_supergate = true;
-                          _lsg.emplace_back( c1 );
-
-                          for (auto const& g2: _lsg)
-                          {
-                              if ( g2.num_vars < 1)
-                                  continue;
-                              comb_supergate<NInputs> c2;
-                              c2.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars - 3;
-                              if ( c2.num_vars > NInputs )
-                                  break;
-                              c2.fanin_list.emplace_back( g0.id );
-                              c2.fanin_list.emplace_back( g1.id );
-                              c2.fanin_list.emplace_back( g2.id );
-                              c2.root_id = index; 
-                              c2.id = _lsg.size();
-                              c2.is_comb_supergate = true;
-                              _lsg.emplace_back( c2 );
-                          }
-                      }
-
-                  }
-                  break;
-              case 4: /* Four input gates */
-                  std::cout << "four input gates " << std::endl;
-                  for (auto const& g0: _lsg )
-                  {
-                      if ( g0.num_vars < 1)
-                          continue;
-                      comb_supergate<NInputs> c0;
-                      c0.num_vars = nfanins + g0.num_vars - 1;
-                      if ( c0.num_vars > NInputs )
-                          break;
-                      c0.fanin_list.emplace_back( g0.id );
-                      c0.root_id = index;
-                      c0.id = _lsg.size();
-                      c0.is_comb_supergate = true;
-
-                      c0.fanin_list.emplace_back( -1 );
-                      c0.fanin_list.emplace_back( -2 );
-                      c0.fanin_list.emplace_back( -3 );
-                      _lsg.emplace_back( c0 );
-
-                      for (auto const& g1: _lsg)
-                      {
-                          if ( g1.num_vars < 1)
-                              continue;
-                          comb_supergate<NInputs> c1;
-                          c1.num_vars = nfanins + g0.num_vars + g1.num_vars - 2;
-                          if ( c1.num_vars > NInputs )
-                              break;
-                          c1.fanin_list.emplace_back( g0.id );
-                          c1.fanin_list.emplace_back( g1.id );
-                          c1.fanin_list.emplace_back( -1 );
-                          c1.fanin_list.emplace_back( -2 );
-                          c1.root_id = index; 
-                          c1.id = _lsg.size();
-                          c1.is_comb_supergate = true;
-                          _lsg.emplace_back( c1 );
-
-                          for (auto const& g2: _lsg)
-                          {
-                              if ( g2.num_vars < 1)
-                                  continue;
-                              comb_supergate<NInputs> c2;
-                              c2.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars - 3;
-                              if ( c2.num_vars > NInputs )
-                                  break;
-                              c2.fanin_list.emplace_back( g0.id );
-                              c2.fanin_list.emplace_back( g1.id );
-                              c2.fanin_list.emplace_back( g2.id );
-                              c2.fanin_list.emplace_back( -1 );
-                              c2.root_id = index; 
-                              c2.id = _lsg.size();
-                              c2.is_comb_supergate = true;
-                              _lsg.emplace_back( c2 );
-
-                              for (auto const& g3: _lsg)
-                              {
-                                  if( g3.num_vars < 1)
-                                      continue;
-                                  comb_supergate<NInputs> c3;
-                                  c3.num_vars = nfanins + g0.num_vars + g1.num_vars + g2.num_vars + g3.num_vars - 4;
-                                  if ( c3.num_vars > NInputs )
-                                      break;
-                                  c3.fanin_list.emplace_back( g0.id );
-                                  c3.fanin_list.emplace_back( g1.id );
-                                  c3.fanin_list.emplace_back( g2.id );
-                                  c3.fanin_list.emplace_back( g3.id );
-                                  c3.root_id = index; 
-                                  c3.id = _lsg.size();
-                                  c3.is_comb_supergate = true;
-                                  _lsg.emplace_back( c3 );
-                              }
-                          }
-                      }
-                  }
-                  break;
-              default:
-                  //assert( 0 );
-                  break;
-          }
-
-      }
-
-      if ( _ps.very_verbose )
-      {
-          std::cout << "size of supergate " << _lsg.size() << std::endl;
-
-          for (auto const& t : _lsg)
-          {
-              //auto c = std::get<0> ( t );
-              auto c =  t ;
-              std::cout << "root id " << c.root_id 
-                  << "\t id "      << c.id 
-                  << "\t is_comb_supergate " << c.is_comb_supergate 
-                  << "\t fanins " << c.num_vars 
-                  << "\t tt " ;
-              kitty::print_binary(c.function);
-              std::cout <<std::endl;
-
-              //auto v = std::get<1> ( t );
-              auto v = c.fanin_list;
-              std::cout << "Printing vector elements" << std::endl; 
-              for (auto const& e: v)
-              {
-                  std::cout << e << " "; 
-              }
-              std::cout <<std::endl;
-          }
-          fflush(stdout);
-      }
-  }
-
-  kitty::dynamic_truth_table compute_tt(comb_supergate<NInputs> const& cg)
-  {
-      auto root_gate = _gates[cg.root_id];
-      if ( !cg.is_comb_supergate )
-      {
-          return root_gate.function;
-      }
-      else
-      {
-          std::vector<kitty::dynamic_truth_table> ttv;
-          std::vector<kitty::dynamic_truth_table> a( NInputs, kitty::dynamic_truth_table( NInputs ) );
-          for (auto const leaf: cg.fanin_list)
-          {
-              /* Case 1:  When one of the fanin of the comb_supergate is another gate primitive */
-              if ( leaf >= 0 )
-              {
-                  auto gate = _lsg[leaf];
-                  ttv.emplace_back( kitty::extend_to( gate.function, NInputs ) );
-              }
-              /* Case 2: When it is nth variable */
-              else
-              {
-                  auto val =  std::abs( leaf );
-                  kitty::create_nth_var( a[val], val );
-                  ttv.emplace_back( kitty::extend_to( a[val], NInputs ) );
-              }
-          }
-          return kitty::compose_truth_table( root_gate.function, ttv );
-      }
-  }
-
-  bool is_dominated(comb_supergate<NInputs> & cg)
-  {
-      auto is_new_better = false;
-      auto is_old_better = false;
-      if ( kitty::is_const0( cg.function ) || kitty::is_const0( ~cg.function ) )
-          return false;
-      auto count = 0u;
-      for (auto g:_lsg)
-      {
-          if ( g.function == cg.function )
-          {
-              /* Constant value 0.001 taken from ABC */
-              if ( cg.area > g.area + 0.001 )
-                  is_old_better = true;
-              else 
-                  is_new_better = true;
-
-              if ( cg.worst_delay > g.worst_delay + 0.001 )
-                  is_old_better = true;
-              else 
-                  is_new_better = true;
-              
-              if ( is_new_better )
-              {
-                  _lsg.erase( _lsg.begin() + count ); 
-              }
-              else if ( is_old_better )
-                  return false;
-              else
-                  return false;
-
-          }
-          else 
-              return true;
-          ++count;
-
-      }
-      return true;
-  }
-
-  void generate_library( const std::string& filename = "" )
-  {
-    for (auto const g: _gates)
+   /* handling for constant and inverters conditions and other genlib gate primitives*/
+    for( const auto& g: _gates )
     {
-        comb_supergate<NInputs> c;
-        c.root_id = g.id;
-        c.area = g.area;
-        c.id = _lsg.size();
-        c.is_comb_supergate = false;
-        c.num_vars = g.num_vars;
-        c.function = kitty::extend_to( g.function, NInputs );
-        c.worst_delay = compute_worst_delay( c );
-        int fanin_index = -1;
-        for (uint8_t i = 0 ; i < g.num_vars; i++)
+        std::vector<sGate_pin> pp; 
+        for ( const auto& p : g.pins )
         {
-            c.fanin_list.emplace_back( fanin_index );
-            --fanin_index;
-            c.tdelay[i] = c.worst_delay;
+            pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
         }
-        _lsg.emplace_back( c ); 
-    }
-
-
-    if( _ps.compute_supergates )
+        _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
+                false, static_cast<int>( g.id ), 
+                g.num_vars, g.function, g.area, pp , {}} );
+    } 
+    auto res = sg_lib.get_sg_library();
+    for (auto r: res)
     {
-        std::cout << "Computing Combinational supergates " << std::endl; 
-        compute_supergates( );
+        if( r.root_id == -1 )
+        {
+            continue;
+        }
+        std::vector<sGate_pin> pp; 
+        std::vector<sGate> ff;
+        for ( const auto& p : r.pins )
+        {
+            pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+        }
+
+        for (const auto& f: r.fanins )
+        {
+            ff.emplace_back( f );
+        }
+
+        _sgates.emplace_back( sGate{r.name, r.id, r.is_super, r.root_id, r.num_vars, r.function, r.area, pp , ff} );
     }
 
-    //if (1)
-    //    throw std::runtime_error( " Hello " );
+    if( _ps.verbose )
+        std::cout << "size of gates in the supergate library " << _sgates.size() << std::endl;
 
     bool inv = false;
-        
-    for ( auto const& cg : _lsg )
+
+    for ( auto const& gate : _sgates )
     {
-      auto const& gate = _gates[cg.root_id];
+        if ( gate.num_vars > NInputs )
+        {
+            std::cerr << "WARNING: gate " << gate.name << " IGNORED, too many variables for the library settings" << std::endl;
+            continue;
+        }
 
-      if ( cg.num_vars > NInputs )
-      {
-        std::cerr << "WARNING: gate " << gate.name << " IGNORED, too many variables for the library settings" << std::endl;
-        continue;
-      }
+      float worst_delay = compute_worst_delay( gate );
+      float gate_area = gate.area;
 
-      float worst_delay = cg.worst_delay;
-      float gate_area = cg.area;
-
-      if ( cg.num_vars == 1 )
+      if ( gate.num_vars == 1 )
       {
         /* extract inverter delay and area */
         if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
@@ -609,20 +276,19 @@ private:
           {
             inv_area = gate.area;
             inv_delay = worst_delay;
-            inv_id = gate.id;
+            inv_id = gate.root_id;
             inv = true;
           }
         }
       }
 
-      max_size = std::max( max_size, cg.num_vars);
+      max_size = std::max( max_size, gate.num_vars);
 
       uint32_t np_count = 0;
 
       const auto on_np = [&]( auto const& tt, auto neg, auto const& perm ) {
         supergate<NInputs> sg;
         sg.root = &gate;
-        sg.root_cg = &cg;
         //sg.area = gate.area;
         sg.area = gate_area;
         sg.worstDelay = worst_delay;
@@ -649,18 +315,18 @@ private:
             return true;
           if ( s1.area > s2.area )
             return false;
-          if ( s1.root_cg->num_vars < s2.root_cg->num_vars )
+          if ( s1.root->num_vars < s2.root->num_vars )
             return true;
-          if ( s1.root_cg->num_vars > s2.root_cg->num_vars )
+          if ( s1.root->num_vars > s2.root->num_vars )
             return true;
-          return s1.root_cg->id < s2.root_cg->id;
+          return s1.root->id < s2.root->id;
         } );
 
         bool to_add = true;
         /* search for duplicated element due to symmetries */
         while ( it != v.end() )
         {
-          if ( sg.root_cg->id == it->root_cg->id )
+          if ( sg.root->id == it->root->id )
           {
             /* if already in the library exit, else ignore permutations if with equal delay cost */
             if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
@@ -687,7 +353,11 @@ private:
       };
 
       ///* NP enumeration of the function */
-      kitty::exact_np_enumeration( cg.function, on_np );
+      //std::cout << "Gate name \t" << gate.name << "\t "; 
+      //kitty::print_hex( gate.function);
+      //std::cout << std::endl;
+      
+      kitty::exact_np_enumeration( gate.function, on_np );
 
       if ( _ps.verbose )
       {
@@ -709,154 +379,24 @@ private:
         std::cout << ": ";
         for ( auto const& gate : entry.second )
         {
-          if ( gate.root_cg->is_comb_supergate )
-          {
-          }
-          else
-              printf( "%s(d:%.2f, a:%.2f, p:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity );
+            printf( "%s(d:%.2f, a:%.2f, p:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity );
         }
         std::cout << std::endl;
       }
     }
   }
 
-  float compute_area( comb_supergate<NInputs> const& cg)
+  float compute_worst_delay( mockturtle::sGate const& g )
   {
-      auto root_gate = _gates[cg.root_id];
-
-      float total_area = root_gate.area;
-      if (cg.is_comb_supergate)
+      float worst_delay = 0.0f;
+      /* consider only block_delay */
+      for ( auto const& pin : g.pins )
       {
-          for (auto const v: cg.fanin_list)
-          {
-              if (v > 0)
-                  total_area += _lsg[v].area;
-          }
-          return total_area;
+          float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
+          worst_delay = std::max( worst_delay, worst_pin_delay );
       }
-      else 
-          return root_gate.area; 
+      return worst_delay;
   }
-
-  float compute_worst_delay( comb_supergate<NInputs> const& cg )
-  {
-    float worst_delay = 0.0f;
-    auto const& r = _gates[cg.root_id];
-
-		if ( cg.is_comb_supergate )
-    {
-        /* finding the pin delay for the root gate*/
-        float d0 = 0.0f;
-        float leaf_delay = 0.0f;
-        for ( auto const& pin : r.pins )
-        {
-            float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
-            d0 = std::max( d0, worst_pin_delay );
-        }
-
-        /* finding the pin delay for the leaf nodes */
-        for (auto const v: cg.fanin_list)
-        {
-            if(v >= 0)
-            {
-                auto leaf_root_gate = _gates[_lsg[v].root_id];
-                leaf_delay = std::max( leaf_delay, _lsg[v].worst_delay);
-                
-                //auto leaf_gates = _lsg[v];
-                if ( leaf_root_gate.num_vars >= 1 )
-                {
-                    for (auto const& pin: leaf_root_gate.pins )
-                    {
-                        float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
-                        leaf_delay = std::max(leaf_delay, worst_pin_delay);
-                    }
-                }
-            }
-
-        }
-        return (d0 + leaf_delay);
-		}
-    else 
-    {
-        /* consider only block_delay */
-        for ( auto const& pin : r.pins )
-        {
-            float worst_pin_delay = static_cast<float>( std::max( pin.rise_block_delay, pin.fall_block_delay ) );
-            worst_delay = std::max( worst_delay, worst_pin_delay );
-        }
-    }
-    return worst_delay;
-  }
-
-  void compute_tt( comb_supergate<NInputs> const& cg, std::vector<kitty::dynamic_truth_table>& res_tt )
-  {
-      auto root_gate = _gates[cg.root_id];
-
-      if ( !cg.is_comb_supergate )
-      {
-          res_tt.emplace_back( root_gate.function );
-      }
-      else
-      {
-          std::vector<kitty::dynamic_truth_table> ttv;
-          std::vector<std::vector<kitty::dynamic_truth_table>> multi_ttv;
-          std::vector<kitty::dynamic_truth_table> a( NInputs, kitty::dynamic_truth_table( NInputs ) );
-
-          auto pos = 0u;
-          for (auto const leaf: cg.fanin_list)
-          {
-              /* Case 1:  When one of the fanin of the comb_supergate is another gate primitive */
-              if ( leaf >= 0 )
-              {
-                  ++pos;
-                  auto gate = _gates[leaf];
-                  if( gate.num_vars > root_gate.num_vars )
-                      ttv.emplace_back( kitty::shrink_to( gate.function, root_gate.num_vars ) );
-                  else 
-                      ttv.emplace_back( kitty::extend_to( gate.function, root_gate.num_vars ) );
-
-              }
-              /* Case 2: When it is nth variable */
-              else
-              {
-                  auto val =  std::abs( leaf );
-                  kitty::create_nth_var( a[val], val );
-                  if( a[val].num_vars() > root_gate.num_vars )
-                      ttv.emplace_back( kitty::shrink_to( a[val], root_gate.num_vars ) );
-                  else 
-                      ttv.emplace_back( kitty::extend_to( a[val], root_gate.num_vars ) );
-              }
-              /* Computing all combinations of intermediary negations */
-          }
-
-          generate_all_combinations(pos, multi_ttv, ttv, 0);
-
-          for (auto i: multi_ttv)
-          {
-              res_tt.emplace_back( kitty::compose_truth_table( root_gate.function, i ) );
-          }
-      }
-  }
-
-
-  void generate_all_combinations(uint32_t const& pos, std::vector<std::vector<kitty::dynamic_truth_table>>& multi_ttv, std::vector<kitty::dynamic_truth_table>& ttv, uint32_t i)
-  {
-      std::vector<kitty::dynamic_truth_table> tt1;
-      tt1 = ttv;
-      if (i >= pos)
-      {
-          multi_ttv.emplace_back(ttv);
-      }
-      else
-      {
-          tt1[i] = ttv[i];
-          generate_all_combinations(pos, multi_ttv, tt1, i + 1);
-
-          tt1[i] = ~ttv[i];
-          generate_all_combinations(pos, multi_ttv, tt1, i + 1);
-      }
-  }
-
 
 private:
   /* inverter info */
@@ -867,9 +407,10 @@ private:
   unsigned max_size{0}; /* max #fanins of the gates in the library */
 
   std::vector<gate> const _gates; /* collection of gates */
-  std::vector<map_superGate> const _superGates;
   tech_library_params const _ps;
-  list_supergate_t _lsg;
+  std::vector<map_superGate> const _superGates;
+  mockturtle::super_info const _vals;
+  std::vector<mockturtle::sGate> _sgates;
   lib_t _super_lib; /* library of enumerated gates */
 };
 

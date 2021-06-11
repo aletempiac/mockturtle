@@ -53,16 +53,17 @@ namespace mockturtle
 
 struct sGate_pin
 {
-  double rise_tdelays;
-  double fall_tdelays;
-  double max_tdelay;
+  double rise_block_delay;
+  double fall_block_delay;
 };
 
 struct sGate
 {
+    std::string name;
     uint32_t id; 
     bool is_super{false};
-    struct gate const* root;
+    //gate root{};
+    int32_t root_id{-1};
     uint32_t num_vars;
     kitty::dynamic_truth_table function;
     double area{0.0f};
@@ -74,81 +75,112 @@ template<unsigned NInputs = 5u>
 class superGate_library
 {
 public:
-    explicit superGate_library( std::vector<mockturtle::gate> const& gates, mockturtle::super_info const& val, std::vector<mockturtle::map_superGate> const& vec_sg )
+    explicit superGate_library( std::vector<mockturtle::gate> const& gates, mockturtle::super_info const& val = {} , std::vector<mockturtle::map_superGate> const& vec_sg = {} )
         : _gates( gates ),
-          val( val ),
-          vec_sg( vec_sg ),
-          sg_lib( )
+          _val( val ),
+          _vec_sg( vec_sg ),
+          sg_list( )
 
     {
-        generate_library_with_super();
+        if ( _vec_sg.size() == 0 )
+            compute_library_with_genlib();
+        else
+            generate_library_with_super();
     }
 
-    const std::vector<mockturtle::sGate>* get_sg_library()
+    const std::vector<mockturtle::sGate> get_sg_library() const
     {
-        return &sg_lib;
+        return sg_list;
     }
 
 public:
-    void  generate_library_with_super()  
+    void compute_library_with_genlib()
     {
-        assert( vec_sg.size() != 0 );
-        assert( _gates.size() != 0 );
+        //assert( _vec_sg.size() == 0 );
+        //assert( _gates.size() != 0 );
 
-        std::vector<sGate> sg_list;
-
-        /* Creating a hash table of the genlib gates accessible by their names */
-        std::unordered_map<std::string, gate> gate_by_name;
-        for(auto const g: _gates)
-        {
-            gate_by_name[g.name] = g;
-        }
-
-        /* Creating elementary gates */ 
-        for(uint8_t i = 0; i < val.max_num_vars; ++i)
+        for(const auto &g: _gates)
         {
             sGate s;
+            s.name      = g.name;
             s.id        = sg_list.size();
-            s.num_vars  = val.max_num_vars;
-            s.root      = nullptr;
-            kitty::dynamic_truth_table tt{val.max_num_vars};
+            s.num_vars  = g.num_vars;
+            s.is_super  = false;
+            s.root_id      = g.id;
+            s.area      = g.area;
+            s.function  = g.function;
+            for( auto const &p: g.pins)
+            {
+                s.pins.emplace_back( sGate_pin{ p.rise_block_delay, 
+                        p.fall_block_delay} );
+            }
+            sg_list.emplace_back( s ); 
+        }
+
+    }
+
+    void  generate_library_with_super()  
+    {
+        assert( _vec_sg.size() != 0 );
+        assert( _gates.size() != 0 );
+
+        /* Creating elementary gates */ 
+        for(uint8_t i = 0; i < _val.max_num_vars; ++i)
+        {
+            sGate s;
+            s.name      = "elementary_" + std::to_string( i );
+            s.id        = sg_list.size();
+            s.is_super  = false;
+            s.num_vars  = _val.max_num_vars;
+            kitty::dynamic_truth_table tt{_val.max_num_vars};
 
             kitty::create_nth_var( tt, i );
             s.function = tt;
-            std::cout << "s.function ";
-            kitty::print_binary( s.function );
-            std::cout<<std::endl;
 
             std::vector<mockturtle::sGate_pin> pp;
 
-            for (uint32_t k = 0; k < val.max_num_vars; ++k)
+            for (uint32_t k = 0; k < _val.max_num_vars; ++k)
             {
-                pp.emplace_back( sGate_pin{ 0.0f, 0.0f, 0.0f} );
+                pp.emplace_back( sGate_pin{ 0.0f, 0.0f} );
             }
             s.pins = pp;
             sg_list.emplace_back( s ); 
         }
 
-        std::cout << "Size of sg_list " << sg_list.size() << std::endl;
 
 
-        for(auto const v:vec_sg)
+        for(auto const v:_vec_sg)
         {
             sGate s;
             s.id = sg_list.size();
             s.is_super = v.is_super; 
 
-            auto g = gate_by_name.find( v.name );
-            if ( g != gate_by_name.end() )
-                s.root = &g->second;
+            bool match_found = false;
+            for (auto const& g: _gates )
+            {
+                if( v.name == g.name )
+                {
+                    s.root_id = g.id;
+                    match_found = true;
+                    break;
+                }
 
-            s.num_vars = s.root->num_vars;
+            }
+            if( !match_found )
+            {
+                std::cout << "Some issue parsing the .super file" << std::endl;
+            }
+
+            s.num_vars = _gates[s.root_id].num_vars;
+            s.name     = _gates[s.root_id].name + "_super_" + std::to_string( s.id );
 
             if ( s.num_vars != v.fanins_id.size() )
                 std::cout << "num_vars != fanins_id.size " << std::endl;
+            if (s.num_vars > _val.max_num_vars )
+                std::cout << "num_vars cannot be more than max " << std::endl;
 
             /* Should not have more than the entries in super file */
-            if (sg_list.size( ) > val.num_lines)
+            if (sg_list.size( ) > _val.num_lines)
             {
                 std::cout << "[i] the number of supergates exceed the number of lines in .super file" << std::endl;
             }
@@ -165,11 +197,7 @@ public:
 
             compute_truth_table( s );
             compute_area( s );
-
-            std::cout << "s.function ";
-            kitty::print_binary( s.function );
-            std::cout << "\t area " << s.area;
-            std::cout<<std::endl;
+            compute_delay_parameters( s );
 
             sg_list.emplace_back( s );
 
@@ -179,34 +207,68 @@ public:
 private:
     void compute_truth_table( mockturtle::sGate& s ) 
     {
-        auto root_gate = s.root; 
         if ( !s.is_super )
         {
-            s.function = s.root->function; 
+            s.function = _gates[s.root_id].function; 
         }
         else
         {
             std::vector<kitty::dynamic_truth_table> ttv;
-            std::vector<kitty::dynamic_truth_table> a( val.max_num_vars, kitty::dynamic_truth_table( val.max_num_vars ) );
             for (auto const leaf: s.fanins)
             {
                 auto tt_leaf = leaf.function;
-                ttv.emplace_back( kitty::extend_to( tt_leaf, NInputs ) ); 
+                ttv.emplace_back(  tt_leaf ) ; 
             }
 
-            s.function = kitty::compose_truth_table( s.root->function, ttv );
+            auto func = kitty::compose_truth_table( _gates[s.root_id].function, ttv );
+            const auto support = kitty::min_base_inplace( func );
+            s.function = kitty::shrink_to( func, static_cast<unsigned int>( support.size() ) );
         }
     }
 
     void compute_delay_parameters( mockturtle::sGate& s)
     {
+        std::vector<mockturtle::sGate_pin> pp;
+        const auto& root = _gates[s.root_id];
 
+        /* setting initial delay */
+        for (uint32_t k = 0; k < _val.max_num_vars; ++k)
+        {
+            pp.emplace_back( sGate_pin{ 0.0f, 0.0f} );
+        }
+        s.pins = pp;
+
+        uint32_t i = 0; // For tracking the fanins of the current supergate s
+
+        /* adding fanin delays */
+        for(const auto& p: root.pins)
+        {
+            auto leaf = s.fanins[i];
+            auto rise_block_delay = p.rise_block_delay;
+            auto fall_block_delay = p.fall_block_delay;
+            
+            for(auto k = 0u; k < _val.max_num_vars; k++)
+            {
+                if ( leaf.pins[k].rise_block_delay >= 0 ) 
+                {
+                    if ( s.pins[k].rise_block_delay < leaf.pins[k].rise_block_delay + rise_block_delay )
+                        s.pins[k].rise_block_delay = leaf.pins[k].rise_block_delay + rise_block_delay;
+                }
+                if ( leaf.pins[k].fall_block_delay >= 0 ) 
+                {
+                    if ( s.pins[k].fall_block_delay < leaf.pins[k].fall_block_delay + fall_block_delay )
+                        s.pins[k].fall_block_delay = leaf.pins[k].fall_block_delay + fall_block_delay;
+                }
+
+            }
+            ++i;
+        }
     }
 
     void compute_area( mockturtle::sGate& s )
     {
-        auto root_area = s.area = s.root->area;
-        for( auto const leaf: s.fanins)
+        s.area = _gates[s.root_id].area;
+        for( const auto leaf: s.fanins)
         {
             s.area += leaf.area; 
         }
@@ -215,9 +277,9 @@ private:
 
 protected:
     std::vector<gate> const _gates; 
-    mockturtle::super_info val;
-    std::vector<mockturtle::map_superGate> vec_sg;
-    std::vector<mockturtle::sGate> sg_lib;
+    mockturtle::super_info const _val;
+    std::vector<mockturtle::map_superGate> const _vec_sg;
+    std::vector<sGate> sg_list;
 
 }; /* Class superGate_library */
 

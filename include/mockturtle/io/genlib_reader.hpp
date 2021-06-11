@@ -58,13 +58,26 @@ struct pin
   double rise_fanout_delay;
   double fall_block_delay;
   double fall_fanout_delay;
+
+  pin& operator=(const pin& a)
+  {
+      name = a.name;
+      phase = a.phase; 
+      input_load = a.input_load;
+      max_load = a.max_load;
+      rise_block_delay = a.rise_block_delay;
+      rise_fanout_delay = a.rise_fanout_delay;
+      fall_block_delay = a.fall_block_delay;
+      fall_fanout_delay = a.fall_fanout_delay;
+      return *this;
+  }
 }; /* pin */
 
 struct gate
 {
   unsigned int id;
   std::string name;
-  std::string expression;
+  std::string expression{};
   uint32_t num_vars;
   kitty::dynamic_truth_table function;
   double area;
@@ -81,6 +94,23 @@ struct gate
     return worst_delay;
 
   }
+
+ gate& operator= (const gate& a)
+ {
+     id = a.id;
+     name = a.name;
+     expression =  a.expression;
+     num_vars = a.num_vars;
+     function = a.function; 
+     area = a.area;
+     std::vector<pin> pp;
+     for (auto &p: a.pins)
+     {
+         pp.emplace_back(p);
+     }
+     pins = pp;
+     return *this;
+ }
 }; /* gate */
 
 /*! \brief lorina callbacks for GENLIB files.

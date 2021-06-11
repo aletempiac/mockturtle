@@ -112,7 +112,7 @@ struct map_stats
   double area{ 0 };
   double delay{ 0 };
   double power{ 0 };
-  double sd_map_area{0};
+  //double sd_map_area{0};
 
   /*! \brief Runtime. */
   stopwatch<>::duration time_mapping{ 0 };
@@ -152,7 +152,7 @@ struct map_stats
     if ( !supergates_usage.empty() )
       std::cout << "[i] SuperGates usage report:\n"
                 << supergates_usage;
-    std::cout << "[i] SD Map area:\n" << sd_map_area;
+    //std::cout << "[i] SD Map area:\n" << sd_map_area;
   }
 };
 
@@ -330,9 +330,9 @@ private:
   {
     /* match gates */
 
-    uint32_t sd_count = 0;
-    uint32_t sd_matches = 0;
-    uint32_t sd_ignore = 0;
+    //uint32_t sd_count = 0;
+    //uint32_t sd_matches = 0;
+    //uint32_t sd_ignore = 0;
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
 
@@ -355,18 +355,18 @@ private:
         }
         const auto tt = cuts.truth_table( *cut );
         const auto fe = kitty::shrink_to<NInputs>( tt );
-        if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
-        {
-          sd_count++;
-        }
+        //if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
+        //{
+        //  sd_count++;
+        //}
         auto const supergates_pos = library.get_supergates( fe );
         auto const supergates_neg = library.get_supergates( ~fe );
         if ( supergates_pos != nullptr || supergates_neg != nullptr )
         {
-          if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
-          {
-            sd_matches++;
-          }
+          //if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
+          //{
+          //  sd_matches++;
+          //}
           supergate_t match{ supergates_pos, supergates_neg };
 
           node_matches.push_back( match );
@@ -374,10 +374,10 @@ private:
         }
         else
         {
-          if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
-          {
-            sd_ignore++;
-          }
+          //if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
+          //{
+          //  sd_ignore++;
+          //}
           /* Ignore not matched cuts */
           ( *cut )->data.ignore = true;
         }
@@ -385,7 +385,7 @@ private:
 
       matches[index] = node_matches;
     } );
-    fmt::print("[i] self dual cuts ({}) = sd_match({}) + sd_ignore({})\n",  sd_count, sd_matches, sd_ignore);
+    //fmt::print("[i] self dual cuts ({}) = sd_match({}) + sd_ignore({})\n",  sd_count, sd_matches, sd_ignore);
   }
 
   template<bool DO_AREA>
@@ -1389,7 +1389,10 @@ private:
     auto ctr = 0u;
     for ( auto l : best_cut )
     {
-      children[node_data.best_supergate[phase]->permutation[ctr]] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
+      auto perm = node_data.best_supergate[phase]->permutation[ctr];
+      assert ( perm < best_cut.size() );
+      //children[node_data.best_supergate[phase]->permutation[ctr]] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
+      children[perm] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
       ++ctr;
     }
     /* create the node */
@@ -1449,9 +1452,10 @@ private:
 
 void compute_gates_usage()
   {
-    auto const& gates = library.get_gates();
-    std::vector<uint32_t> csg_usage( gates.size(), 0u);
-    std::vector<uint32_t> gates_profile( gates.size(), 0u );
+    const std::vector<gate> gates = library.get_gates();
+    const uint32_t size = gates.size();
+    std::vector<uint32_t> csg_usage( size, 0u);
+    std::vector<uint32_t> gates_profile( size, 0u );
 
     ntk.foreach_node( [&]( auto const& n, auto ) {
       const auto index = ntk.node_to_index( n );
@@ -1477,46 +1481,52 @@ void compute_gates_usage()
 
       if ( node_data.same_match || node_data.map_refs[phase] > 0 )
       {
-        if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
+        if( node_data.best_supergate[phase]->root->is_super )
         {
-          ++csg_usage[node_data.best_supergate[phase]->root->id];
-          ++gates_profile[node_data.best_supergate[phase]->root->id];
-          auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
-          for (auto i: fanin_list)
+          ++csg_usage[node_data.best_supergate[phase]->root->root_id];
+          ++gates_profile[node_data.best_supergate[phase]->root->root_id];
+          for (auto const& i:  node_data.best_supergate[phase]->root->fanins )
           {
-            if ( i > 0 )
-            {
-              ++gates_profile[i];
-              ++csg_usage[i];
-            }
+            if (i.root_id == -1 )
+                continue;
+            assert( i.root_id < gates_profile.size() );
+            ++gates_profile[i.root_id];
+            assert( i.root_id < csg_usage.size() );
+            ++csg_usage[i.root_id];
           }
         }
         else
-          ++gates_profile[node_data.best_supergate[phase]->root->id];
+        {
+
+          ++gates_profile[node_data.best_supergate[phase]->root->root_id];
+        }
 
         if ( node_data.same_match && node_data.map_refs[phase ^ 1] > 0 )
+        {
           ++gates_profile[lib_inv_id];
+        }
       }
 
       phase = phase ^ 1;
       if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
       {
-        if( node_data.best_supergate[phase]->root_cg->is_comb_supergate )
+        if( node_data.best_supergate[phase]->root->is_super )
         {
-          ++csg_usage[node_data.best_supergate[phase]->root->id];
-          ++gates_profile[node_data.best_supergate[phase]->root->id];
-          auto fanin_list =  node_data.best_supergate[phase]->root_cg->fanin_list;
-          for (auto i: fanin_list)
+          ++csg_usage[node_data.best_supergate[phase]->root->root_id];
+          ++gates_profile[node_data.best_supergate[phase]->root->root_id];
+          auto fanin_list =  node_data.best_supergate[phase]->root->fanins;
+          for (auto const& i: fanin_list)
           {
-            if (i > 0)
-            {
-              ++gates_profile[i];
-              ++csg_usage[i];
-            }
+            if (i.root_id == -1 )
+                continue;
+            ++gates_profile[i.root_id];
+            ++csg_usage[i.root_id];
           }
         }
         else
-          ++gates_profile[node_data.best_supergate[phase]->root->id];
+        {
+          ++gates_profile[node_data.best_supergate[phase]->root->root_id];
+        }
       }
 
       return true;
@@ -1527,17 +1537,17 @@ void compute_gates_usage()
     double tot_area = 0.0f;
     double tot_csg_area = 0.0f;
     uint32_t tot_instances = 0u;
-    double sd_map_area = 0.0f;
+    //double sd_map_area = 0.0f;
     for ( auto i = 0u; i < gates_profile.size(); ++i ) 
     {
       if ( gates_profile[i] > 0u )
       {
         auto tot_gate_area = gates_profile[i] * gates[i].area;
 
-        if ( gates[i].num_vars > 2 && kitty::is_selfdual( gates[i].function ) )
-        {
-          sd_map_area += tot_gate_area; 
-        }
+        //if ( gates[i].num_vars > 2 && kitty::is_selfdual( gates[i].function ) )
+        //{
+        //  sd_map_area += tot_gate_area; 
+        //}
 
 
         gates_usage << fmt::format( "[i] {:<15}", gates[i].name )
@@ -1569,12 +1579,12 @@ void compute_gates_usage()
                 << fmt::format( "\t Area = {:>12.2f}   100.00 %", tot_csg_area )
                 << std::endl;
 
-    std::cout << "[i] SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
+    //std::cout << "[i] SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
     std::cout << "[i] Combinational supergate area = \t " << tot_csg_area  << std::endl;
     st.gates_usage = gates_usage.str();
     st.supergates_usage = supergates_usage.str();
-    st.sd_map_area = sd_map_area;
-    st.sd_map_area = sd_map_area;
+    //st.sd_map_area = sd_map_area;
+    //st.sd_map_area = sd_map_area;
   }
 
   double compute_switching_power()
