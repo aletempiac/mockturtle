@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <lorina/genlib.hpp>
+#include <lorina/super.hpp>
 #include <lorina/lorina.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
@@ -19,10 +20,10 @@
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
+#include <mockturtle/io/super_reader.hpp>
 #include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/io/write_blif.hpp>
 #include <mockturtle/io/write_verilog.hpp>
@@ -228,7 +229,7 @@ void tech_map()
 
   mockturtle::tech_library_params lib_ps;
   lib_ps.very_verbose = false;
-  mockturtle::tech_library<5> lib1( gates, lib_ps, supergates, vals);
+  mockturtle::tech_library<5> lib1( gates1, lib_ps, supergates, vals);
 
     /* Crypto Benchmarks */
     for ( auto const& benchmark : crypto_experiments::crypto_benchmarks( ))
