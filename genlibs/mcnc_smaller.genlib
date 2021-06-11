@@ -1,0 +1,13 @@
+GATE inv1 1 O=!a; PIN * INV 1 999 1 1 1 1
+GATE nand2 2 O=!(ab); 	PIN * INV 1 999 1 1 1 1 # put a comment 
+GATE nor2 2 O=!{ab}; PIN * INV 1 999 1 1 1 1
+GATE and2	3	O=(ab);		PIN * NONINV 1 999 1.9 0.3 1.9 0.3
+GATE or2	3	O={ab};		PIN * NONINV 1 999 2.4 0.3 2.4 0.3
+GATE xnor2 5 O=![ab]; PIN * UNKNOWN 1 999 1 1 1 1
+GATE xor2 5 O=[ab]; PIN * UNKNOWN 1 999 1 1 1 1 
+GATE aoi21	        3	 O=!{(ab)c} ;	PIN * INV 1 999 1 1 1 1
+GATE nand3 3 O=!(abc); PIN * INV 1 999 1 1 1 1 
+GATE nor3	3	O=!{abc};	PIN * INV 1 999 2.4 0.7 2.4 0.7
+GATE oai21	3	 O=!({ab}c) ;	PIN * INV 1 999 1 1 1 1
+GATE aoi22	4	O=!({ab}{cd}); PIN * INV 1 999 2.0 0.4 2.0 0.4
+GATE oai22	4	O=!{(ab)(cd)};	PIN * INV 1 999 2.0 0.4 2.0 0.4
