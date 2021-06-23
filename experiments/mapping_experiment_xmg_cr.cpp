@@ -144,20 +144,20 @@ Ntk ntk_optimization( Ntk const& ntk )
         auto const size_before = des.size();
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::aig_network>::value )
         {
-            std::cout << "aig" << std::endl;
-            mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
-            mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
-            des = mockturtle::cleanup_dangling( des);
+            //std::cout << "aig" << std::endl;
+            //mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
+            //mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
+            //des = mockturtle::cleanup_dangling( des);
 
             aig_resubstitution( des, ps, &st );
             des = cleanup_dangling( des );
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xag_network>::value )
         {
-            std::cout << "xag" << std::endl;
-            mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
-            mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
-            des = mockturtle::cleanup_dangling( des);
+            //std::cout << "xag" << std::endl;
+            //mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
+            //mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
+            //des = mockturtle::cleanup_dangling( des);
 
             using view_t = depth_view<fanout_view<xag_network>>;
             fanout_view<xag_network> fanout_view{des};
@@ -168,10 +168,10 @@ Ntk ntk_optimization( Ntk const& ntk )
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::mig_network>::value )
         {
-            std::cout << "mig" << std::endl;
-            mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
-            mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
-            des = mockturtle::cleanup_dangling( des);
+            //std::cout << "mig" << std::endl;
+            //mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
+            //mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
+            //des = mockturtle::cleanup_dangling( des);
             depth_view depth_mig{des};
             fanout_view fanout_mig{depth_mig};
 
@@ -180,10 +180,10 @@ Ntk ntk_optimization( Ntk const& ntk )
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xmg_network>::value )
         {
-            std::cout << "xmg" << std::endl;
-            mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
-            mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
-            des = mockturtle::cleanup_dangling( des);
+            //std::cout << "xmg" << std::endl;
+            //mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
+            //mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
+            //des = mockturtle::cleanup_dangling( des);
 
             xmg_resubstitution( des, ps, &st );
             des = mockturtle::cleanup_dangling( des );
@@ -318,7 +318,7 @@ void tech_map()
     //fflush( stdout );
 
     mockturtle::map_params ps;
-    ps.skip_delay_round = false;
+    ps.skip_delay_round = true;
     ps.required_time = std::numeric_limits<float>::max();
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;

@@ -63,7 +63,7 @@ struct map_params
 {
   map_params()
   {
-    cut_enumeration_ps.cut_limit = 25;
+    cut_enumeration_ps.cut_limit = 249;
     cut_enumeration_ps.minimize_truth_table = true;
   }
 
@@ -98,7 +98,7 @@ struct map_params
   uint32_t logic_sharing_cut_limit{ 8u };
 
   /*! \brief Be verbose. */
-  bool verbose{ false };
+  bool verbose{ true };
 };
 
 /*! \brief Statistics for mapper.
@@ -117,6 +117,17 @@ struct map_stats
   /*! \brief Runtime. */
   stopwatch<>::duration time_mapping{ 0 };
   stopwatch<>::duration time_total{ 0 };
+
+  stopwatch<>::duration time_1{ 0 };
+  stopwatch<>::duration time_2{ 0 };
+  stopwatch<>::duration time_3{ 0 };
+  stopwatch<>::duration time_4{ 0 };
+  stopwatch<>::duration time_5{ 0 };
+  stopwatch<>::duration time_6{ 0 };
+  stopwatch<>::duration time_7{ 0 };
+  stopwatch<>::duration time_8{ 0 };
+  stopwatch<>::duration time_9{ 0 };
+  stopwatch<>::duration time_10{ 0 };
 
   /*! \brief Cut enumeration stats. */
   cut_enumeration_stats cut_enumeration_st{};
@@ -146,6 +157,16 @@ struct map_stats
       std::cout << "\n";
     std::cout << fmt::format( "[i] Mapping runtime = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
+        std::cout << fmt::format( "[i] Total 1   = {:>5.2f} secs\n", to_seconds( time_1 ) );
+    std::cout << fmt::format( "[i] Total 2   = {:>5.2f} secs\n", to_seconds( time_2 ) );
+    std::cout << fmt::format( "[i] Total 3   = {:>5.2f} secs\n", to_seconds( time_3 ) );
+    std::cout << fmt::format( "[i] Total 4   = {:>5.2f} secs\n", to_seconds( time_4 ) );
+    std::cout << fmt::format( "[i] Total 5   = {:>5.2f} secs\n", to_seconds( time_5 ) );
+    std::cout << fmt::format( "[i] Total 6   = {:>5.2f} secs\n", to_seconds( time_6 ) );
+    std::cout << fmt::format( "[i] Total 7   = {:>5.2f} secs\n", to_seconds( time_7 ) );
+    std::cout << fmt::format( "[i] Total 8   = {:>5.2f} secs\n", to_seconds( time_8 ) );
+    std::cout << fmt::format( "[i] Total 9   = {:>5.2f} secs\n", to_seconds( time_9 ) );
+    std::cout << fmt::format( "[i] Total 9   = {:>5.2f} secs\n", to_seconds( time_10) );
     if ( !gates_usage.empty() )
       std::cout << "[i] Gates usage report:\n"
                 << gates_usage;
@@ -217,7 +238,7 @@ public:
         node_match( ntk.size() ),
         matches(),
         switch_activity( switch_activity ),
-        cuts( fast_cut_enumeration<Ntk, NInputs, true, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
+        cuts( cut_enumeration<Ntk, true, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
   {
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
   }
@@ -312,7 +333,7 @@ private:
     } );
   }
 
-  void print_cut_information( uint8_t index)
+  void print_cut_information( uint32_t index)
   {
 
     for ( auto& cut : cuts.cuts( index ) )
@@ -320,7 +341,7 @@ private:
       std::cout <<  "For node " << index << " cut " <<  *cut<< std::endl;
       const auto tt = cuts.truth_table( *cut );
 
-      std::cout << "Begin Truth table "; 
+      std::cout << "Truth table unshrunk version "; 
       kitty::print_binary(tt);
       std::cout << std::endl;
     }
@@ -328,16 +349,15 @@ private:
 
   void compute_matches()
   {
+    stopwatch t( st.time_1 );
     /* match gates */
 
-    //uint32_t sd_count = 0;
-    //uint32_t sd_matches = 0;
-    //uint32_t sd_ignore = 0;
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
 
       std::vector<supergate_t> node_matches;
 
+      //print_cut_information( index );
       auto i = 0u;
       for ( auto& cut : cuts.cuts( index ) )
       {
@@ -355,6 +375,7 @@ private:
         }
         const auto tt = cuts.truth_table( *cut );
         const auto fe = kitty::shrink_to<NInputs>( tt );
+        //const auto fe =  kitty::extend_to<NInputs>( tt );
         //if ( tt.num_vars() > 2 && kitty::is_selfdual( fe ) )
         //{
         //  sd_count++;
@@ -391,6 +412,7 @@ private:
   template<bool DO_AREA>
   bool compute_mapping()
   {
+    stopwatch t( st.time_2 );
     for ( auto const& n : top_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
@@ -486,6 +508,7 @@ private:
   template<bool ELA>
   bool set_mapping_refs()
   {
+    stopwatch t( st.time_3 );
     const auto coef = 1.0f / ( 2.0f + ( iteration + 1 ) * ( iteration + 1 ) );
 
     if constexpr ( !ELA )
@@ -622,6 +645,7 @@ private:
 
   void compute_required_time()
   {
+    stopwatch t( st.time_4 );
     for ( auto i = 0u; i < node_match.size(); ++i )
     {
       node_match[i].required[0] = node_match[i].required[1] = std::numeric_limits<double>::max();
@@ -712,6 +736,7 @@ private:
   template<bool DO_AREA>
   void match_phase( node<Ntk> const& n, uint8_t phase )
   {
+    stopwatch t( st.time_5 );
     double best_arrival = std::numeric_limits<double>::max();
     double best_area_flow = std::numeric_limits<double>::max();
     float best_area = std::numeric_limits<float>::max();
@@ -811,6 +836,7 @@ private:
   template<bool SwitchActivity>
   void match_phase_exact( node<Ntk> const& n, uint8_t phase )
   {
+    stopwatch t( st.time_6 );
     double best_arrival = std::numeric_limits<double>::max();
     float best_exact_area = std::numeric_limits<float>::max();
     float best_area = std::numeric_limits<float>::max();
@@ -924,6 +950,7 @@ private:
   template<bool DO_AREA, bool ELA>
   void match_drop_phase( node<Ntk> const& n, float required_margin_factor )
   {
+    stopwatch t( st.time_7 );
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
 
@@ -1092,6 +1119,7 @@ private:
 
   void match_constants( uint32_t index )
   {
+    stopwatch t( st.time_8 );
     auto& node_data = node_match[index];
 
     kitty::static_truth_table<NInputs> zero_tt;
@@ -1289,6 +1317,7 @@ private:
 
   std::pair<klut_network, klut_map> initialize_map_network()
   {
+    stopwatch t( st.time_9 );
     klut_network dest;
     klut_map old2new;
 
@@ -1452,6 +1481,7 @@ private:
 
 void compute_gates_usage()
   {
+    stopwatch t( st.time_10 );
     const std::vector<gate> gates = library.get_gates();
     const uint32_t size = gates.size();
     std::vector<uint32_t> csg_usage( size, 0u);
@@ -1717,10 +1747,10 @@ klut_network map( Ntk const& ntk, tech_library<NInputs> const& library, map_para
   auto res = p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
-  if ( ps.verbose && !st.mapping_error )
-  {
+  //if ( ps.verbose && !st.mapping_error )
+  //{
     st.report();
-  }
+  //}
 
   if ( pst )
   {

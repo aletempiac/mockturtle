@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <lorina/genlib.hpp>
+#include <lorina/super.hpp>
 #include <lorina/lorina.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
 #include <mockturtle/algorithms/functional_reduction.hpp>
@@ -20,10 +21,10 @@
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg3_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/tech_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
+#include <mockturtle/io/super_reader.hpp>
 #include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/io/write_blif.hpp>
 #include <mockturtle/io/write_bench.hpp>
@@ -119,7 +120,6 @@ Ntk ntk_optimization( Ntk const& ntk )
 
 	ps.max_pis = 8u;
 	ps.max_inserts = 1u;
-	ps.progress = false;
 	mockturtle::cut_rewriting_params cr_ps;
 	mockturtle::cut_rewriting_stats cr_st;
 	cr_ps.cut_enumeration_ps.cut_size = 4;
@@ -133,20 +133,20 @@ Ntk ntk_optimization( Ntk const& ntk )
 		auto const size_before = des.size();
 		if constexpr( std::is_same<typename Ntk::base_type, mockturtle::aig_network>::value )
 		{
-			std::cout << "aig" << std::endl;
-			mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
-			mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
-			des = mockturtle::cleanup_dangling( des);
+			//std::cout << "aig" << std::endl;
+			//mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
+			//mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
+			//des = mockturtle::cleanup_dangling( des);
 
 			aig_resubstitution( des, ps, &st );
 			des = cleanup_dangling( des );
 		}
 		if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xag_network>::value )
 		{
-			std::cout << "xag" << std::endl;
-			mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
-			mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
-			des = mockturtle::cleanup_dangling( des);
+			//std::cout << "xag" << std::endl;
+			//mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
+			//mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
+			//des = mockturtle::cleanup_dangling( des);
 
 			using view_t = depth_view<fanout_view<xag_network>>;
 			fanout_view<xag_network> fanout_view{des};
@@ -157,10 +157,10 @@ Ntk ntk_optimization( Ntk const& ntk )
 		}
 		if constexpr( std::is_same<typename Ntk::base_type, mockturtle::mig_network>::value )
 		{
-			std::cout << "mig" << std::endl;
-			mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
-			mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
-			des = mockturtle::cleanup_dangling( des);
+			//std::cout << "mig" << std::endl;
+			//mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
+			//mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
+			//des = mockturtle::cleanup_dangling( des);
 			depth_view depth_mig{des};
 			fanout_view fanout_mig{depth_mig};
 
@@ -169,10 +169,10 @@ Ntk ntk_optimization( Ntk const& ntk )
 		}
 		if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xmg_network>::value )
 		{
-			std::cout << "xmg" << std::endl;
-			mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
-			mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
-			des = mockturtle::cleanup_dangling( des);
+			//std::cout << "xmg" << std::endl;
+			//mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
+			//mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
+			//des = mockturtle::cleanup_dangling( des);
 
 			xmg_resubstitution( des, ps, &st );
 			des = mockturtle::cleanup_dangling( des );
@@ -206,10 +206,18 @@ void tech_map()
 		return;
 	}
 
-	mockturtle::tech_library_params lib_ps;
-	lib_ps.very_verbose = false;
-	lib_ps.compute_supergates = true;
-	mockturtle::tech_library<5> lib1( gates1, lib_ps );
+  std::vector<mockturtle::map_superGate> supergates;
+  mockturtle::super_info vals;
+  if ( lorina::read_super( "orig_smaller.super", mockturtle::super_reader( supergates, vals ) ) != lorina::return_code::success )
+  {
+      std::cout << "ERROR IN super " << std::endl;
+      std::abort();
+      return;
+  }
+
+  mockturtle::tech_library_params lib_ps;
+  lib_ps.very_verbose = false;
+  mockturtle::tech_library<5> lib1( gates1, lib_ps, supergates, vals);
 
 	for ( const auto& b : local_benchmarks )
 	{
@@ -309,13 +317,13 @@ void tech_map()
 		ps.skip_delay_round = true;
 		mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
-		mockturtle::tech_mapping( aig, lib1, ps, &aig_mst );
-		fflush( stdout );
-		mockturtle::tech_mapping( mig, lib1, ps, &mig_mst );
-		fflush( stdout );
-		mockturtle::tech_mapping( xmg, lib1, ps, &xmg_mst );
-		fflush( stdout );
-		mockturtle::tech_mapping( xag, lib1, ps, &xag_mst );
+    mockturtle::map( aig, lib1, ps, &aig_mst );
+    fflush( stdout );
+    mockturtle::map( mig, lib1, ps, &mig_mst );
+    fflush( stdout );
+    mockturtle::map( xmg, lib1, ps, &xmg_mst );
+    fflush( stdout );
+    mockturtle::map( xag, lib1, ps, &xag_mst );
 		fflush( stdout );
 
 		exp( b,

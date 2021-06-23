@@ -147,13 +147,11 @@ public:
             sg_list.emplace_back( s ); 
         }
 
-
-
         for(auto const v:_vec_sg)
         {
             sGate s;
-            s.id = sg_list.size();
             s.is_super = v.is_super; 
+            s.id = sg_list.size();
 
             bool match_found = false;
             for (auto const& g: _gates )
@@ -195,35 +193,66 @@ public:
                 s.fanins.emplace_back( sg_list[f] );
             }
 
-            compute_truth_table( s );
             compute_area( s );
             compute_delay_parameters( s );
+            compute_truth_table( s );
 
             sg_list.emplace_back( s );
 
         }
+        
     }
 
 private:
     void compute_truth_table( mockturtle::sGate& s ) 
     {
-        if ( !s.is_super )
+        std::vector<kitty::dynamic_truth_table> ttv;
+        for (auto const leaf: s.fanins)
         {
-            s.function = _gates[s.root_id].function; 
+            auto tt_leaf = leaf.function;
+            ttv.emplace_back(  tt_leaf ) ; 
         }
-        else
-        {
-            std::vector<kitty::dynamic_truth_table> ttv;
-            for (auto const leaf: s.fanins)
-            {
-                auto tt_leaf = leaf.function;
-                ttv.emplace_back(  tt_leaf ) ; 
-            }
 
-            auto func = kitty::compose_truth_table( _gates[s.root_id].function, ttv );
-            const auto support = kitty::min_base_inplace( func );
-            s.function = kitty::shrink_to( func, static_cast<unsigned int>( support.size() ) );
-        }
+        auto func = kitty::compose_truth_table( _gates[s.root_id].function, ttv );
+        if ( func.num_vars( ) < NInputs )
+            s.function = kitty::extend_to( func, NInputs ) ;
+        else 
+            s.function =  func;
+
+        /* reordering fanins */
+        //auto tt_res_shrink = shrink_to( func, static_cast<unsigned>( support.size() ) );
+        //std::vector<sGate> leaves_before( s.fanins.begin(), s.fanins.end() );
+        //std::vector<sGate> leaves_after( support.size() );
+   
+        //std::cout << "Order before { "; 
+        //for(auto leaf: leaves_before)
+        //{
+        //    std::cout << leaf.id << "," ;
+        //}
+        //std::cout << "} " << "support.size() " << support.size( ) << std::endl;
+
+        //for( auto const &sup: support )
+        //{
+        //    std::cout << "Support " << unsigned( sup )<< std::endl;
+        //}
+        //auto it_support = support.begin();
+        //auto it_leaves = leaves_after.begin();
+        //s.fanins.clear();
+        //auto index = 0u;
+        //while ( it_support != support.end() )
+        //{
+        //    assert ( index <= support.size( ) );
+        //    //s.fanins.emplace_back( leaves_before[index++] );
+        //    s.fanins.emplace_back( sg_list[*it_support++] );
+        //    //it_support++;
+        //}
+
+        //std::cout << "Order after { " ;
+        //for(auto leaf: s.fanins)
+        //{
+        //    std::cout << leaf.id << "," ;
+        //}
+        //std::cout << "} " << std::endl;
     }
 
     void compute_delay_parameters( mockturtle::sGate& s)
@@ -243,25 +272,25 @@ private:
         /* adding fanin delays */
         for(const auto& p: root.pins)
         {
-            auto leaf = s.fanins[i];
             auto rise_block_delay = p.rise_block_delay;
             auto fall_block_delay = p.fall_block_delay;
-            
-            for(auto k = 0u; k < _val.max_num_vars; k++)
+            for( auto const& leaf: s.fanins )
             {
-                if ( leaf.pins[k].rise_block_delay >= 0 ) 
+                for(auto k = 0u; k < _val.max_num_vars; k++)
                 {
-                    if ( s.pins[k].rise_block_delay < leaf.pins[k].rise_block_delay + rise_block_delay )
-                        s.pins[k].rise_block_delay = leaf.pins[k].rise_block_delay + rise_block_delay;
-                }
-                if ( leaf.pins[k].fall_block_delay >= 0 ) 
-                {
-                    if ( s.pins[k].fall_block_delay < leaf.pins[k].fall_block_delay + fall_block_delay )
-                        s.pins[k].fall_block_delay = leaf.pins[k].fall_block_delay + fall_block_delay;
-                }
+                    if ( leaf.pins[k].rise_block_delay >= 0 ) 
+                    {
+                        if ( s.pins[k].rise_block_delay < leaf.pins[k].rise_block_delay + rise_block_delay )
+                            s.pins[k].rise_block_delay = leaf.pins[k].rise_block_delay + rise_block_delay;
+                    }
+                    if ( leaf.pins[k].fall_block_delay >= 0 ) 
+                    {
+                        if ( s.pins[k].fall_block_delay < leaf.pins[k].fall_block_delay + fall_block_delay )
+                            s.pins[k].fall_block_delay = leaf.pins[k].fall_block_delay + fall_block_delay;
+                    }
 
+                }
             }
-            ++i;
         }
     }
 

@@ -101,9 +101,6 @@ struct tech_library_params
   /* brief no of fanins for the supergates */
   uint8_t supergates_fanins{5};
 
-  /* brief count of total supergates */
-  uint32_t total_supergates{10000};
-
   /*! \brief reports all the entries in the library */
   bool very_verbose{false};
 };
@@ -121,7 +118,7 @@ struct supergate
   std::array<float, NInputs> tdelay;
 
   /* np permutation vector */
-  std::vector<uint8_t> permutation;
+  std::vector<uint32_t> permutation;
 
   /* pin negations */
   uint8_t polarity{0};
@@ -155,7 +152,6 @@ public:
   //{
   //    generate_library<mockturtle::gate>();
   //}
-
 
   const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
@@ -217,24 +213,56 @@ private:
     superGate_library<NInputs> sg_lib( _gates, _vals, _superGates);
 
    /* handling for constant and inverters conditions and other genlib gate primitives*/
+    auto res = sg_lib.get_sg_library();
     for( const auto& g: _gates )
     {
+        /* case of inverter */
+        //if( g.num_vars == 1 )
+        //{
+        //    if ( kitty::is_const0( kitty::cofactor1( g.function, 0 ) ) )
+        //    {
         std::vector<sGate_pin> pp; 
         for ( const auto& p : g.pins )
         {
             pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
         }
+        std::vector<sGate> ff;
+        for( auto i = 0u ;  i < g.num_vars ; i++)
+        {
+            ff.emplace_back( res[i]);
+        }
+
         _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
                 false, static_cast<int>( g.id ), 
-                g.num_vars, g.function, g.area, pp , {}} );
+                g.num_vars,  g.function, g.area, pp , ff} );
+        //    }
+        //}
+        //if (  kitty::is_const0( g.function ) || kitty::is_const0( ~g.function ) )
+        //{
+        //    std::vector<sGate_pin> pp; 
+        //    for ( const auto& p : g.pins )
+        //    {
+        //        pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+        //    }
+        //    std::vector<sGate> ff;
+        //    for( auto i = 0u ;  i < g.num_vars ; i++)
+        //    {
+        //        ff.emplace_back( res[i]);
+        //    }
+
+        //    _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
+        //        false, static_cast<int>( g.id ), 
+        //        g.num_vars, g.function, g.area, pp , ff} );
+
+        //}
     } 
-    auto res = sg_lib.get_sg_library();
+    auto count = 0u;
     for (auto r: res)
     {
         if( r.root_id == -1 )
-        {
             continue;
-        }
+        if ( !r.is_super )
+            continue;
         std::vector<sGate_pin> pp; 
         std::vector<sGate> ff;
         for ( const auto& p : r.pins )
@@ -247,8 +275,54 @@ private:
             ff.emplace_back( f );
         }
 
-        _sgates.emplace_back( sGate{r.name, r.id, r.is_super, r.root_id, r.num_vars, r.function, r.area, pp , ff} );
+        auto func           = r.function;
+        auto const support  = kitty::min_base_inplace ( func );
+        //auto tt_res_shrink  = shrink_to( func, static_cast<unsigned>( support.size() ) );
+        auto const tt       = func;
+
+        //if( _gates[r.root_id].name == "nor2" )
+        //{
+            std::cout << r.name ;
+            std::cout << " tt ";
+            kitty::print_binary ( r.function );
+            std::cout << std::endl;
+            std::cout << "min_tt ";
+            kitty::print_binary ( tt ); 
+            std::cout << std::endl;
+            //std::cout << " size of support " << support.size();
+            //std::cout << std::endl;
+        //}
+            //if(count > 100)
+            //    throw std::runtime_error( "Hello");
+
+        _sgates.emplace_back( sGate{r.name, r.id, r.is_super, r.root_id, r.num_vars, tt, r.area, pp , ff} );
+        count++;
     }
+    
+    //for (auto g :_sgates)
+    //{
+    //    std::cout << g.id << "\t" 
+    //              << (g.is_super ? '*' : ' ') << "\t" 
+    //              << g.name << "\t"; 
+    //    for (auto f: g.fanins)
+    //    {
+    //        std::cout << f.id << "\t";
+    //    }
+    //    std::cout << std::endl;
+
+    //    kitty::print_binary( g.function);
+    //    std::cout << "\t"
+    //              << g.area << "\t" <<std::endl;
+    //    for(auto p: g.pins )
+    //    {
+    //        std::cout << p.rise_block_delay << "\t" 
+    //            << p.fall_block_delay << std::endl;
+    //    }
+    //    std::cout << std::endl;
+    //}
+
+    //if(true)
+    //    throw std::runtime_error( "Hello");
 
     if( _ps.verbose )
         std::cout << "size of gates in the supergate library " << _sgates.size() << std::endl;
@@ -289,11 +363,23 @@ private:
       const auto on_np = [&]( auto const& tt, auto neg, auto const& perm ) {
         supergate<NInputs> sg;
         sg.root = &gate;
-        //sg.area = gate.area;
-        sg.area = gate_area;
+        sg.area = gate.area;
         sg.worstDelay = worst_delay;
         sg.polarity = 0;
         sg.permutation = perm;
+        
+        //if (gate.name  == "aoi21_super_9")
+        //{
+        //    std::cout << "printing permutation for " << gate.name <<std::endl;
+        //    for( auto p : perm)
+        //    {
+        //        std::cout << p  << " "; 
+        //    }
+        //    std::cout << std::endl;
+        //    //if(true)
+        //    //    throw std::runtime_error( "Hello");
+
+        //}
 
         for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
         {
@@ -318,7 +404,7 @@ private:
           if ( s1.root->num_vars < s2.root->num_vars )
             return true;
           if ( s1.root->num_vars > s2.root->num_vars )
-            return true;
+            return false;
           return s1.root->id < s2.root->id;
         } );
 
@@ -326,7 +412,7 @@ private:
         /* search for duplicated element due to symmetries */
         while ( it != v.end() )
         {
-          if ( sg.root->id == it->root->id )
+          if ( sg.root->root_id == it->root->root_id )
           {
             /* if already in the library exit, else ignore permutations if with equal delay cost */
             if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
@@ -379,7 +465,7 @@ private:
         std::cout << ": ";
         for ( auto const& gate : entry.second )
         {
-            printf( "%s(d:%.2f, a:%.2f, p:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity );
+            printf( "%s(d:%.2f, a:%.2f, p:%d, perm:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity, gate.permutation.size() );
         }
         std::cout << std::endl;
       }

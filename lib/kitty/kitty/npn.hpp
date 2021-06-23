@@ -287,14 +287,14 @@ void exact_np_enumeration( const TT& tt, Callback&& fn )
   /* Special case for n = 0 */
   if ( num_vars == 0 )
   {
-    fn( tt, 0u, std::vector<uint8_t>{} );
+    fn( tt, 0u, std::vector<uint32_t>{} );
     return;
   }
 
   /* Special case for n = 1 */
   if ( num_vars == 1 )
   {
-    fn( tt, 0u, std::vector<uint8_t>{0} );
+    fn( tt, 0u, std::vector<uint32_t>{0} );
     return;
   }
 
@@ -302,7 +302,7 @@ void exact_np_enumeration( const TT& tt, Callback&& fn )
 
   auto t1 = tt;
 
-  std::vector<uint8_t> perm( num_vars );
+  std::vector<uint32_t> perm( num_vars );
   std::iota( perm.begin(), perm.end(), 0u );
 
   uint32_t phase = 0;
