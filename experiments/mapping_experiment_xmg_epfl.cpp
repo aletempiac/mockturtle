@@ -224,8 +224,8 @@ void tech_map()
   /* EPFL benchmarks */
   for ( const auto& benchmark : experiments::all_benchmarks() )
   {
-      if( benchmark != "leon2")
-      continue;
+      //if( benchmark != "leon2")
+      //continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
     fflush( stdout );

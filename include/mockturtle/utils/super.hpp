@@ -106,8 +106,8 @@ public:
 public:
     void compute_library_with_genlib()
     {
-        //assert( _vec_sg.size() == 0 );
-        //assert( _gates.size() != 0 );
+        assert( _vec_sg.size() == 0 );
+        assert( _gates.size() != 0 );
 
         for(const auto &g: _gates)
         {
@@ -276,11 +276,6 @@ private:
             }
 
         }
-        //std::cout << "For gate " << s.name << std::endl;
-        //for (auto op:pin_order)
-        //{
-        //    std::cout << "pin order " << unsigned( op ) << std::endl;
-        //}
         orig_pin_order.emplace_back( pin_order );
 
     }
