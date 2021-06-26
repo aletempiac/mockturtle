@@ -1418,10 +1418,7 @@ private:
     auto ctr = 0u;
     for ( auto l : best_cut )
     {
-      auto perm = node_data.best_supergate[phase]->permutation[ctr];
-      assert ( perm < best_cut.size() );
-      //children[node_data.best_supergate[phase]->permutation[ctr]] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
-      children[perm] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
+      children[node_data.best_supergate[phase]->permutation[ctr]] = old2new[l][( node_data.phase[phase] >> ctr ) & 1];
       ++ctr;
     }
     /* create the node */
@@ -1519,9 +1516,7 @@ void compute_gates_usage()
           {
             if (i.root_id == -1 )
                 continue;
-            assert( i.root_id < gates_profile.size() );
             ++gates_profile[i.root_id];
-            assert( i.root_id < csg_usage.size() );
             ++csg_usage[i.root_id];
           }
         }

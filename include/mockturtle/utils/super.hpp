@@ -88,11 +88,21 @@ public:
             generate_library_with_super();
     }
 
-    const std::vector<mockturtle::sGate> get_sg_library() const
+    const std::vector<mockturtle::sGate>& get_sg_library() const
     {
         return sg_list;
     }
 
+    const std::vector<std::vector<uint8_t>>& get_gates_pin_order() const
+    {
+        if ( _vec_sg.size() == 0 )
+        {
+            std::cerr << "No pin order required for genlib gates " << std::endl;
+            return orig_pin_order;
+        }
+        else
+            return orig_pin_order;
+    }
 public:
     void compute_library_with_genlib()
     {
@@ -219,79 +229,60 @@ private:
         else 
             s.function =  func;
 
-        /* reordering fanins */
-        //auto tt_res_shrink = shrink_to( func, static_cast<unsigned>( support.size() ) );
-        //std::vector<sGate> leaves_before( s.fanins.begin(), s.fanins.end() );
-        //std::vector<sGate> leaves_after( support.size() );
-   
-        //std::cout << "Order before { "; 
-        //for(auto leaf: leaves_before)
-        //{
-        //    std::cout << leaf.id << "," ;
-        //}
-        //std::cout << "} " << "support.size() " << support.size( ) << std::endl;
-
-        //for( auto const &sup: support )
-        //{
-        //    std::cout << "Support " << unsigned( sup )<< std::endl;
-        //}
-        //auto it_support = support.begin();
-        //auto it_leaves = leaves_after.begin();
-        //s.fanins.clear();
-        //auto index = 0u;
-        //while ( it_support != support.end() )
-        //{
-        //    assert ( index <= support.size( ) );
-        //    //s.fanins.emplace_back( leaves_before[index++] );
-        //    s.fanins.emplace_back( sg_list[*it_support++] );
-        //    //it_support++;
-        //}
-
-        //std::cout << "Order after { " ;
-        //for(auto leaf: s.fanins)
-        //{
-        //    std::cout << leaf.id << "," ;
-        //}
-        //std::cout << "} " << std::endl;
     }
 
     void compute_delay_parameters( mockturtle::sGate& s)
     {
-        std::vector<mockturtle::sGate_pin> pp;
         const auto& root = _gates[s.root_id];
 
+        /* adding fanin delays */
+        double rise_block_delay = 0.0f;
+        double fall_block_delay = 0.0f;
+        for(const auto& p: root.pins)
+        {
+            rise_block_delay = std::max( rise_block_delay, p.rise_block_delay );
+            fall_block_delay = std::max( fall_block_delay, p.fall_block_delay );
+        }
+
         /* setting initial delay */
-        for (uint32_t k = 0; k < _val.max_num_vars; ++k)
+        std::vector<mockturtle::sGate_pin> pp;
+        for (uint8_t k = 0; k < _val.max_num_vars; ++k)
         {
             pp.emplace_back( sGate_pin{ 0.0f, 0.0f} );
         }
         s.pins = pp;
 
-        uint32_t i = 0; // For tracking the fanins of the current supergate s
-
-        /* adding fanin delays */
-        for(const auto& p: root.pins)
+        std::vector<uint8_t> pin_order;
+        for ( auto const& leaf: s.fanins )
         {
-            auto rise_block_delay = p.rise_block_delay;
-            auto fall_block_delay = p.fall_block_delay;
-            for( auto const& leaf: s.fanins )
+            if( leaf.id < 5 )
             {
-                for(auto k = 0u; k < _val.max_num_vars; k++)
+                pin_order.emplace_back( leaf.id );
+                s.pins[leaf.id].rise_block_delay = rise_block_delay;
+                s.pins[leaf.id].fall_block_delay = fall_block_delay;
+            }
+            else 
+            {
+                for (uint8_t l = 0; l < _val.max_num_vars; ++l)
                 {
-                    if ( leaf.pins[k].rise_block_delay >= 0 ) 
+                    if ( leaf.pins[l].rise_block_delay != 0 )
                     {
-                        if ( s.pins[k].rise_block_delay < leaf.pins[k].rise_block_delay + rise_block_delay )
-                            s.pins[k].rise_block_delay = leaf.pins[k].rise_block_delay + rise_block_delay;
+                        assert ( leaf.pins[l].fall_block_delay != 0 ); 
+                        pin_order.emplace_back( l );
+                        s.pins[l].rise_block_delay = leaf.pins[l].rise_block_delay + rise_block_delay;
+                        s.pins[l].fall_block_delay = leaf.pins[l].rise_block_delay + fall_block_delay;
                     }
-                    if ( leaf.pins[k].fall_block_delay >= 0 ) 
-                    {
-                        if ( s.pins[k].fall_block_delay < leaf.pins[k].fall_block_delay + fall_block_delay )
-                            s.pins[k].fall_block_delay = leaf.pins[k].fall_block_delay + fall_block_delay;
-                    }
-
                 }
             }
+
         }
+        //std::cout << "For gate " << s.name << std::endl;
+        //for (auto op:pin_order)
+        //{
+        //    std::cout << "pin order " << unsigned( op ) << std::endl;
+        //}
+        orig_pin_order.emplace_back( pin_order );
+
     }
 
     void compute_area( mockturtle::sGate& s )
@@ -309,6 +300,7 @@ protected:
     mockturtle::super_info const _val;
     std::vector<mockturtle::map_superGate> const _vec_sg;
     std::vector<sGate> sg_list;
+    std::vector<std::vector<uint8_t>> orig_pin_order;
 
 }; /* Class superGate_library */
 

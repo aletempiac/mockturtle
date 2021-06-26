@@ -595,7 +595,7 @@ template <class Ntk>
 std::tuple<float, float, float>  abc_supermap (Ntk const& ntk, std::string const& genlib_path )
 {
   mockturtle::write_bench( ntk, "/tmp/compare_sg_test.bench" );
-  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; read {}; map -v ; time;print_stats\"", genlib_path,"orig_smaller.super" );
+  std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; read {}; map -v ; time;print_stats\"", genlib_path,"orig_mcnc.super" );
   //std::string command = fmt::format( "abc -q \"read /tmp/compare_sg_test.bench; strash; read_genlib {} ; map ; print_stats\"", genlib_path);
   //std::string command = fmt::format( "abc -q \"read /tmp/epfl_test.bench; strash; ifraig; &get -n; read_genlib {} ; &nf ; &put; print_gates\"", genlib_path);
   

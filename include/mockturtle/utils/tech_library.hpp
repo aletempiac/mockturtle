@@ -132,26 +132,16 @@ class tech_library
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
 
 public:
-  explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, std::vector<mockturtle::map_superGate>vec_superGates = {}, mockturtle::super_info const& vals= {} )
+  explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, std::vector<mockturtle::map_superGate>vec_superGates = {}, mockturtle::super_info const& val= {} )
     : _gates( gates ),
       _ps ( ps ),
       _superGates( vec_superGates ),
-      _vals( vals ),
+      _val( val ),
       _sgates( ),
       _super_lib()
   {
       generate_library();
   }
-
-  //explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {} )
-  //  : _gates( gates ),
-  //    _ps ( ps ),
-  //    _vals( ),
-  //    _superGates( ),
-  //    _super_lib()
-  //{
-  //    generate_library<mockturtle::gate>();
-  //}
 
   const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
   {
@@ -185,90 +175,59 @@ private:
 
   void generate_library( )
   {
-    //if( _ps.compute_supergates )
-    //{
-    //    std::cout << "Computing Combinational supergates " << std::endl; 
-    //    for (auto const g: _gates)
-    //    {
-    //        comb_supergate<NInputs> c;
-    //        c.root_id = g.id;
-    //        c.area = g.area;
-    //        c.id = _lsg.size();
-    //        c.is_comb_supergate = false;
-    //        c.num_vars = g.num_vars;
-    //        c.function = kitty::extend_to( g.function, NInputs );
-    //        c.worst_delay = compute_worst_delay( c );
-    //        int fanin_index = -1;
-    //        for (uint8_t i = 0 ; i < g.num_vars; i++)
-    //        {
-    //            c.fanin_list.emplace_back( fanin_index );
-    //            --fanin_index;
-    //            c.tdelay[i] = c.worst_delay;
-    //        }
-    //        _lsg.emplace_back( c ); 
-    //    }
-    //    compute_supergates( );
-    //}
+    superGate_library<NInputs> sg_lib( _gates, _val, _superGates);
 
-    superGate_library<NInputs> sg_lib( _gates, _vals, _superGates);
-
-   /* handling for constant and inverters conditions and other genlib gate primitives*/
     auto res = sg_lib.get_sg_library();
+
     for( const auto& g: _gates )
     {
         /* case of inverter */
-        //if( g.num_vars == 1 )
-        //{
-        //    if ( kitty::is_const0( kitty::cofactor1( g.function, 0 ) ) )
-        //    {
-        std::vector<sGate_pin> pp; 
-        for ( const auto& p : g.pins )
+        if( g.num_vars == 1 )
         {
-            pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+            if ( kitty::is_const0( kitty::cofactor1( g.function, 0 ) ) )
+            {
+                std::vector<sGate_pin> pp; 
+                for ( const auto& p : g.pins )
+                {
+                    pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+                }
+                std::vector<sGate> ff;
+                for( auto i = 0u ;  i < g.num_vars ; i++)
+                {
+                    ff.emplace_back( res[i]);
+                }
+
+                _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
+                        false, static_cast<int>( g.id ), 
+                        g.num_vars, g.function, g.area, pp , {}} );
+            }
         }
-        std::vector<sGate> ff;
-        for( auto i = 0u ;  i < g.num_vars ; i++)
+        if (  kitty::is_const0( g.function ) || kitty::is_const0( ~g.function ) )
         {
-            ff.emplace_back( res[i]);
+            std::vector<sGate_pin> pp; 
+            for ( const auto& p : g.pins )
+            {
+                pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+            }
+            std::vector<sGate> ff;
+            for( auto i = 0u ;  i < g.num_vars ; i++)
+            {
+                ff.emplace_back( res[i]);
+            }
+
+            _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
+                    false, static_cast<int>( g.id ), 
+                g.num_vars, g.function, g.area, pp , ff} );
+
         }
-
-        _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
-                false, static_cast<int>( g.id ), 
-                g.num_vars,  g.function, g.area, pp , ff} );
-        //    }
-        //}
-        //if (  kitty::is_const0( g.function ) || kitty::is_const0( ~g.function ) )
-        //{
-        //    std::vector<sGate_pin> pp; 
-        //    for ( const auto& p : g.pins )
-        //    {
-        //        pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
-        //    }
-        //    std::vector<sGate> ff;
-        //    for( auto i = 0u ;  i < g.num_vars ; i++)
-        //    {
-        //        ff.emplace_back( res[i]);
-        //    }
-
-        //    _sgates.emplace_back( sGate{g.name, static_cast<unsigned int>( _sgates.size() ), 
-        //        false, static_cast<int>( g.id ), 
-        //        g.num_vars, g.function, g.area, pp , ff} );
-
-        //}
     } 
-    auto count = 0u;
+
     for (auto r: res)
     {
         if( r.root_id == -1 )
             continue;
-        if ( !r.is_super )
-            continue;
         std::vector<sGate_pin> pp; 
         std::vector<sGate> ff;
-        for ( const auto& p : r.pins )
-        {
-            pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
-        }
 
         for (const auto& f: r.fanins )
         {
@@ -277,52 +236,46 @@ private:
 
         auto func           = r.function;
         auto const support  = kitty::min_base_inplace ( func );
-        //auto tt_res_shrink  = shrink_to( func, static_cast<unsigned>( support.size() ) );
-        auto const tt       = func;
 
-        //if( _gates[r.root_id].name == "nor2" )
-        //{
-            std::cout << r.name ;
-            std::cout << " tt ";
-            kitty::print_binary ( r.function );
-            std::cout << std::endl;
-            std::cout << "min_tt ";
-            kitty::print_binary ( tt ); 
-            std::cout << std::endl;
-            //std::cout << " size of support " << support.size();
-            //std::cout << std::endl;
-        //}
-            //if(count > 100)
-            //    throw std::runtime_error( "Hello");
+        if ( _superGates.size( ) != 0 )
+        {
+            auto gates_pin_order = sg_lib.get_gates_pin_order();
+            assert ( gates_pin_order.size( ) != 0 );
+            auto pin_order = gates_pin_order[r.id - _val.max_num_vars];
 
-        _sgates.emplace_back( sGate{r.name, r.id, r.is_super, r.root_id, r.num_vars, tt, r.area, pp , ff} );
-        count++;
+            std::vector<sGate_pin> leaves_before( r.pins.begin(), r.pins.end() );
+
+            std::cout << "Order before for " << r.name << std::endl; 
+            for(auto p: r.pins )
+            {
+                std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }" << std::endl; 
+                pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+            }
+            std::cout<< std::endl;
+
+            //if( support.size() != pin_order.size() )
+            //{
+                auto it_support   = support.begin();
+                auto it_pin_order = pin_order.begin();
+                while ( it_support != support.end() )
+                {
+                    pp[*it_pin_order++] = leaves_before[*it_support++];
+                }
+
+                std::cout << "Order after for " << r.name  << std::endl; 
+                for(auto p: pp)
+                {
+                    std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }" << std::endl; 
+                }
+                std::cout<< std::endl;
+            //}
+        }
+
+        _sgates.emplace_back( sGate{r.name, r.id, r.is_super, r.root_id, r.num_vars, func, r.area, pp , ff} );
     }
     
-    //for (auto g :_sgates)
-    //{
-    //    std::cout << g.id << "\t" 
-    //              << (g.is_super ? '*' : ' ') << "\t" 
-    //              << g.name << "\t"; 
-    //    for (auto f: g.fanins)
-    //    {
-    //        std::cout << f.id << "\t";
-    //    }
-    //    std::cout << std::endl;
-
-    //    kitty::print_binary( g.function);
-    //    std::cout << "\t"
-    //              << g.area << "\t" <<std::endl;
-    //    for(auto p: g.pins )
-    //    {
-    //        std::cout << p.rise_block_delay << "\t" 
-    //            << p.fall_block_delay << std::endl;
-    //    }
-    //    std::cout << std::endl;
-    //}
-
-    //if(true)
-    //    throw std::runtime_error( "Hello");
+    if( _ps.verbose )
+        print_supergate_information();
 
     if( _ps.verbose )
         std::cout << "size of gates in the supergate library " << _sgates.size() << std::endl;
@@ -338,7 +291,6 @@ private:
         }
 
       float worst_delay = compute_worst_delay( gate );
-      float gate_area = gate.area;
 
       if ( gate.num_vars == 1 )
       {
@@ -368,22 +320,12 @@ private:
         sg.polarity = 0;
         sg.permutation = perm;
         
-        //if (gate.name  == "aoi21_super_9")
-        //{
-        //    std::cout << "printing permutation for " << gate.name <<std::endl;
-        //    for( auto p : perm)
-        //    {
-        //        std::cout << p  << " "; 
-        //    }
-        //    std::cout << std::endl;
-        //    //if(true)
-        //    //    throw std::runtime_error( "Hello");
-
-        //}
-
         for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
         {
-          sg.tdelay[i] = worst_delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
+            if( gate.is_super )
+                sg.tdelay[i] = gate.pins[perm[i]].rise_block_delay; //]worst_delay;  /* if pin-to-pin delay change to: gate.delay[perm[i]] */
+            else 
+                sg.tdelay[i] = worst_delay;
           sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
         }
         for ( auto i = perm.size(); i < NInputs; ++i )
@@ -439,10 +381,6 @@ private:
       };
 
       ///* NP enumeration of the function */
-      //std::cout << "Gate name \t" << gate.name << "\t "; 
-      //kitty::print_hex( gate.function);
-      //std::cout << std::endl;
-      
       kitty::exact_np_enumeration( gate.function, on_np );
 
       if ( _ps.verbose )
@@ -465,7 +403,7 @@ private:
         std::cout << ": ";
         for ( auto const& gate : entry.second )
         {
-            printf( "%s(d:%.2f, a:%.2f, p:%d, perm:%d) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity, gate.permutation.size() );
+            printf( "%s(d:%.2f, a:%.2f, p:%d, perm:%ld) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity, gate.permutation.size() );
         }
         std::cout << std::endl;
       }
@@ -484,6 +422,31 @@ private:
       return worst_delay;
   }
 
+  void print_supergate_information()
+  {
+      for (auto g :_sgates)
+      {
+          std::cout << g.id << "\t" 
+                    << (g.is_super ? '*' : ' ') << "\t" 
+                    << g.name << "\t"; 
+          for (auto f: g.fanins)
+          {
+              std::cout << f.id << "\t";
+          }
+          std::cout << std::endl;
+
+          kitty::print_binary( g.function);
+          std::cout << "\t"
+                    << g.area << "\t" <<std::endl;
+          for(auto p: g.pins )
+          {
+            std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }"; 
+          }
+          std::cout << "\n=====================\n" << std::endl;
+      }
+
+  }
+
 private:
   /* inverter info */
   float inv_area{ 0.0 };
@@ -495,7 +458,7 @@ private:
   std::vector<gate> const _gates; /* collection of gates */
   tech_library_params const _ps;
   std::vector<map_superGate> const _superGates;
-  mockturtle::super_info const _vals;
+  mockturtle::super_info const _val;
   std::vector<mockturtle::sGate> _sgates;
   lib_t _super_lib; /* library of enumerated gates */
 };
