@@ -234,40 +234,34 @@ private:
             ff.emplace_back( f );
         }
 
-        auto func           = r.function;
-        auto const support  = kitty::min_base_inplace ( func );
+        for(auto p: r.pins )
+        {
+            pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+        }
 
+        auto func           = r.function;
         if ( _superGates.size( ) != 0 )
         {
+            auto const support  = kitty::min_base_inplace ( func );
             auto gates_pin_order = sg_lib.get_gates_pin_order();
             assert ( gates_pin_order.size( ) != 0 );
             auto pin_order = gates_pin_order[r.id - _val.max_num_vars];
 
             std::vector<sGate_pin> leaves_before( r.pins.begin(), r.pins.end() );
 
-            std::cout << "Order before for " << r.name << std::endl; 
-            for(auto p: r.pins )
+            auto it_support   = support.begin();
+            auto it_pin_order = pin_order.begin();
+            while ( it_support != support.end() )
             {
-                std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }" << std::endl; 
-                pp.emplace_back( sGate_pin{ p.rise_block_delay, p.fall_block_delay} );
+                pp[*it_pin_order++] = leaves_before[*it_support++];
             }
-            std::cout<< std::endl;
 
-            //if( support.size() != pin_order.size() )
-            //{
-                auto it_support   = support.begin();
-                auto it_pin_order = pin_order.begin();
-                while ( it_support != support.end() )
-                {
-                    pp[*it_pin_order++] = leaves_before[*it_support++];
-                }
-
-                std::cout << "Order after for " << r.name  << std::endl; 
-                for(auto p: pp)
-                {
-                    std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }" << std::endl; 
-                }
-                std::cout<< std::endl;
+                //std::cout << "Order after for " << r.name  << std::endl; 
+                //for(auto p: pp)
+                //{
+                //    std::cout << " { " << p.rise_block_delay << " , " << p.fall_block_delay << " }" << std::endl; 
+                //}
+                //std::cout<< std::endl;
             //}
         }
 
@@ -403,7 +397,7 @@ private:
         std::cout << ": ";
         for ( auto const& gate : entry.second )
         {
-            printf( "%s(d:%.2f, a:%.2f, p:%d, perm:%ld) ", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity, gate.permutation.size() );
+            printf( "%s(d:%.2f, a:%.2f, p:%d, perm:%ld, tdelay:%f %f %f %f %f)", gate.root->name.c_str(), gate.worstDelay, gate.area, gate.polarity, gate.permutation.size(), gate.tdelay[0], gate.tdelay[1],gate.tdelay[2],gate.tdelay[3],gate.tdelay[4] );
         }
         std::cout << std::endl;
       }

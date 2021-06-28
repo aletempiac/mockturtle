@@ -144,20 +144,20 @@ Ntk ntk_optimization( Ntk const& ntk )
         auto const size_before = des.size();
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::aig_network>::value )
         {
-            //std::cout << "aig" << std::endl;
-            //mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
-            //mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
-            //des = mockturtle::cleanup_dangling( des);
+            std::cout << "aig" << std::endl;
+            mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
+            mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
+            des = mockturtle::cleanup_dangling( des);
 
             aig_resubstitution( des, ps, &st );
             des = cleanup_dangling( des );
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xag_network>::value )
         {
-            //std::cout << "xag" << std::endl;
-            //mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
-            //mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
-            //des = mockturtle::cleanup_dangling( des);
+            std::cout << "xag" << std::endl;
+            mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
+            mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
+            des = mockturtle::cleanup_dangling( des);
 
             using view_t = depth_view<fanout_view<xag_network>>;
             fanout_view<xag_network> fanout_view{des};
@@ -168,10 +168,10 @@ Ntk ntk_optimization( Ntk const& ntk )
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::mig_network>::value )
         {
-            //std::cout << "mig" << std::endl;
-            //mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
-            //mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
-            //des = mockturtle::cleanup_dangling( des);
+            std::cout << "mig" << std::endl;
+            mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
+            mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
+            des = mockturtle::cleanup_dangling( des);
             depth_view depth_mig{des};
             fanout_view fanout_mig{depth_mig};
 
@@ -180,10 +180,10 @@ Ntk ntk_optimization( Ntk const& ntk )
         }
         if constexpr( std::is_same<typename Ntk::base_type, mockturtle::xmg_network>::value )
         {
-            //std::cout << "xmg" << std::endl;
-            //mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
-            //mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
-            //des = mockturtle::cleanup_dangling( des);
+            std::cout << "xmg" << std::endl;
+            mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
+            mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
+            des = mockturtle::cleanup_dangling( des);
 
             xmg_resubstitution( des, ps, &st );
             des = mockturtle::cleanup_dangling( des );
@@ -205,8 +205,8 @@ Ntk ntk_optimization( Ntk const& ntk )
 //void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 void tech_map()
 {
-    experiments::experiment<std::string, std::string, std::string>
-         exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
+    experiments::experiment<std::string, std::string, std::string, bool, bool, bool, bool>
+         exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'", "cec1", "cec2", "cec3", "cec4" );
 
 
     experiments::experiment<std::string, float, float, float, float, float, float, float, float > exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
@@ -258,9 +258,6 @@ void tech_map()
         return;
     }
 
-    balancing_params sps;
-    balancing_stats st4;
-
     auto klut = lut_map( aig, 4u );
 
     xmg = mockturtle::node_resynthesis<mockturtle::xmg_network>( klut, npn_resyn);
@@ -278,7 +275,8 @@ void tech_map()
     ps1.report();
     auto size_before = xmg.num_gates();
     double sd_rat = ( double( ps1.actual_maj + ps1.actual_xor3 )/  size_before ) * 100;
-    std::string sd_before = fmt::format( "{}/{} = {}", ( ps1.actual_maj + ps1.actual_xor3 ),  size_before, sd_rat );
+    std::string sd_before = fmt::format( "{:>12.2f}", sd_rat );
+
     aig = cleanup_dangling( aig );
     mig = cleanup_dangling( mig );
     xmg = cleanup_dangling( xmg );
@@ -300,7 +298,7 @@ void tech_map()
     ps2.report();
     auto size_after = xmg.num_gates();
     sd_rat = ( double( ps2.actual_maj + ps2.actual_xor3 )/  size_after ) * 100;
-    std::string sd_after = fmt::format( "{}/{} = {}", ( ps2.actual_maj + ps2.actual_xor3 ),  size_after, sd_rat );
+    std::string sd_after = fmt::format( "{:>12.2f}", sd_rat );
 
 
     mockturtle::depth_view xmg_d{ xmg };
@@ -323,19 +321,20 @@ void tech_map()
    
     mockturtle::map_stats aig_mst, mig_mst, xmg_mst, xag_mst;
 
-    mockturtle::map( aig, lib1, ps, &aig_mst );
-    fflush( stdout );
-    mockturtle::map( mig, lib1, ps, &mig_mst );
-    fflush( stdout );
-    mockturtle::map( xmg, lib1, ps, &xmg_mst );
-    fflush( stdout );
-    mockturtle::map( xag, lib1, ps, &xag_mst );
-		fflush( stdout );
+    auto res1 = mockturtle::map( aig, lib1, ps, &aig_mst );
+    auto res2 = mockturtle::map( mig, lib1, ps, &mig_mst );
+    auto res3 = mockturtle::map( xmg, lib1, ps, &xmg_mst );
+    auto res4 = mockturtle::map( xag, lib1, ps, &xag_mst );
+
+    const auto cec1 =  abc_cec( res1, benchmark );
+    const auto cec2 =  abc_cec( res2, benchmark );
+    const auto cec3 =  abc_cec( res3, benchmark );
+    const auto cec4 =  abc_cec( res4, benchmark );
 
     exp( benchmark,
             aig_mst.area, mig_mst.area, xmg_mst.area, xag_mst.area,
 				aig_mst.delay, mig_mst.delay, xmg_mst.delay, xag_mst.delay );
-    exp2 (benchmark, sd_before, sd_after);
+    exp2 ( benchmark, sd_before, sd_after, cec1, cec2, cec3, cec4 );
     //mockturtle::tech_mapping( xmg, lib2, ps, &mst );
     exp.save();
     exp.table();
