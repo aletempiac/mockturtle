@@ -223,8 +223,8 @@ Ntk ntk_optimization( Ntk const& ntk )
 //void tech_map( std::string aig_or_klut, const uint32_t& cut_size, bool delay_round, bool req_time)
 void tech_map()
 {
-    experiments::experiment<std::string, std::string, std::string, bool, bool, bool, bool>
-         exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'", "cec1", "cec2", "cec3", "cec4" );
+    experiments::experiment<std::string, std::string, std::string>
+         exp2( "RFET_area", "benchmark", "sd_rat", "sd_rat'");
 
 
     experiments::experiment<std::string, float, float, float, float, float, float, float, float > exp( "Mapper Comparison", "benchmark", "Area AIG", "Area MIG", "Area XMG ", "Area XAG", "delay AIG", "delay MIG", "delay XMG", "delay XAG" );
@@ -344,15 +344,10 @@ void tech_map()
     auto res3 = mockturtle::map( xmg, lib1, ps, &xmg_mst );
     auto res4 = mockturtle::map( xag, lib1, ps, &xag_mst );
 
-    const auto cec1 =  abc_cec( res1, benchmark );
-    const auto cec2 =  abc_cec( res2, benchmark );
-    const auto cec3 =  abc_cec( res3, benchmark );
-    const auto cec4 =  abc_cec( res4, benchmark );
-
     exp( benchmark,
             aig_mst.area, mig_mst.area, xmg_mst.area, xag_mst.area,
 				aig_mst.delay, mig_mst.delay, xmg_mst.delay, xag_mst.delay );
-    exp2 ( benchmark, sd_before, sd_after, cec1, cec2, cec3, cec4 );
+    exp2 ( benchmark, sd_before, sd_after );
     //mockturtle::tech_mapping( xmg, lib2, ps, &mst );
     exp.save();
     exp.table();
