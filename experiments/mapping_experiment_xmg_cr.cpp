@@ -136,9 +136,16 @@ Ntk ntk_optimization( Ntk const& ntk )
     mockturtle::cut_rewriting_stats cr_st;
     cr_ps.cut_enumeration_ps.cut_size = 4;
 
+    exact_library_params eps;
+    map_params ps1;
+    ps1.skip_delay_round = true;
+    ps1.required_time = std::numeric_limits<float>::max();
+    map_stats st1;
+
     float improv = 0;
     float improv_per = 0;
     uint32_t iter = 0;
+
     while(true)
     {
         auto const size_before = des.size();
@@ -146,7 +153,11 @@ Ntk ntk_optimization( Ntk const& ntk )
         {
             std::cout << "aig" << std::endl;
             mockturtle::xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> aig_npn_resyn;
-            mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
+
+            exact_library<aig_network, xag_npn_resynthesis<mockturtle::aig_network, mockturtle::aig_network, mockturtle::xag_npn_db_kind::aig_complete> > exact_aig_lib( aig_npn_resyn, eps );
+            des = map( des, exact_aig_lib, ps1, &st1 );
+
+            //mockturtle::cut_rewriting( des, aig_npn_resyn, cr_ps, &cr_st );
             des = mockturtle::cleanup_dangling( des);
 
             aig_resubstitution( des, ps, &st );
@@ -156,7 +167,10 @@ Ntk ntk_optimization( Ntk const& ntk )
         {
             std::cout << "xag" << std::endl;
             mockturtle::xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete> xag_npn_resyn;
-            mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
+
+            exact_library<xag_network, xag_npn_resynthesis<mockturtle::xag_network, mockturtle::xag_network, mockturtle::xag_npn_db_kind::xag_complete>> exact_xag_lib( xag_npn_resyn, eps );
+            des = map( des, exact_xag_lib, ps1, &st1 );
+            //mockturtle::cut_rewriting( des, xag_npn_resyn, cr_ps, &cr_st );
             des = mockturtle::cleanup_dangling( des);
 
             using view_t = depth_view<fanout_view<xag_network>>;
@@ -170,11 +184,13 @@ Ntk ntk_optimization( Ntk const& ntk )
         {
             std::cout << "mig" << std::endl;
             mockturtle::mig_npn_resynthesis mig_npn_resyn{ true };
-            mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
+            exact_library<mig_network, mig_npn_resynthesis> exact_mig_lib( mig_npn_resyn, eps );
+            des = map( des, exact_mig_lib, ps1, &st1 );
+            //mockturtle::cut_rewriting( des, mig_npn_resyn, cr_ps, &cr_st );
             des = mockturtle::cleanup_dangling( des);
+            
             depth_view depth_mig{des};
             fanout_view fanout_mig{depth_mig};
-
             mig_resubstitution( fanout_mig, ps, &st );
             des = cleanup_dangling( des );
         }
@@ -182,7 +198,9 @@ Ntk ntk_optimization( Ntk const& ntk )
         {
             std::cout << "xmg" << std::endl;
             mockturtle::xmg_npn_resynthesis xmg_npn_resyn;
-            mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
+            exact_library<xmg_network, xmg_npn_resynthesis> exact_xmg_lib( xmg_npn_resyn, eps );
+            des = map( des, exact_xmg_lib, ps1, &st1 );
+            //mockturtle::cut_rewriting( des, xmg_npn_resyn, cr_ps, &cr_st );
             des = mockturtle::cleanup_dangling( des);
 
             xmg_resubstitution( des, ps, &st );
