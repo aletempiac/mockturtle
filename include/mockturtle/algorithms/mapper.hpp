@@ -98,7 +98,7 @@ struct map_params
   uint32_t logic_sharing_cut_limit{ 8u };
 
   /*! \brief Be verbose. */
-  bool verbose{ true };
+  bool verbose{ false};
 };
 
 /*! \brief Statistics for mapper.
@@ -1605,7 +1605,8 @@ void compute_gates_usage()
                 << std::endl;
 
     //std::cout << "[i] SD map area = \t " << (sd_map_area / area * 100)  << std::endl;
-    std::cout << "[i] Combinational supergate area = \t " << tot_csg_area  << std::endl;
+    if( ps.verbose )
+        std::cout << "[i] Combinational supergate area = \t " << tot_csg_area  << std::endl;
     st.gates_usage = gates_usage.str();
     st.supergates_usage = supergates_usage.str();
     //st.sd_map_area = sd_map_area;
@@ -1742,10 +1743,10 @@ klut_network map( Ntk const& ntk, tech_library<NInputs> const& library, map_para
   auto res = p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
-  //if ( ps.verbose && !st.mapping_error )
-  //{
+  if ( ps.verbose && !st.mapping_error )
+  {
     st.report();
-  //}
+  }
 
   if ( pst )
   {
