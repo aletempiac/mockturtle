@@ -127,6 +127,8 @@ int main()
 
     binding_view<klut_network> res2 = map( aig, tech_lib, ps2, &st2 );
 
+    fmt::print( "SD_ratio: {:>5.2f}%\n", st2.sd_cuts_ratio );
+
     const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
     const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
 
