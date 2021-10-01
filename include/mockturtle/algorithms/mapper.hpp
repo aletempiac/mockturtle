@@ -36,6 +36,7 @@
 #include <limits>
 
 #include <fmt/format.h>
+#include <kitty/properties.hpp>
 
 #include "../networks/klut.hpp"
 #include "../utils/node_map.hpp"
@@ -115,6 +116,8 @@ struct map_stats
   double delay{ 0 };
   /*! \brief Power result. */
   double power{ 0 };
+  /*! \brief Power result. */
+  double sd_cuts_ratio{ 0 };
 
   /*! \brief Runtime for covering. */
   stopwatch<>::duration time_mapping{ 0 };
@@ -234,6 +237,31 @@ public:
     topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
       top_order.push_back( n );
     } );
+
+    double sd_ratio = 0;
+    uint32_t n_cuts = 0;
+    /* analize sd ratio in cuts */
+    for ( auto const& n : top_order )
+    {
+      auto index = ntk.node_to_index( n );
+      for ( auto& cut : cuts.cuts( index ) )
+      {
+        /* ignore unit cut */
+        if ( cut->size() == 1 && *cut->begin() == index )
+        {
+          ( *cut )->data.ignore = true;
+          continue;
+        }
+        if ( kitty::is_selfdual( cuts.truth_table( *cut ) ) )
+        {
+          ++sd_ratio;
+        }
+        ++n_cuts;
+      }
+    }
+    sd_ratio = sd_ratio * 100 / n_cuts;
+
+    st.sd_cuts_ratio = sd_ratio;
 
     /* match cuts with gates */
     compute_matches();
