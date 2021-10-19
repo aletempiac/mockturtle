@@ -62,7 +62,7 @@ struct lut_map_params
 {
   lut_map_params()
   {
-    cut_enumeration_ps.cut_limit = 499;
+    cut_enumeration_ps.cut_limit = 249;
     cut_enumeration_ps.minimize_truth_table = true;
   }
 
@@ -74,7 +74,7 @@ struct lut_map_params
   cut_enumeration_params cut_enumeration_ps{};
 
   /*! \brief Required depth for depth relaxation. */
-  uint32_t required_delay{ 0.0f };
+  uint32_t required_delay{ 0u };
 
   /*! \brief Skip depth round for size optimization. */
   bool skip_delay_round{ false };
@@ -398,7 +398,7 @@ private:
   void compute_best_cut( node<Ntk> const& n )
   {
     uint32_t best_arrival = UINT32_MAX;
-    double best_area_flow = std::numeric_limits<double>::max();
+    double best_area_flow = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
     uint8_t cut_index = 0u;
@@ -446,7 +446,7 @@ private:
       ++cut_index;
     }
 
-    node_data.flows = best_area_flow;
+    node_data.flows = best_area_flow / node_data.est_refs;
     node_data.arrival = best_arrival;
     node_data.best_cut = best_cut;
 
@@ -524,21 +524,6 @@ private:
     }
   }
 
-  // inline double cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
-  // {
-  //   double flow{ 0.0f };
-  //   auto const& node_data = node_match[ntk.node_to_index( n )];
-
-  //   uint8_t ctr = 0u;
-  //   for ( auto leaf : cut )
-  //   {
-  //     uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
-  //     flow += node_match[leaf].flows[leaf_phase];
-  //   }
-
-  //   return flow;
-  // }
-
   uint32_t cut_ref( cut_t const& cut )
   {
     uint32_t count = 1;
@@ -600,9 +585,6 @@ private:
         nodes.push_back( ntk.index_to_node( l ) );
       }
       ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
-
-      // auto tt = kitty::shrink_to( cuts.truth_table( best_cut ), best_cut.size() );
-      // ntk.set_cell_function( n, tt );
     }
 
     st.area = area;
@@ -731,7 +713,6 @@ void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = null
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
   static_assert( has_clear_mapping_v<Ntk>, "Ntk does not implement the clear_mapping method" );
   static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
-  // static_assert( has_set_cell_function_v<Ntk>, "Ntk does not implement the set_cell_function method" );
 
   lut_map_stats st;
   detail::lut_map_impl<Ntk, CutSize, CutData> p( ntk, ps, st );
