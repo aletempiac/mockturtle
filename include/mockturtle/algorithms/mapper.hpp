@@ -98,6 +98,9 @@ struct map_params
   /*! \brief Maximum number of cuts evaluated for logic sharing. */
   uint32_t logic_sharing_cut_limit{ 8u };
 
+  /*! \brief Enable functional decomposition on-the-fly. */
+  uint32_t enable_on_the_fly_decomposition{ 8u };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -730,18 +733,25 @@ private:
 
       best_phase = node_data.phase[phase];
       best_arrival = 0.0f;
-      best_area_flow = best_supergate->area + cut_leaves_flow( cut, n, phase );
       best_area = best_supergate->area;
       best_cut = node_data.best_cut[phase];
       best_size = cut.size();
+      double max_pin_arrival = 0;
+      double unbalance = 0;
 
       auto ctr = 0u;
       for ( auto l : cut )
       {
-        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
-        best_arrival = std::max( best_arrival, arrival_pin );
+        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1];
+        max_pin_arrival = std::max( max_pin_arrival, arrival_pin );
+        unbalance += arrival_pin;
+        best_arrival = std::max( best_arrival, arrival_pin + best_supergate->tdelay[ctr] );
         ++ctr;
       }
+      unbalance = max_pin_arrival * best_supergate->root->num_vars - unbalance;
+
+      // best_area_flow = best_supergate->area + (int) unbalance * lib_buf_area + cut_leaves_flow( cut, n, phase );
+      best_area_flow = best_supergate->area + cut_leaves_flow( cut, n, phase );
     }
 
     /* foreach cut */
@@ -768,16 +778,25 @@ private:
       {
         uint8_t gate_polarity = gate.polarity ^ negation;
         node_data.phase[phase] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow( *cut, n, phase );
         double worst_arrival = 0.0f;
+        double max_pin_arrival = 0;
+        double unbalance = 0;
 
         auto ctr = 0u;
         for ( auto l : *cut )
         {
-          double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-          worst_arrival = std::max( worst_arrival, arrival_pin );
+          double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1];
+          max_pin_arrival = std::max( max_pin_arrival, arrival_pin );
+          unbalance += arrival_pin;
+          worst_arrival = std::max( worst_arrival, arrival_pin + gate.tdelay[ctr] );
           ++ctr;
         }
+
+        unbalance = max_pin_arrival * gate.root->num_vars - unbalance;
+        double area_buf = (int) unbalance * lib_buf_area;
+
+        // double area_local = gate.area + area_buf + cut_leaves_flow( *cut, n, phase );
+        double area_local = gate.area + cut_leaves_flow( *cut, n, phase );
 
         if constexpr ( DO_AREA )
         {
@@ -791,6 +810,7 @@ private:
           best_area_flow = area_local;
           best_size = cut->size();
           best_cut = cut_index;
+          // best_area = gate.area + area_buf;
           best_area = gate.area;
           best_phase = gate_polarity;
           best_supergate = &gate;
@@ -1711,7 +1731,7 @@ struct node_match_t
   float flows[3];
 };
 
-template<class NtkDest, unsigned CutSize, typename CutData, class Ntk, class RewritingFn, unsigned NInputs>
+template<class NtkDest, unsigned CutSize, typename CutData, class Ntk, class RewritingFn, unsigned NInputs, class ResynFn>
 class exact_map_impl
 {
 public:
@@ -1719,7 +1739,7 @@ public:
   using cut_t = typename network_cuts_t::cut_t;
 
 public:
-  explicit exact_map_impl( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs> const& library, map_params const& ps, map_stats& st )
+  explicit exact_map_impl( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs, ResynFn>& library, map_params const& ps, map_stats& st )
       : ntk( ntk ),
         library( library ),
         ps( ps ),
@@ -1851,16 +1871,24 @@ private:
 
         /* match the cut using canonization and get the gates */
         const auto tt = cuts.truth_table( *cut );
-        const auto fe = kitty::shrink_to<NInputs>( tt );
-        const auto config = kitty::exact_npn_canonization( fe );
-        auto const supergates_npn = library.get_supergates( std::get<0>( config ) );
-        auto const supergates_npn_neg = library.get_supergates( ~std::get<0>( config ) );
+        const auto config = exact_npn_canonization_minimized( tt, cut->size() );
+        auto supergates_npn = library.get_supergates( std::get<0>( config ) );
+        auto supergates_npn_neg = library.get_supergates( ~std::get<0>( config ) );
+
+        if ( supergates_npn == nullptr && supergates_npn_neg == nullptr && ps.enable_on_the_fly_decomposition )
+        {
+          auto const supergates_np = library.generate_supergates( std::get<0>( config ) );
+          if ( !supergates_np.second )
+            supergates_npn = supergates_np.first;
+          else
+            supergates_npn_neg = supergates_np.first;
+        }
 
         if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
           auto neg = std::get<1>( config );
           auto perm = std::get<2>( config );
-          uint8_t phase = ( neg >> NInputs ) & 1;
+          uint8_t phase = ( neg >> cut->size() ) & 1;
           cut_match_t<NtkDest, NInputs> match;
 
           match.supergates[phase] = supergates_npn;
@@ -1868,7 +1896,7 @@ private:
 
           /* store permutations and negations */
           match.negation = 0;
-          for ( auto j = 0u; j < perm.size() && j < NInputs; ++j )
+          for ( auto j = 0u; j < perm.size(); ++j )
           {
             match.permutation[perm[j]] = j;
             match.negation |= ( ( neg >> perm[j] ) & 1 ) << j;
@@ -3043,7 +3071,7 @@ private:
 
 private:
   Ntk& ntk;
-  exact_library<NtkDest, RewritingFn, NInputs> const& library;
+  exact_library<NtkDest, RewritingFn, NInputs, ResynFn>& library;
   map_params const& ps;
   map_stats& st;
 
@@ -3056,7 +3084,7 @@ private:
   float lib_inv_area;
   float lib_inv_delay;
 
-  NtkDest const& lib_database;
+  NtkDest& lib_database;
 
   std::vector<node<Ntk>> top_order;
   std::vector<node_match_t<NtkDest, NInputs>> node_match;
@@ -3106,8 +3134,8 @@ private:
  * \param ps Mapping params
  * \param pst Mapping statistics
  */
-template<class Ntk, unsigned CutSize = 4u, typename CutData = cut_enumeration_exact_map_cut, class NtkDest, class RewritingFn, unsigned NInputs>
-NtkDest map( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs> const& library, map_params const& ps = {}, map_stats* pst = nullptr )
+template<class Ntk, unsigned CutSize = 4u, typename CutData = cut_enumeration_exact_map_cut, class NtkDest, class RewritingFn, unsigned NInputs, class ResynFn>
+NtkDest map( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs, ResynFn>& library, map_params const& ps = {}, map_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -3123,7 +3151,7 @@ NtkDest map( Ntk& ntk, exact_library<NtkDest, RewritingFn, NInputs> const& libra
   static_assert( has_decr_value_v<NtkDest>, "Ntk does not implement the decr_value method" );
 
   map_stats st;
-  detail::exact_map_impl<NtkDest, CutSize, CutData, Ntk, RewritingFn, NInputs> p( ntk, library, ps, st );
+  detail::exact_map_impl<NtkDest, CutSize, CutData, Ntk, RewritingFn, NInputs, ResynFn> p( ntk, library, ps, st );
   auto res = p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
