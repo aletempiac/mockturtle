@@ -29,6 +29,7 @@
 
   \author Heinz Riener
   \author Mathias Soeken
+  \author Alessandro Tempia Calvino
 */
 
 #pragma once

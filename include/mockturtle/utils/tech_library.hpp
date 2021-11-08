@@ -45,6 +45,7 @@
 #include <parallel_hashmap/phmap.h>
 
 #include "super_utils.hpp"
+#include "../algorithms/node_resynthesis/null.hpp"
 #include "../io/genlib_reader.hpp"
 #include "../io/super_reader.hpp"
 
@@ -160,6 +161,7 @@ public:
         _use_supergates( false ),
         _super_lib()
   {
+    _super_lib.reserve( 2000u );
     generate_library();
   }
 
@@ -171,6 +173,7 @@ public:
         _use_supergates( true ),
         _super_lib()
   {
+    _super_lib.reserve( 2000u );
     generate_library();
   }
 
@@ -672,20 +675,37 @@ struct exact_library_params
       mockturtle::exact_library<mockturtle::mig_network, mockturtle::mig_npn_resynthesis> lib( mig_resyn );
    \endverbatim
  */
-template<typename Ntk, class RewritingFn, unsigned NInputs = 4u>
+template<typename Ntk, class RewritingFn, unsigned NInputs = 4u, class ResynFn = null_resynthesis<Ntk>>
 class exact_library
 {
   using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
-  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
+  using lib_t = phmap::flat_hash_map<kitty::static_truth_table<NInputs>, supergates_list_t*, tt_hash>;
 
 public:
   explicit exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
       : _database(),
         _rewriting_fn( rewriting_fn ),
         _ps( ps ),
-        _super_lib()
+        _super_lib(),
+        _empty_resyn(),
+        _resyn_fn( _empty_resyn ),
+        _supergates_list()
   {
+    _super_lib.reserve( 2000u );
+    generate_library();
+  }
+
+  explicit exact_library( RewritingFn const& rewriting_fn, ResynFn const& resynthesis_fn, exact_library_params const& ps = {} )
+      : _database(),
+        _rewriting_fn( rewriting_fn ),
+        _ps( ps ),
+        _super_lib(),
+        _empty_resyn(),
+        _resyn_fn( resynthesis_fn ),
+        _supergates_list()
+  {
+    _super_lib.reserve( 2000u );
     generate_library();
   }
 
@@ -698,12 +718,36 @@ public:
   {
     auto match = _super_lib.find( tt );
     if ( match != _super_lib.end() )
-      return &match->second;
+      return match->second;
     return nullptr;
   }
 
+  /*! \brief Generate the structures matching the function.
+   *
+   * Generates and returns a list of graph structures that match the
+   * function represented by the truth table and the associated
+   * output polarity.
+   * 
+   * \param tt truth table NP(N) representative
+   */
+  std::pair<supergates_list_t*, bool> generate_supergates( kitty::static_truth_table<NInputs> const& tt )
+  {
+    bool success = generate_match( tt );
+
+    if ( !success )
+      return {nullptr, false};
+
+    auto match = _super_lib.find( tt );
+    if ( match != _super_lib.end() )
+      return {match->second, false};
+    match = _super_lib.find( ~tt );
+    if ( match != _super_lib.end() )
+      return {match->second, true};
+    return {nullptr, false};
+  }
+
   /*! \brief Returns the NPN database of structures. */
-  const Ntk& get_database() const
+  Ntk& get_database()
   {
     return _database;
   }
@@ -727,8 +771,8 @@ private:
     }
 
     /* Compute NPN classes */
-    std::unordered_set<kitty::static_truth_table<NInputs>, tt_hash> classes;
-    kitty::static_truth_table<NInputs> tt;
+    std::unordered_set<kitty::static_truth_table<4>, kitty::hash<kitty::static_truth_table<4>>> classes;
+    kitty::static_truth_table<4> tt;
     do
     {
       const auto res = kitty::exact_npn_canonization( tt );
@@ -741,7 +785,10 @@ private:
     {
       supergates_list_t supergates_pos;
       supergates_list_t supergates_neg;
-      auto const not_entry = ~entry;
+
+      /* minimize truth table */
+      auto tt = entry;
+      auto support = kitty::min_base_inplace( tt );
 
       const auto add_supergate = [&]( auto const& f_new ) {
         bool complemented = _database.is_complemented( f_new );
@@ -764,12 +811,49 @@ private:
         return true;
       };
 
-      kitty::dynamic_truth_table function = kitty::extend_to( entry, NInputs );
-      _rewriting_fn( _database, function, pis.begin(), pis.end(), add_supergate );
-      if ( supergates_pos.size() > 0 )
-        _super_lib.insert( { entry, supergates_pos } );
-      if ( _ps.np_classification && supergates_neg.size() > 0 )
-        _super_lib.insert( { not_entry, supergates_neg } );
+      /* store NPN classes on minimized support */
+      if ( support.size() != 4 )
+      {
+        /* reduce truth table size to the new support */
+        auto tt_reduced = kitty::shrink_to( tt, support.size() );
+
+        /* compute the new NPN representative on the reduced support */
+        const auto tt_reduced_npn = kitty::exact_npn_canonization( tt_reduced );
+
+        kitty::dynamic_truth_table function = kitty::extend_to( std::get<0>( tt_reduced_npn ), 4 );
+        _rewriting_fn( _database, function, pis.begin(), pis.begin() + 4, add_supergate );
+
+        auto new_entry = kitty::extend_to<NInputs>( std::get<0>( tt_reduced_npn ) );
+
+        if ( supergates_pos.size() > 0 )
+        {
+          _supergates_list.push_back( supergates_pos );
+          _super_lib.insert( { new_entry, &_supergates_list.back() } );
+        }
+        if ( _ps.np_classification && supergates_neg.size() > 0 )
+        {
+          _supergates_list.push_back( supergates_neg );
+          _super_lib.insert( { ~new_entry, &_supergates_list.back() } );
+        }
+      }
+      else
+      {
+        kitty::dynamic_truth_table function = kitty::extend_to( entry, 4 );
+        _rewriting_fn( _database, function, pis.begin(), pis.begin() + 4, add_supergate );
+
+        auto new_entry = kitty::extend_to<NInputs>( entry );
+
+        if ( supergates_pos.size() > 0 )
+        {
+          _supergates_list.push_back( supergates_pos );
+          _super_lib.insert( { new_entry, &_supergates_list.back() } );
+        }
+        if ( _ps.np_classification && supergates_neg.size() > 0 )
+        {
+          _supergates_list.push_back( supergates_neg );
+          _super_lib.insert( { ~new_entry, &_supergates_list.back() } );
+        }
+      }
     }
 
     if ( _ps.verbose )
@@ -780,7 +864,7 @@ private:
         kitty::print_hex( pair.first );
         std::cout << ": ";
 
-        for ( auto const& gate : pair.second )
+        for ( auto const& gate : *pair.second )
         {
           printf( "%.2f,%.2f,%x,%d,:", gate.worstDelay, gate.area, gate.polarity, gate.n_inputs );
           for ( auto j = 0u; j < NInputs; ++j )
@@ -859,11 +943,214 @@ private:
     return area;
   }
 
+  bool generate_match( kitty::static_truth_table<NInputs> const& tt )
+  {
+    bool success = false;
+
+    if constexpr ( !std::is_same<ResynFn, null_resynthesis<Ntk>>::value )
+    {
+      std::vector<signal<Ntk>> pis;
+      for ( auto i = 0u; i < NInputs; ++i )
+      {
+        pis.push_back( _database.make_signal( _database.pi_at( i ) ) );
+      }
+
+      supergates_list_t supergates_pos;
+      supergates_list_t supergates_neg;
+
+      /* suppose minimized truth tables, compute functional support */
+      unsigned support = tt.num_vars();
+      for ( auto i = tt.num_vars(); i > 0; --i )
+      {
+        if ( !kitty::has_var( tt, i - 1 ) )
+          --support;
+        else
+          break;
+      }
+
+      const auto add_supergate = [&]( auto const& f_new ) {
+        bool complemented = _database.is_complemented( f_new );
+        auto f = f_new;
+        if ( _ps.np_classification && complemented )
+        {
+          f = !f;
+        }
+        exact_supergate<Ntk, NInputs> sg( f );
+        compute_info( sg );
+        if ( _ps.np_classification && complemented )
+        {
+          supergates_neg.push_back( sg );
+        }
+        else
+        {
+          supergates_pos.push_back( sg );
+        }
+        _database.create_po( f );
+
+        success = true;
+        return true;
+      };
+
+      kitty::dynamic_truth_table function = kitty::shrink_to( tt, support );
+      _resyn_fn( _database, function, pis.begin(), pis.begin() + support, add_supergate );
+
+      if ( supergates_pos.size() > 0 )
+      {
+        _supergates_list.push_back( supergates_pos );
+        _super_lib.insert( { tt, &_supergates_list.back() } );
+      }
+      if ( _ps.np_classification && supergates_neg.size() > 0 )
+      {
+        _supergates_list.push_back( supergates_neg );
+        _super_lib.insert( { ~tt, &_supergates_list.back() } );
+      }
+    }
+
+    return success;
+  }
+
 private:
   Ntk _database;
   RewritingFn const& _rewriting_fn;
   exact_library_params const _ps;
   lib_t _super_lib;
+  null_resynthesis<Ntk> _empty_resyn;
+  ResynFn const& _resyn_fn;
+  std::deque<supergates_list_t> _supergates_list;
 }; /* class exact_library */
+
+/*! \brief Exact NPN canonization minimized
+
+  Given a truth table, this function finds the lexicographically smallest truth
+  table in its NPN class, called NPN representative. Two functions are in the
+  same NPN class, if one can obtain one from the other by input negation, input
+  permutation, and output negation. Differently from the standard NPN
+  canonization, this method takes a minimized truth table and the specified
+  number of variables in the functional support. Hence, this function computes
+  the NPN representative of the functional support class.
+
+  The function can accept a callback as third parameter which is called for
+  every visited function when trying out all combinations.  This allows to
+  exhaustively visit the whole NPN class.
+
+  The function returns a NPN configuration which contains the necessary
+  transformations to obtain the representative.  It is a tuple of
+
+  - the NPN representative
+  - input negations and output negation, output negation is stored as bit *n*,
+    where *n* is the number of variables in `tt`
+  - input permutation to apply
+
+  \param tt The truth table (with at most 6 variables)
+  \param num_vars Number of variables in the functional support (the truth table must be minimized)
+  \param fn Callback for each visited truth table in the class (default does nothing)
+  \return NPN configuration
+*/
+template<typename TT, typename Callback = decltype( kitty::detail::exact_npn_canonization_null_callback<TT> )>
+std::tuple<TT, uint32_t, std::vector<uint8_t>> exact_npn_canonization_minimized( const TT& tt, unsigned num_vars, Callback&& fn = kitty::detail::exact_npn_canonization_null_callback<TT> )
+{
+  static_assert( kitty::is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
+  {
+    const auto bit = get_bit( tt, 0 );
+    return std::make_tuple( unary_not_if( tt, bit ), static_cast<uint32_t>( bit ), std::vector<uint8_t>{} );
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    const auto bit1 = get_bit( tt, 1 );
+    return std::make_tuple( unary_not_if( tt, bit1 ), static_cast<uint32_t>( bit1 << 1 ), std::vector<uint8_t>{0} );
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tt, t2 = ~tt;
+  auto tmin = std::min( t1, t2 );
+  auto invo = tmin == t2;
+
+  fn( t1 );
+  fn( t2 );
+
+  const auto& swaps = kitty::detail::swaps[num_vars - 2u];
+  const auto& flips = kitty::detail::flips[num_vars - 2u];
+
+  int best_swap = -1;
+  int best_flip = -1;
+
+  for ( std::size_t i = 0; i < swaps.size(); ++i )
+  {
+    const auto pos = swaps[i];
+    kitty::swap_adjacent_inplace( t1, pos );
+    kitty::swap_adjacent_inplace( t2, pos );
+
+    fn( t1 );
+    fn( t2 );
+
+    if ( t1 < tmin || t2 < tmin )
+    {
+      best_swap = static_cast<int>( i );
+      tmin = std::min( t1, t2 );
+      invo = tmin == t2;
+    }
+  }
+
+  for ( std::size_t j = 0; j < flips.size(); ++j )
+  {
+    const auto pos = flips[j];
+    kitty::swap_adjacent_inplace( t1, 0 );
+    kitty::flip_inplace( t1, pos );
+    kitty::swap_adjacent_inplace( t2, 0 );
+    kitty::flip_inplace( t2, pos );
+
+    fn( t1 );
+    fn( t2 );
+
+    if ( t1 < tmin || t2 < tmin )
+    {
+      best_swap = -1;
+      best_flip = static_cast<int>( j );
+      tmin = std::min( t1, t2 );
+      invo = tmin == t2;
+    }
+
+    for ( std::size_t i = 0; i < swaps.size(); ++i )
+    {
+      const auto pos = swaps[i];
+      kitty::swap_adjacent_inplace( t1, pos );
+      kitty::swap_adjacent_inplace( t2, pos );
+
+      fn( t1 );
+      fn( t2 );
+
+      if ( t1 < tmin || t2 < tmin )
+      {
+        best_swap = static_cast<int>( i );
+        best_flip = static_cast<int>( j );
+        tmin = std::min( t1, t2 );
+        invo = tmin == t2;
+      }
+    }
+  }
+
+  std::vector<uint8_t> perm( num_vars );
+  std::iota( perm.begin(), perm.end(), 0u );
+
+  for ( auto i = 0; i <= best_swap; ++i )
+  {
+    const auto pos = swaps[i];
+    std::swap( perm[pos], perm[pos + 1] );
+  }
+
+  uint32_t phase = uint32_t( invo ) << num_vars;
+  for ( auto i = 0; i <= best_flip; ++i )
+  {
+    phase ^= 1 << flips[i];
+  }
+
+  return std::make_tuple( tmin, phase, perm );
+}
 
 } // namespace mockturtle

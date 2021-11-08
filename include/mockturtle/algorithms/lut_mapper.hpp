@@ -147,11 +147,11 @@ struct node_lut
   float flows;
 };
 
-template<class Ntk, unsigned CutSize, typename CutData>
+template<class Ntk, unsigned CutSize, bool StoreFunction, typename CutData>
 class lut_map_impl
 {
 public:
-  using network_cuts_t = fast_network_cuts<Ntk, CutSize, false, CutData>;
+  using network_cuts_t = fast_network_cuts<Ntk, CutSize, StoreFunction, CutData>;
   using cut_t = typename network_cuts_t::cut_t;
 
 public:
@@ -160,7 +160,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
-        cuts( fast_cut_enumeration<Ntk, CutSize, false, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
+        cuts( fast_cut_enumeration<Ntk, CutSize, StoreFunction, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
   {}
 
   void run()
@@ -585,6 +585,11 @@ private:
         nodes.push_back( ntk.index_to_node( l ) );
       }
       ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
+
+      if constexpr ( StoreFunction )
+      {
+        ntk.set_cell_function( n, cuts.truth_table( cuts.cuts( index ).best() ) );
+      }
     }
 
     st.area = area;
@@ -698,7 +703,7 @@ private:
  * The implementation of this algorithm was inspired by the
  * mapping command ``map`` in ABC.
  */
-template<class Ntk, unsigned CutSize = 4u, typename CutData = cut_enumeration_lut_delay_cut>
+template<class Ntk, unsigned CutSize = 4u, bool StoreFunction = false, typename CutData = cut_enumeration_lut_delay_cut>
 void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -715,7 +720,7 @@ void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = null
   static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
 
   lut_map_stats st;
-  detail::lut_map_impl<Ntk, CutSize, CutData> p( ntk, ps, st );
+  detail::lut_map_impl<Ntk, CutSize, StoreFunction, CutData> p( ntk, ps, st );
   p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
