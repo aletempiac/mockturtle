@@ -38,7 +38,9 @@
 #include <kitty/constructors.hpp>
 #include <kitty/operations.hpp>
 
+#include "../algorithms/cleanup.hpp"
 #include "../networks/klut.hpp"
+#include "../networks/generic.hpp"
 #include "../utils/node_map.hpp"
 #include "../views/binding_view.hpp"
 #include "../views/topo_view.hpp"
@@ -129,6 +131,7 @@ private:
             auto const buf = create_buffer( res_d, buffers[i - 1] );
             buffers.push_back( buf );
             res.add_binding( res.get_node( buf ), buf_id );
+            res.set_as_latch( res.get_node( buf ) );
           }
         }
 
@@ -186,6 +189,96 @@ template<class Ntk>
 Ntk buffering( Ntk const& ntk )
 {
   detail::buffering_impl p( ntk );
+  return p.run();
+}
+
+namespace detail
+{
+
+template<class Ntk>
+class generic_network_convert_impl
+{
+public:
+  using signal = typename generic_network::signal;
+  using NtkDest = binding_view<generic_network>;
+
+public:
+  explicit generic_network_convert_impl( Ntk const& ntk ) : _ntk( ntk )
+  {}
+
+  binding_view<generic_network> run()
+  {
+    node_map<signal, Ntk> old2new( _ntk );
+    NtkDest res( _ntk.get_library() );
+
+    old2new[_ntk.get_constant( false )] = res.get_constant( false );
+    if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
+    {
+      old2new[_ntk.get_constant( true )] = res.get_constant( true );
+    }
+    _ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[n] = res.create_pi();
+    } );
+
+    topo_view topo{ _ntk };
+
+    topo.foreach_node( [&] ( auto const& n ) {
+      if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
+        return true;
+
+      std::vector<signal> children;
+      
+      _ntk.foreach_fanin( n, [&]( auto const& f ) {
+        children.push_back( old2new[f] );
+      } );
+
+      if ( _ntk.is_as_latch( n ) )
+      {
+        const auto f = res.create_latch( children[0] );
+        res.foreach_fanin( res.get_node( f ), [&]( auto const& latch ) {
+          res.add_binding( res.get_node( latch ), _ntk.get_binding_index( n ) );
+          return false;
+        } );
+        old2new[n] = f;
+      }
+      else
+      {
+        const auto f = res.create_node( children, _ntk.node_function( n ) );
+        res.add_binding( res.get_node( f ), _ntk.get_binding_index( n ) );
+        old2new[n] = f;
+      }
+
+      return true;
+    } );
+
+    _ntk.foreach_po( [&]( auto const& f ) {
+      res.create_po( old2new[f] );
+    } );
+
+    return res;
+  }
+
+private:
+  Ntk const& _ntk;
+};
+
+}
+
+template<class Ntk>
+binding_view<generic_network> generic_network_convert( Ntk const& ntk )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
+  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
+
+  detail::generic_network_convert_impl p( ntk );
   return p.run();
 }
 

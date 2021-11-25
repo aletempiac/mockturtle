@@ -96,6 +96,7 @@ public:
       : Ntk()
       , _library{ library }
       , _bindings( *this )
+      , _latches( *this )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
@@ -108,6 +109,20 @@ public:
       : Ntk( ntk )
       , _library{ library }
       , _bindings( *this )
+      , _latches( *this )
+  {
+    static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+    static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+    static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
+    static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+    static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  }
+
+  explicit binding_view( Ntk const& ntk )
+      : Ntk( ntk )
+      , _library{}
+      , _bindings( *this )
+      , _latches( *this )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
@@ -121,6 +136,7 @@ public:
     Ntk::operator=( binding_ntk );
     _library = binding_ntk._library;
     _bindings = binding_ntk._bindings;
+    _latches = binding_ntk._latches;
     return *this;
   }
 
@@ -144,7 +160,7 @@ public:
     return false;
   }
 
-  void remove_binding( node const& n ) const
+  void remove_binding( node const& n )
   {
     _bindings.erase( n );
   }
@@ -167,6 +183,26 @@ public:
   const std::vector<gate>& get_library() const
   {
     return _library;
+  }
+
+  void set_as_latch( node const& n )
+  {
+    _latches[n] = true;
+  }
+
+  bool is_as_latch( node const& n ) const
+  {
+    return _latches.has( n );
+  }
+
+  void remove_as_latch( node const& n )
+  {
+    _latches.erase( n );
+  }
+
+  uint32_t num_as_latches() const
+  {
+    return _latches.size();
   }
 
   double compute_area() const
@@ -256,6 +292,7 @@ public:
 private:
   std::vector<gate> const _library;
   node_map<uint32_t, Ntk, std::unordered_map<node, uint32_t>> _bindings;
+  node_map<bool, Ntk, std::unordered_map<node, bool>> _latches;
 }; /* binding_view */
 
 template<class T>

@@ -198,9 +198,6 @@ public:
 
     /* generate the output network */
     derive_mapping();
-    // finalize_cover( res, old2new );
-
-    // return res;
   }
 
 private:
