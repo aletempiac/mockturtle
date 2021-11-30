@@ -85,6 +85,9 @@ struct lut_map_params
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
 
+  /*! \brief Use edge count reduction. */
+  bool edge_optimization{ false };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -100,6 +103,8 @@ struct lut_map_stats
   uint32_t area{ 0 };
   /*! \brief Worst delay result. */
   uint32_t delay{ 0 };
+  /*! \brief Edge result. */
+  uint32_t edges{ 0 };
 
   /*! \brief Runtime for covering. */
   stopwatch<>::duration time_mapping{ 0 };
@@ -118,7 +123,7 @@ struct lut_map_stats
     {
       std::cout << stat;
     }
-    std::cout << fmt::format( "[i] Area = {:8d}; Delay = {:8d};\n", area, delay );
+    std::cout << fmt::format( "[i] Area = {:8d}; Delay = {:8d}; Edge = {:8d};\n", area, delay, edges );
     std::cout << fmt::format( "[i] Mapping runtime = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
@@ -136,8 +141,10 @@ struct node_lut
   uint32_t arrival;
   /* required time at node output */
   uint32_t required;
-  /* area of the best matches */
+  /* area of the best match */
   uint32_t area;
+  /* edge count of the best match */
+  uint32_t edges;
 
   /* number of references in the cover 0: pos, 1: neg, 2: pos+neg */
   uint32_t map_refs;
@@ -145,6 +152,8 @@ struct node_lut
   float est_refs;
   /* area flow */
   float flows;
+  /* edge flow */
+  float edge_flows;
 };
 
 template<class Ntk, unsigned CutSize, bool StoreFunction, typename CutData>
@@ -213,6 +222,7 @@ private:
       {
         /* all terminals have flow 1.0 */
         node_data.flows = 0.0f;
+        node_data.edge_flows = 0.0f;
         node_data.arrival = 0.0f;
       }
     } );
@@ -238,18 +248,14 @@ private:
     if ( ps.verbose )
     {
       std::stringstream stats{};
-      float area_gain = 0.0f;
-
-      if ( iteration != 1 )
-        area_gain = ( static_cast<float>( area_old - area ) / area_old * 100 );
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -271,9 +277,8 @@ private:
     /* round stats */
     if ( ps.verbose )
     {
-      float area_gain = ( static_cast<float>( area_old - area ) / area_old * 100 );
       std::stringstream stats{};
-      stats << fmt::format( "[i] Area     : Delay = {:8d}  Area = {:8d}  {:>5.2f} %\n", delay, area, area_gain );
+      stats << fmt::format( "[i] Area     : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
       st.round_stats.push_back( stats.str() );
     }
   }
@@ -306,6 +311,7 @@ private:
 
     /* compute current area and update mapping refs in top-down order */
     area = 0;
+    edges = 0;
     for ( auto it = top_order.rbegin(); it != top_order.rend(); ++it )
     {
       const auto index = ntk.node_to_index( *it );
@@ -329,6 +335,7 @@ private:
         }
       }
       ++area;
+      edges += cuts.cuts( index )[0].size();
     }
 
     /* blend estimated references */
@@ -395,7 +402,8 @@ private:
   void compute_best_cut( node<Ntk> const& n )
   {
     uint32_t best_arrival = UINT32_MAX;
-    double best_area_flow = std::numeric_limits<float>::max();
+    float best_area_flow = std::numeric_limits<float>::max();
+    float best_edge_flow = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
     uint8_t cut_index = 0u;
@@ -414,15 +422,18 @@ private:
       }
 
       uint32_t worst_arrival = 0;
-      double flow = 0;
+      float flow = 0;
+      float edge_flow = 0;
 
       for ( auto leaf : *cut )
       {
         worst_arrival = std::max( worst_arrival, node_match[leaf].arrival + 1 );
         flow += node_match[leaf].flows;
+        edge_flow += node_match[leaf].edge_flows;
       }
 
-      double area_local = 1 + flow;
+      float area_local = 1 + flow;
+      float edge_local = cut->size() + edge_flow;
 
       if constexpr ( DO_AREA )
       {
@@ -433,10 +444,21 @@ private:
         }
       }
 
-      if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
+      bool result = false;
+      if ( ps.edge_optimization )
+      {
+        result = compare_map_edge<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, edge_local, best_edge_flow, cut->size(), best_size );
+      }
+      else
+      {
+        result = compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size );
+      }
+
+      if ( result )
       {
         best_arrival = worst_arrival;
         best_area_flow = area_local;
+        best_edge_flow = edge_local;
         best_size = cut->size();
         best_cut = cut_index;
       }
@@ -444,6 +466,7 @@ private:
     }
 
     node_data.flows = best_area_flow / node_data.est_refs;
+    node_data.edge_flows = best_edge_flow / node_data.est_refs;
     node_data.arrival = best_arrival;
     node_data.best_cut = best_cut;
 
@@ -457,6 +480,7 @@ private:
   {
     uint32_t best_arrival = UINT32_MAX;
     uint32_t best_exact_area = UINT32_MAX;
+    uint32_t best_exact_edge = UINT32_MAX;
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
     uint8_t cut_index = 0u;
@@ -482,7 +506,7 @@ private:
       }
 
       uint32_t area_exact = cut_ref( *cut );
-      cut_deref( *cut );
+      uint32_t edge_exact = cut_edge_deref( *cut );
       uint32_t worst_arrival = 0;
 
       for ( auto l : *cut )
@@ -496,10 +520,21 @@ private:
         continue;
       }
 
-      if ( compare_map<true>( worst_arrival, best_arrival, area_exact, best_exact_area, cut->size(), best_size ) )
+      bool result = false;
+      if ( ps.edge_optimization )
+      {
+        result = compare_map_edge<true>( worst_arrival, best_arrival, area_exact, best_exact_area, edge_exact, best_exact_edge, cut->size(), best_size );
+      }
+      else
+      {
+        result = compare_map<true>( worst_arrival, best_arrival, area_exact, best_exact_area, cut->size(), best_size );
+      }
+
+      if ( result )
       {
         best_arrival = worst_arrival;
         best_exact_area = area_exact;
+        best_exact_edge = edge_exact;
         best_size = cut->size();
         best_cut = cut_index;
       }
@@ -561,6 +596,46 @@ private:
     return count;
   }
 
+  uint32_t cut_edge_ref( cut_t const& cut )
+  {
+    uint32_t count = cut.size();
+
+    for ( auto leaf : cut )
+    {
+      if ( ntk.is_pi( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      {
+        continue;
+      }
+
+      /* Recursive referencing if leaf was not referenced */
+      if ( node_match[leaf].map_refs++ == 0u )
+      {
+        count += cut_ref( cuts.cuts( leaf )[0] );
+      }
+    }
+    return count;
+  }
+
+  uint32_t cut_edge_deref( cut_t const& cut )
+  {
+    uint32_t count = cut.size();
+
+    for ( auto leaf : cut )
+    {
+      if ( ntk.is_pi( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      {
+        continue;
+      }
+
+      /* Recursive referencing if leaf was not referenced */
+      if ( --node_match[leaf].map_refs == 0u )
+      {
+        count += cut_deref( cuts.cuts( leaf )[0] );
+      }
+    }
+    return count;
+  }
+
   void derive_mapping()
   {
     ntk.clear_mapping();
@@ -591,10 +666,75 @@ private:
 
     st.area = area;
     st.delay = delay;
+    st.edges = edges;
   }
 
   template<bool DO_AREA>
-  inline bool compare_map( uint32_t arrival, uint32_t best_arrival, double area_flow, double best_area_flow, uint32_t size, uint32_t best_size )
+  inline bool compare_map_edge( uint32_t arrival, uint32_t best_arrival, float area_flow, float best_area_flow, float edge_flow, float best_edge_flow, uint32_t size, uint32_t best_size )
+  {
+    if constexpr ( DO_AREA )
+    {
+      if ( area_flow < best_area_flow - epsilon )
+      {
+        return true;
+      }
+      else if ( area_flow > best_area_flow + epsilon )
+      {
+        return false;
+      }
+      else if ( edge_flow < best_edge_flow - epsilon )
+      {
+        return true;
+      }
+      else if ( edge_flow > best_edge_flow + epsilon )
+      {
+        return false;
+      }
+      else if ( arrival < best_arrival )
+      {
+        return true;
+      }
+      else if ( arrival > best_arrival )
+      {
+        return false;
+      }
+    }
+    else
+    {
+      if ( arrival < best_arrival )
+      {
+        return true;
+      }
+      else if ( arrival > best_arrival )
+      {
+        return false;
+      }
+      else if ( area_flow < best_area_flow - epsilon )
+      {
+        return true;
+      }
+      else if ( area_flow > best_area_flow + epsilon )
+      {
+        return false;
+      }
+      else if ( edge_flow < best_edge_flow - epsilon )
+      {
+        return true;
+      }
+      else if ( edge_flow > best_edge_flow + epsilon )
+      {
+        return false;
+      }
+    }
+    if ( size < best_size )
+    {
+      return true;
+    }
+    return false;
+  }
+
+  template<bool DO_AREA>
+  inline bool compare_map( uint32_t arrival, uint32_t best_arrival, float area_flow, float best_area_flow, uint32_t size, uint32_t best_size )
   {
     if constexpr ( DO_AREA )
     {
@@ -649,6 +789,7 @@ private:
   uint32_t iteration{ 0 };       /* current mapping iteration */
   uint32_t delay{ 0 };          /* current delay of the mapping */
   uint32_t area{ 0 };           /* current area of the mapping */
+  uint32_t edges{ 0 };           /* current edges of the mapping */
   const float epsilon{ 0.005f }; /* epsilon */
 
   std::vector<node<Ntk>> top_order;
