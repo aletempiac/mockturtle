@@ -36,6 +36,7 @@
 #include <optional>
 
 #include "../views/topo_view.hpp"
+#include "../views/fanout_view.hpp"
 
 namespace mockturtle
 {
@@ -77,10 +78,13 @@ struct xag_algebraic_depth_rewriting_params
    * When comparing to the initial size in aggressive depth rewriting, also the
    * number of dangling nodes are taken into account.
    */
-  float overhead{2.0f};
+  float overhead{ 2.0f };
 
   /*! \brief Allow area increase while optimizing depth. */
-  bool allow_area_increase{true};
+  bool allow_area_increase{ true };
+
+  /*! \brief Allow area increase while optimizing depth. */
+  bool allow_rare_rules{ false };
 };
 
 namespace detail
@@ -120,7 +124,7 @@ private:
         return;
       topo_view topo{ntk, po};
       topo.foreach_node( [&]( auto n ) {
-        bool res = reduce_depth( n );
+        bool res = reduce_depth_and_associativity( n );
         res |= reduce_depth_xor_associativity( n );
 
         if ( ps.allow_area_increase && !res )
@@ -130,6 +134,9 @@ private:
           reduce_depth_and_xor_distributivity( n );
         }
 
+        if ( ps.allow_rare_rules && !res )
+          res = reduce_depth_and_distributity( n );
+
         return true;
       } );
     } );
@@ -137,17 +144,30 @@ private:
 
   void run_selective()
   {
-    uint32_t counter{0};
+    uint32_t counter{ 0 };
     while ( true )
     {
       mark_critical_paths();
 
-      topo_view topo{ntk};
+      topo_view topo{ ntk };
       topo.foreach_node( [this, &counter]( auto n ) {
         if ( ntk.fanout_size( n ) == 0 || ntk.value( n ) == 0 )
           return;
 
-        if ( reduce_depth( n ) )
+        bool res = reduce_depth_and_associativity( n );
+        res |= reduce_depth_xor_associativity( n );
+
+        if ( ps.allow_area_increase && !res )
+        {
+          reduce_depth_and_or_distributivity( n );
+
+          reduce_depth_and_xor_distributivity( n );
+        }
+
+        if ( ps.allow_rare_rules && !res )
+          res = reduce_depth_and_distributity( n );
+
+        if ( res )
         {
           mark_critical_paths();
         }
@@ -164,15 +184,28 @@ private:
 
   void run_aggressive()
   {
-    uint32_t counter{0}, init_size{ntk.size()};
+    uint32_t counter{ 0 }, init_size{ ntk.size() };
     while ( true )
     {
-      topo_view topo{ntk};
+      topo_view topo{ ntk };
       topo.foreach_node( [this, &counter]( auto n ) {
         if ( ntk.fanout_size( n ) == 0 )
           return;
 
-        if ( !reduce_depth( n ) )
+        bool res = reduce_depth_and_associativity( n );
+        res |= reduce_depth_xor_associativity( n );
+
+        if ( ps.allow_area_increase && !res )
+        {
+          reduce_depth_and_or_distributivity( n );
+
+          reduce_depth_and_xor_distributivity( n );
+        }
+
+        if ( ps.allow_rare_rules && !res )
+          res = reduce_depth_and_distributity( n );
+
+        if ( !res )
         {
           ++counter;
         }
@@ -186,7 +219,8 @@ private:
   }
 
 private:
-  bool reduce_depth( node<Ntk> const& n )
+  /* AND associativity */
+  bool reduce_depth_and_associativity( node<Ntk> const& n )
   {
     if ( !ntk.is_and( n ) )
       return false;
@@ -263,6 +297,80 @@ private:
     return true;
   }
 
+  /* AND distributivity */
+  bool reduce_depth_and_distributity( node<Ntk> const& n )
+  {
+    if ( !ntk.is_and( n ) )
+      return false;
+
+    if ( ntk.level( n ) == 0 )
+      return false;
+
+    /* get children of top node, ordered by node level (ascending) */
+    const auto ocs = ordered_children( n );
+
+    if ( !ntk.is_and( ntk.get_node( ocs[0] ) ) || !ntk.is_complemented( ocs[0] ) )
+      return false;
+
+    if ( !ntk.is_and( ntk.get_node( ocs[1] ) ) || !ntk.is_complemented( ocs[1] ) )
+      return false;
+
+    /* children must have single fanout, if no area overhead is allowed */
+    if ( !ps.allow_area_increase && ( ntk.fanout_size( ntk.get_node( ocs[0] ) ) != 1 || ntk.fanout_size( ntk.get_node( ocs[1] ) ) != 1 ) )
+      return false;
+
+    /* get children of first child */
+    auto ocs0 = ordered_children( ntk.get_node( ocs[0] ) );
+
+    /* get children of second child */
+    auto ocs1 = ordered_children( ntk.get_node( ocs[1] ) );
+
+    /* find common support */
+    bool critical_common = false;
+    signal<Ntk> common, x, y;
+    if ( ocs0[0] == ocs1[0] )
+    {
+      common = ocs0[0];
+      x = ocs0[1];
+      y = ocs1[1];
+    }
+    else if ( ocs0[0] == ocs1[1] )
+    {
+      common = ocs0[0];
+      x = ocs0[1];
+      y = ocs1[0];
+    }
+    else if ( ocs0[1] == ocs1[0] )
+    {
+      common = ocs0[1];
+      x = ocs0[0];
+      y = ocs1[1];
+    }
+    else if ( ocs0[1] == ocs1[1] )
+    {
+      common = ocs0[1];
+      x = ocs0[0];
+      y = ocs1[0];
+      critical_common = true;
+    }
+    else
+    {
+      return false;
+    }
+
+    /* common signal is not critical, children must have single fanout, to not increase the area */
+    if ( !critical_common && ( ntk.fanout_size( ntk.get_node( ocs[0] ) ) != 1 || ntk.fanout_size( ntk.get_node( ocs[1] ) ) != 1 ) )
+      return false;
+
+    auto opt = !ntk.create_and( common, !ntk.create_and( !x, !y ) );
+    ntk.substitute_node( n, opt );
+    ntk.update_levels();
+
+    std::cout << "Rule applied\n";
+
+    return true;
+  }
+
   /* AND-OR distributivity */
   bool reduce_depth_and_or_distributivity( node<Ntk> const& n )
   {
@@ -282,6 +390,12 @@ private:
     if ( ntk.level( ntk.get_node( ocs[1] ) ) <= ntk.level( ntk.get_node( ocs[0] ) ) + 2 )
       return false;
 
+    // if ( ps.strategy == xag_algebraic_depth_rewriting_params::selective )
+    // {
+    //   if ( has_multiple_critical_fanouts( ntk.get_node( ocs[1] ) ) )
+    //     return false;
+    // }
+
     /* get children of last child */
     auto ocs1 = ordered_children( ntk.get_node( ocs[1] ) );
 
@@ -292,6 +406,12 @@ private:
     if ( ntk.level( ntk.get_node( ocs1[1] ) ) == ntk.level( ntk.get_node( ocs1[0] ) ) )
       return false;
 
+    // if ( ps.strategy == xag_algebraic_depth_rewriting_params::selective )
+    // {
+    //   if ( has_multiple_critical_fanouts( ntk.get_node( ocs1[1] ) ) )
+    //     return false;
+    // }
+
     /* get children of last grand-child */
     auto ocs11 = ordered_children( ntk.get_node( ocs1[1] ) );
 
@@ -299,7 +419,7 @@ private:
     if ( ntk.level( ntk.get_node( ocs11[1] ) ) == ntk.level( ntk.get_node( ocs11[0] ) ) )
       return false;
 
-    auto opt = ntk.create_or( ntk.create_and( ocs[0], !ocs1[0] ), ntk.create_and( ntk.create_and( ocs[0], ocs11[0] ), ocs11[1] ) );
+    auto opt = !ntk.create_and( !ntk.create_and( ocs[0], !ocs1[0] ), !ntk.create_and( ntk.create_and( ocs[0], ocs11[0] ), ocs11[1] ) );
     ntk.substitute_node( n, opt );
     ntk.update_levels();
 
@@ -325,6 +445,12 @@ private:
     if ( ntk.level( ntk.get_node( ocs[1] ) ) <= ntk.level( ntk.get_node( ocs[0] ) ) + 2 )
       return false;
 
+    // if ( ps.strategy == xag_algebraic_depth_rewriting_params::selective )
+    // {
+    //   if ( has_multiple_critical_fanouts( ntk.get_node( ocs[1] ) ) )
+    //     return false;
+    // }
+
     /* get children of last child */
     auto ocs1 = ordered_children( ntk.get_node( ocs[1] ) );
 
@@ -334,6 +460,12 @@ private:
     /* depth of second grand-child must be higher than depth of first grand-child */
     if ( ntk.level( ntk.get_node( ocs1[1] ) ) == ntk.level( ntk.get_node( ocs1[0] ) ) )
       return false;
+
+    // if ( ps.strategy == xag_algebraic_depth_rewriting_params::selective )
+    // {
+    //   if ( has_multiple_critical_fanouts( ntk.get_node( ocs1[1] ) ) )
+    //     return false;
+    // }
 
     /* get children of last grand-child */
     auto ocs11 = ordered_children( ntk.get_node( ocs1[1] ) );
@@ -355,10 +487,12 @@ private:
     return true;
   }
 
-  std::array<signal<Ntk>, 2> ordered_children( node<Ntk> const& n ) const
+  inline std::array<signal<Ntk>, 2> ordered_children( node<Ntk> const& n ) const
   {
     std::array<signal<Ntk>, 2> children;
-    ntk.foreach_fanin( n, [&children]( auto const& f, auto i ) { children[i] = f; } );
+    ntk.foreach_fanin( n, [&children]( auto const& f, auto i ) {
+      children[i] = f;
+    } );
     if ( ntk.level( ntk.get_node( children[0] ) ) > ntk.level( ntk.get_node( children[1] ) ) )
     {
       std::swap( children[0], children[1] );
@@ -391,6 +525,19 @@ private:
       }
     } );
   }
+
+  // bool has_multiple_critical_fanouts( node<Ntk> const& n )
+  // {
+  //   int num_critical_fanouts = 0u;
+  //   ntk.foreach_fanout( n, [&]( auto const& f ) {
+  //     if ( ntk.value( f ) && ntk.level( f ) == ntk.level( n ) + 1 )
+  //     {
+  //       ++num_critical_fanouts;
+  //     }
+  //   } );
+
+  //   return num_critical_fanouts > 1;
+  // }
 
 private:
   Ntk& ntk;
@@ -434,15 +581,15 @@ void xag_algebraic_depth_rewriting( Ntk& ntk, xag_algebraic_depth_rewriting_para
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
   static_assert( has_level_v<Ntk>, "Ntk does not implement the level method" );
-  static_assert( has_create_maj_v<Ntk>, "Ntk does not implement the create_maj method" );
+  static_assert( has_create_and_v<Ntk>, "Ntk does not implement the create_maj method" );
   static_assert( has_create_xor_v<Ntk>, "Ntk does not implement the create_maj method" );
   static_assert( has_substitute_node_v<Ntk>, "Ntk does not implement the substitute_node method" );
   static_assert( has_update_levels_v<Ntk>, "Ntk does not implement the update_levels method" );
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
   static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
-  static_assert( has_is_maj_v<Ntk>, "Ntk does not implement the is_maj method" );
-  static_assert( has_is_xor3_v<Ntk>, "Ntk does not implement the is_maj method" );
+  static_assert( has_is_and_v<Ntk>, "Ntk does not implement the is_and method" );
+  static_assert( has_is_xor_v<Ntk>, "Ntk does not implement the is_xor method" );
   static_assert( has_clear_values_v<Ntk>, "Ntk does not implement the clear_values method" );
   static_assert( has_set_value_v<Ntk>, "Ntk does not implement the set_value method" );
   static_assert( has_value_v<Ntk>, "Ntk does not implement the value method" );

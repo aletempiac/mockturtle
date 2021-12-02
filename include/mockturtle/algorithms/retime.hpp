@@ -39,6 +39,7 @@
 #include "../utils/stopwatch.hpp"
 
 #include "../views/fanout_view.hpp"
+#include "../views/topo_view.hpp"
 
 
 namespace mockturtle
@@ -57,7 +58,10 @@ struct retime_params
   bool backward_only{ false };
 
   /*! \brief Retiming iterations. */
-  unsigned iterations{ 5 };
+  uint32_t iterations{ UINT32_MAX };
+
+  /*! \brief Be verbose */
+  bool verbose { false };
 };
 
 /*! \brief Statistics for retiming.
@@ -78,6 +82,7 @@ struct retime_stats
 
   void report() const
   {
+    std::cout << fmt::format( "[i] Initial registers = {:7d}\t Final registers = {:7d}\n", registers_pre, registers_post );
     std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
@@ -90,13 +95,15 @@ class retime_impl
 {
 public:
   using node = typename Ntk::node;
+  using signal = typename Ntk::signal;
 
 public:
   explicit retime_impl( Ntk& ntk, retime_params const& ps, retime_stats& st )
     : _ntk( ntk ),
       _ps( ps ),
       _st( st ),
-      _flow_path( ntk )
+      _flow_path( ntk ),
+      _top_order()
   {}
 
 public:
@@ -131,17 +138,24 @@ private:
   template<bool forward>
   bool retime_area()
   {
+    /* compute and save topological order */
+    _top_order.reserve( _ntk.size() );
+    _top_order.clear();
+    topo_view<Ntk>( _ntk ).foreach_node( [this]( auto n ) {
+      _top_order.push_back( n );
+    } );
+
     init_values<forward>();
 
     auto min_cut = max_flow<forward>();
 
-    if ( min_cut.size() >= ntk.num_latches() )
+    if ( min_cut.size() >= _ntk.num_latches() )
       return false;
 
     /* move latches */
-    update_latches_position( min_cut );
+    update_latches_position<forward>( min_cut );
   
-    return false;
+    return true;
   }
 
   template<bool forward>
@@ -176,6 +190,7 @@ private:
     } );
 
     /* run reachability */
+    _ntk.incr_trav_id();
     _ntk.foreach_latch( [&]( auto const& n ) {
       uint32_t local_flow;
       if constexpr ( forward )
@@ -199,11 +214,11 @@ private:
 
     assert( check_min_cut<forward>( min_cut ) );
 
-    std::cout << fmt::format( "Initial latches: {}\t Max flow: {}\t Latches after: {}\n", _st.registers_pre, flow, min_cut.size() );
+    // std::cout << fmt::format( "Initial latches: {}\t Max flow: {}\t Latches after: {}\n", _ntk.num_latches(), flow, min_cut.size() );
 
     legalize_retiming<forward>( min_cut );
 
-    std::cout << fmt::format( "Initial latches: {}\t Max flow: {}\t Latches after: {}\n\n", _st.registers_pre, flow, min_cut.size() );
+    // std::cout << fmt::format( "Initial latches: {}\t Max flow: {}\t Latches after: {}\n\n", _ntk.num_latches(), flow, min_cut.size() );
 
     return min_cut;
   }
@@ -505,16 +520,18 @@ private:
       } );
 
       /* mark childrens of marked nodes */
-      /* assume topological order */
-      /* TODO: is it really needed? */
-      _ntk.foreach_gate( [&]( auto const& n ) {
+      for ( auto const& n : _top_order )
+      {
+        if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
+          continue;
+
         if ( _ntk.value( n ) == 1 )
         {
           _ntk.foreach_fanin( n, [&]( auto const& f ) {
             _ntk.set_value( _ntk.get_node( f ), 1 );
           } );
         }
-      } );
+      }
     }
     else
     {
@@ -536,6 +553,114 @@ private:
         rec_mark_tfi( _ntk.get_node( f ) );
       } );
     }
+  }
+
+  template<bool forward>
+  void update_latches_position( std::vector<node> const& min_cut )
+  {
+    _ntk.incr_trav_id();
+
+    // std::cout << "Mincut: ";
+
+    /* create new latches and mark the ones to reuse */
+    for ( auto const& n : min_cut )
+    {
+      // std::cout << n << " ";
+      if constexpr ( forward )
+      {
+        if ( _ntk.is_box_output( n ) )
+        {
+          /* reuse the current latch */
+          _ntk.foreach_fanin( n, [&]( auto const& f ) {
+            if ( _ntk.is_latch( _ntk.get_node( f ) ) )
+              _ntk.set_visited( _ntk.get_node( f ), _ntk.trav_id() );
+          } );
+
+          /* check for not marked fanouts */
+          // _ntk.foreach_fanout( n, [&]( auto const& f ) {
+          //   if ( !_ntk.value( f ) )
+          //     std::cout << "not marked fanout\n";
+          // } );
+        }
+        else
+        {
+          /* create a new latch */
+          auto const in_latch = _ntk.create_box_input( _ntk.make_signal( n ) );
+          auto const latch = _ntk.create_latch( in_latch );
+          auto const latch_out = _ntk.create_box_output( latch );
+
+          /* replace in n fanout */
+          auto fanout = _ntk.fanout( n );
+          for ( auto const& f : fanout )
+          {
+            if ( f != _ntk.get_node( in_latch ) && !_ntk.value( f ) )
+            {
+              _ntk.replace_in_node( f, n, latch_out );
+              _ntk.decr_fanout_size( n );
+            }
+          }
+
+          _ntk.set_visited( _ntk.get_node( latch ), _ntk.trav_id() );
+        }
+      }
+      else
+      {
+        if ( _ntk.is_box_input( n ) )
+        {
+          _ntk.foreach_fanout( n, [&]( auto const& f ) {
+            if ( _ntk.is_latch( f ) )
+              _ntk.set_visited( f, _ntk.trav_id() );
+          } );
+        }
+        else
+        {
+          /* create a new latch */
+          auto const in_latch = _ntk.create_box_input( _ntk.make_signal( n ) );
+          auto const latch = _ntk.create_latch( in_latch );
+          auto const latch_out = _ntk.create_box_output( latch );
+
+          /* replace in n fanout */
+          auto fanout = _ntk.fanout( n );
+          for ( auto const& f : fanout )
+          {
+            if ( f != _ntk.get_node( in_latch ) && _ntk.value( f ) )
+            {
+              _ntk.replace_in_node( f, n, latch_out );
+              _ntk.decr_fanout_size( n );
+            }
+          }
+
+          _ntk.set_visited( _ntk.get_node( latch ), _ntk.trav_id() );
+        }
+      }
+    }
+    // std::cout << "\n";
+
+    /* remove retimed latches */
+    _ntk.foreach_gate( [&]( auto const& n )
+    {
+      if ( !_ntk.is_latch( n ) || _ntk.visited( n ) == _ntk.trav_id() )
+        return true;
+
+      node latch_in, latch_out;
+      signal latch_in_in;
+      _ntk.foreach_fanin( n, [&]( auto const& f )
+      {
+        latch_in = _ntk.get_node( f );
+      } );
+      _ntk.foreach_fanin( latch_in, [&]( auto const& f )
+      {
+        latch_in_in = f;
+      } );
+      _ntk.foreach_fanout( n, [&]( auto const& f )
+      {
+        latch_out = f;
+      } );
+
+      _ntk.substitute_node( latch_out, latch_in_in );
+
+      return true;
+    } );
   }
 
   void rec_mark_tfo( node const& n )
@@ -646,11 +771,36 @@ private:
   retime_stats& _st;
 
   node_map<uint32_t, Ntk> _flow_path;
+  std::vector<node> _top_order;
   uint32_t sink_node{UINT32_MAX};
 };
 
 } /* namespace detail */
 
+/*! \brief Retiming.
+ *
+ * This function implements a retiming algorithm for registers minimization.
+ * The only supported network type is the `generic_network`.
+ * The algorithm excecutes the retiming inplace.
+ * 
+ * **Required network functions:**
+ * - `size`
+ * - `is_pi`
+ * - `is_constant`
+ * - `node_to_index`
+ * - `index_to_node`
+ * - `get_node`
+ * - `foreach_po`
+ * - `foreach_node`
+ * - `fanout_size`
+ *
+ * \param ntk Network
+ * \param ps Retiming params
+ * \param pst Retiming statistics
+ * 
+ * The implementation of this algorithm was inspired by the
+ * mapping command ``retime`` in ABC.
+ */
 template<class Ntk>
 void retime( Ntk& ntk, retime_params const& ps = {}, retime_stats* pst = nullptr )
 {
@@ -674,6 +824,9 @@ void retime( Ntk& ntk, retime_params const& ps = {}, retime_stats* pst = nullptr
 
   detail::retime_impl p( fanout_view, ps, st );
   p.run();
+
+  if ( ps.verbose )
+    st.report();
 
   if ( pst )
   {

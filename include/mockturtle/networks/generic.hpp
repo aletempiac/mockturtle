@@ -59,7 +59,7 @@ struct generic_storage_data
 
 /*! \brief Generic node
  *
- * `data[0].h1`: Fan-out size
+ * `data[0].h1`: Fan-out size (we use MSB to indicate whether a node is dead)
  * `data[0].h2`: Application-specific value
  * `data[1].h1`: Function literal in truth table cache
  * `data[1].h2`: Visited flags
@@ -453,24 +453,90 @@ signal create_maj( signal a, signal b, signal c )
 
   signal create_latch( signal a, latch_info const& l_info = {} )
   {
-    /* create box input ri */
-    const auto ri = create_box_input( a );
-    // auto const ri_index = static_cast<uint32_t>( _storage->outputs.size() );
-    // _storage->outputs.emplace_back( ri );
-
-    /* create latch */
-    auto const latch = create_buf( ri );
+    auto const latch = create_buf( a );
     _storage->nodes[get_node( latch )].data[2].h1 = 6;
     _storage->latch_information[get_node( latch )] = l_info;
 
-    /* create box output ro */
-    const auto ro = create_box_output( latch );
-    // _storage->inputs.emplace_back( get_node( ro ) );
-    return ro;
+    return latch;
   }
 #pragma endregion
 
 #pragma region Restructuring
+  std::optional<std::pair<node, signal>> replace_in_node( node const& n, node const& old_node, signal new_signal )
+  {
+    auto& root = _storage->nodes[n];
+    for ( auto& child : root.children )
+    {
+      if ( child == old_node )
+      {
+        std::vector<signal> old_children( root.children.size() );
+        std::transform( root.children.begin(), root.children.end(), old_children.begin(), []( auto c ) { return c.index; } );
+        child = new_signal;
+        
+        // increment fan-out of new node
+        _storage->nodes[new_signal].data[0].h1++;
+
+        for ( auto const& fn : _events->on_modified )
+        {
+          (*fn)( n, old_children );
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  void replace_in_outputs( node const& old_node, signal const& new_signal )
+  {
+    for ( auto& output : _storage->outputs )
+    {
+      if ( output == old_node )
+      {
+        output = new_signal;
+
+        // increment fan-out of new node
+        _storage->nodes[new_signal].data[0].h1++;
+      }
+    }
+  }
+
+  void take_out_node( node const& n )
+  {
+    /* we cannot delete PIs, constants, or already dead nodes */
+    if ( n == 0 || is_pi( n ) || is_dead( n ) )
+      return;
+
+    auto& nobj = _storage->nodes[n];
+    nobj.data[0].h1 = UINT32_C( 0x80000000 ); /* fanout size 0, but dead */
+
+    /*  remove latch entry if latch */
+    if ( is_latch( n ) )
+    {
+      _storage->latch_information.erase( n );
+    }
+
+    for ( auto const& fn : _events->on_delete )
+    {
+      (*fn)( n );
+    }
+
+    for ( auto& child : nobj.children )
+    {
+      if ( fanout_size( child.index ) == 0 )
+      {
+        continue;
+      }
+      if ( decr_fanout_size( child.index ) == 0 )
+      {
+        take_out_node( child.index );
+      }
+    }
+  }
+
+  inline bool is_dead( node const& n ) const
+  {
+    return ( _storage->nodes[n].data[0].h1 >> 31 ) & 1;
+  }
+
   void substitute_node( node const& old_node, signal const& new_signal )
   {
     /* find all parents from old_node */
@@ -497,19 +563,10 @@ signal create_maj( signal a, signal b, signal c )
     }
 
     /* check outputs */
-    for ( auto& output : _storage->outputs )
-    {
-      if ( output == old_node )
-      {
-        output = new_signal;
+    replace_in_outputs( old_node, new_signal );
 
-        // increment fan-out of new node
-        _storage->nodes[new_signal].data[0].h1++;
-      }
-    }
-
-    // reset fan-out of old node
-    _storage->nodes[old_node].data[0].h1 = 0;
+    /* reset fan-in of old node */
+    take_out_node( old_node );
   }
 #pragma endregion
 
@@ -562,7 +619,17 @@ signal create_maj( signal a, signal b, signal c )
 
   uint32_t fanout_size( node const& n ) const
   {
-    return _storage->nodes[n].data[0].h1;
+    return _storage->nodes[n].data[0].h1 & UINT32_C( 0x7FFFFFFF );
+  }
+
+  uint32_t incr_fanout_size( node const& n ) const
+  {
+    return _storage->nodes[n].data[0].h1++ & UINT32_C( 0x7FFFFFFF );
+  }
+
+  uint32_t decr_fanout_size( node const& n ) const
+  {
+    return --_storage->nodes[n].data[0].h1 & UINT32_C( 0x7FFFFFFF );
   }
 
   bool is_function( node const& n ) const
@@ -717,7 +784,10 @@ signal create_maj( signal a, signal b, signal c )
   void foreach_node( Fn&& fn ) const
   {
     auto r = range<uint64_t>( _storage->nodes.size() );
-    detail::foreach_element( r.begin(), r.end(), fn );
+    detail::foreach_element_if(
+        r.begin(), r.end(),
+        [this]( auto n ) { return !is_dead( n ); },
+        fn );
   }
 
   template<typename Fn>
@@ -809,7 +879,7 @@ signal create_maj( signal a, signal b, signal c )
   {
     auto r = range<uint64_t>( 2u, _storage->nodes.size() ); /* start from 2 to avoid constants */
     detail::foreach_element_if( r.begin(), r.end(),
-                                [this]( auto n ) { return !is_pi( n ); }, /* change to PI to cycle over boxes as well */
+                                [this]( auto n ) { return !is_pi( n ) && !is_dead( n ); }, /* change to PI to cycle over boxes as well */
                                 fn );
   }
 
@@ -818,7 +888,7 @@ signal create_maj( signal a, signal b, signal c )
   {
     auto r = range<uint64_t>( 2u, _storage->nodes.size() ); /* start from 2 to avoid constants */
     detail::foreach_element_if( r.begin(), r.end(),
-                                [this]( auto n ) { return is_latch( n ); },
+                                [this]( auto n ) { return is_latch( n ) && !is_dead( n ); },
                                 fn );
   }
 

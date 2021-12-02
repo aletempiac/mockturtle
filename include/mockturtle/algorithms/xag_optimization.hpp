@@ -210,61 +210,61 @@ inline xag_network xag_dont_cares_optimization( xag_network const& xag )
   return dest;
 }
 
-/*! \brief Optimizes some AND gates using satisfiability don't cares
- *
- * If an AND gate is satisfiability don't care for assignment 00, it can be
- * replaced by an XNOR gate, therefore reducing the multiplicative complexity.
- * Differently from the standard version, here the don't care are computed
- * in a window and using simulation.
- */
-xag_network xag_dont_cares_optimization_windowed( xag_network const& xag, uint64_t max_tfi_inputs = 16u )
-{
-  node_map<xag_network::signal, xag_network> old_to_new( xag );
-  xag_network dest;
+// /*! \brief Optimizes some AND gates using satisfiability don't cares
+//  *
+//  * If an AND gate is satisfiability don't care for assignment 00, it can be
+//  * replaced by an XNOR gate, therefore reducing the multiplicative complexity.
+//  * Differently from the standard version, here the don't care are computed
+//  * in a window and using simulation.
+//  */
+// xag_network xag_dont_cares_optimization_windowed( xag_network const& xag, uint64_t max_tfi_inputs = 16u )
+// {
+//   node_map<xag_network::signal, xag_network> old_to_new( xag );
+//   xag_network dest;
 
-  old_to_new[xag.get_constant( false )] = dest.get_constant( false );
+//   old_to_new[xag.get_constant( false )] = dest.get_constant( false );
 
-  xag.foreach_pi( [&]( auto const& n ) {
-    old_to_new[n] = dest.create_pi();
-  } );
+//   xag.foreach_pi( [&]( auto const& n ) {
+//     old_to_new[n] = dest.create_pi();
+//   } );
 
-  topo_view<xag_network>{xag}.foreach_node( [&]( auto const& n ) {
-    if ( xag.is_constant( n ) || xag.is_pi( n ) )
-      return;
+//   topo_view<xag_network>{xag}.foreach_node( [&]( auto const& n ) {
+//     if ( xag.is_constant( n ) || xag.is_pi( n ) )
+//       return;
 
-    std::array<xag_network::signal, 2> fanin{};
-    xag.foreach_fanin( n, [&]( auto const& f, auto i ) {
-      fanin[i] = old_to_new[f] ^ xag.is_complemented( f );
-    } );
+//     std::array<xag_network::signal, 2> fanin{};
+//     xag.foreach_fanin( n, [&]( auto const& f, auto i ) {
+//       fanin[i] = old_to_new[f] ^ xag.is_complemented( f );
+//     } );
 
-    std::vector<xag_network::node> leaves;
-    xag.foreach_fanin( n, [&]( auto const& f, auto i ) {
-      leaves.push_back( xag.get_node( f ) ); 
-    } );
+//     std::vector<xag_network::node> leaves;
+//     xag.foreach_fanin( n, [&]( auto const& f, auto i ) {
+//       leaves.push_back( xag.get_node( f ) ); 
+//     } );
 
-    if ( xag.is_and( n ) )
-    {
-      if ( kitty::get_bit( satisfiability_dont_cares( xag, leaves, max_tfi_inputs ), 0 ) == 1 )
-      {
-        old_to_new[n] = dest.create_xnor( fanin[0], fanin[1] );
-      }
-      else
-      {
-        old_to_new[n] = dest.create_and( fanin[0], fanin[1] );
-      }
-    }
-    else /* is XOR */
-    {
-      old_to_new[n] = dest.create_xor( fanin[0], fanin[1] );
-    }
-  } );
+//     if ( xag.is_and( n ) )
+//     {
+//       if ( kitty::get_bit( satisfiability_dont_cares( xag, leaves, max_tfi_inputs ), 0 ) == 1 )
+//       {
+//         old_to_new[n] = dest.create_xnor( fanin[0], fanin[1] );
+//       }
+//       else
+//       {
+//         old_to_new[n] = dest.create_and( fanin[0], fanin[1] );
+//       }
+//     }
+//     else /* is XOR */
+//     {
+//       old_to_new[n] = dest.create_xor( fanin[0], fanin[1] );
+//     }
+//   } );
 
-  xag.foreach_po( [&]( auto const& f ) {
-    dest.create_po( old_to_new[f] ^ xag.is_complemented( f ) );
-  } );
+//   xag.foreach_po( [&]( auto const& f ) {
+//     dest.create_po( old_to_new[f] ^ xag.is_complemented( f ) );
+//   } );
 
-  return dest;
-}
+//   return dest;
+// }
 
 /*! \brief Optimizes XOR gates by linear network resynthesis
  *

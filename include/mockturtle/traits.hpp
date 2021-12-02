@@ -1745,6 +1745,36 @@ template<class Ntk>
 inline constexpr bool has_foreach_cell_fanin_v = has_foreach_cell_fanin<Ntk>::value;
 #pragma endregion
 
+#pragma region has_set_as_latch
+template<class Ntk, class = void>
+struct has_set_as_latch : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_set_as_latch<Ntk, std::void_t<decltype( std::declval<Ntk>().set_as_latch( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_set_as_latch_v = has_set_as_latch<Ntk>::value;
+#pragma endregion
+
+#pragma region has_add_binding
+template<class Ntk, class = void>
+struct has_add_binding : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_add_binding<Ntk, std::void_t<decltype( std::declval<Ntk>().add_binding( std::declval<node<Ntk>>(), uint32_t() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_add_binding_v = has_add_binding<Ntk>::value;
+#pragma endregion
+
 #pragma region has_clear_values
 template<class Ntk, class = void>
 struct has_clear_values : std::false_type
