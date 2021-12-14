@@ -779,6 +779,14 @@ signal create_maj( signal a, signal b, signal c )
   }
 #pragma endregion
 
+#pragma region Children acces
+  signal get_fanin0( node const& n ) const
+  {
+    assert( _storage->nodes[n].children.size() );
+    return _storage->nodes[n].children[0].data;
+  }
+#pragma endregion
+
 #pragma region Node and signal iterators
   template<typename Fn>
   void foreach_node( Fn&& fn ) const

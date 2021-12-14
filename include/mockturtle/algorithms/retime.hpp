@@ -175,11 +175,7 @@ private:
       }
       else
       {
-        node fanin = 0;
-        _ntk.foreach_fanin( n, [&]( auto const& f ) {
-          fanin = _ntk.get_node( f );
-          return false;
-        } );
+        node fanin = _ntk.get_node( _ntk.get_fanin0( n ) );
         local_flow = max_flow_backwards_compute_rec( fanin );
       }
 
@@ -199,11 +195,7 @@ private:
       }
       else
       {
-        node fanin = 0;
-        _ntk.foreach_fanin( n, [&]( auto const& f ) {
-          fanin = _ntk.get_node( f );
-          return false;
-        } );
+        node fanin = _ntk.get_node( _ntk.get_fanin0( n ) );
         local_flow = max_flow_backwards_compute_rec( fanin );
       }
 
@@ -222,36 +214,6 @@ private:
 
     return min_cut;
   }
-
-  // uint32_t max_flow_forwards_compute( node const& n )
-  // {
-  //   uint32_t found_path = 0;
-
-  //   _ntk.set_visited( n, _ntk.trav_id() );
-
-  //   /* node is not in a flow path */
-  //   if ( _flow_path[n] == 0 )
-  //   {
-  //     _ntk.foreach_fanout( n, [&]( auto const& f ) {
-  //       /* there is a path for flow */
-  //       if ( max_flow_forwards_compute_rec( f ) )
-  //       {
-  //         _flow_path[n] = _ntk.node_to_index( f );
-  //         found_path = 1;
-  //         return false;
-  //       }
-  //       return true;
-  //     } );
-
-  //     if ( !found_path && _ntk.fanout_size( n ) != _ntk.fanout( n ).size() )
-  //     {
-  //       _flow_path[n] = sink_node;
-  //       return 1;
-  //     }
-  //   }
-
-  //   return found_path;
-  // }
 
   uint32_t max_flow_forwards_compute_rec( node const& n )
   {
@@ -406,12 +368,6 @@ private:
       if ( _ntk.visited( n ) != _ntk.trav_id() )
         return true;
 
-      // if ( _ntk.is_latch( n ) && _flow_path[n] != sink_node )
-      // {
-      //   if ( !_ntk.is_latch( _flow_path[n] ) && _ntk.visited( _flow_path[n] ) == _ntk.trav_id() )
-      //     return true;
-      // }
-
       if ( _ntk.value( n ) || _ntk.visited( _flow_path[n] ) != _ntk.trav_id() )
         min_cut.push_back( n );
       return true;
@@ -457,11 +413,7 @@ private:
     {
       _ntk.incr_trav_id();
       _ntk.foreach_latch( [&]( auto const& n ) {
-        node fanin = 0;
-        _ntk.foreach_fanin( n, [&]( auto const& f ) {
-          fanin = _ntk.get_node( f );
-          return false;
-        } );
+        node fanin = _ntk.get_node( _ntk.get_fanin0( n ) );
         collect_cut_nodes_tfi( fanin, min_cut );
       } );
       _ntk.foreach_node( [&]( auto const& n ) {
@@ -642,16 +594,10 @@ private:
       if ( !_ntk.is_latch( n ) || _ntk.visited( n ) == _ntk.trav_id() )
         return true;
 
-      node latch_in, latch_out;
-      signal latch_in_in;
-      _ntk.foreach_fanin( n, [&]( auto const& f )
-      {
-        latch_in = _ntk.get_node( f );
-      } );
-      _ntk.foreach_fanin( latch_in, [&]( auto const& f )
-      {
-        latch_in_in = f;
-      } );
+      node latch_out;
+      node latch_in = _ntk.get_node( _ntk.get_fanin0( n ) );
+      signal latch_in_in = _ntk.get_fanin0( latch_in );
+
       _ntk.foreach_fanout( n, [&]( auto const& f )
       {
         latch_out = f;
@@ -704,11 +650,7 @@ private:
       }
       else
       {
-        node fanin = 0;
-        _ntk.foreach_fanin( n, [&]( auto const& f ) {
-          fanin = _ntk.get_node( f );
-          return false;
-        } );
+        node fanin =_ntk.get_node( _ntk.get_node0( n ) );
         if ( !check_min_cut_rec<forward>( fanin ) )
           check = false;
       }
@@ -816,6 +758,7 @@ void retime( Ntk& ntk, retime_params const& ps = {}, retime_stats* pst = nullptr
   static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
   static_assert( has_incr_value_v<Ntk>, "Ntk does not implement the incr_value method" );
   static_assert( has_decr_value_v<Ntk>, "Ntk does not implement the decr_value method" );
+  static_assert( has_get_fanin0_v<Ntk>, "Ntk does not implement the get_fanin0 method" );
 
   retime_stats st;
 

@@ -1580,6 +1580,21 @@ template<class Ntk>
 inline constexpr bool has_foreach_fanout_v = has_foreach_fanout<Ntk>::value;
 #pragma endregion
 
+#pragma region has_get_fanin0
+template<class Ntk, class = void>
+struct has_get_fanin0 : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_get_fanin0<Ntk, std::void_t<decltype( std::declval<Ntk>().get_fanin0( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_get_fanin0_v = has_get_fanin0<Ntk>::value;
+#pragma endregion
+
 #pragma region has_compute
 template<class Ntk, typename T, class = void>
 struct has_compute : std::false_type
