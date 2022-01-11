@@ -30,6 +30,8 @@
   \author Alessandro Tempia Calvino
 */
 
+#pragma once
+
 #include <vector>
 
 #include "../../networks/klut.hpp"
@@ -40,6 +42,46 @@
 
 namespace mockturtle
 {
+
+namespace detail
+{
+
+template<class NtkSource, class NtkDest>
+NtkDest create_copy_generic( NtkSource const& ntk, node_map<typename NtkDest::signal, NtkSource>& old2new )
+{
+  if constexpr ( has_add_binding_v<NtkSource> && has_add_binding_v<NtkDest> )
+  {
+    NtkDest res( ntk.get_library() );
+
+    old2new[ntk.get_constant( false )] = res.get_constant( false );
+    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
+    {
+      old2new[ntk.get_constant( true )] = res.get_constant( true );
+    }
+    ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[n] = res.create_pi();
+    } );
+
+    return res;
+  }
+  else
+  {
+    NtkDest res;
+
+    old2new[ntk.get_constant( false )] = res.get_constant( false );
+    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
+    {
+      old2new[ntk.get_constant( true )] = res.get_constant( true );
+    }
+    ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[n] = res.create_pi();
+    } );
+
+    return res;
+  }
+}
+
+} /* namespace detail */
 
 /*! \brief Network convertion to generic network.
  *
@@ -192,6 +234,69 @@ binding_view<klut_network> mapped_create_from_generic_network( binding_view<gene
 
   ntk.foreach_po( [&]( auto const& f ) {
     res.create_po( old2new[f] );
+  } );
+
+  return res;
+}
+
+/*! \brief Cleans up dangling nodes on generic network type.
+ *
+ * This method reconstructs a network and omits all dangling nodes.  The
+ * network types of the source and destination network are the same.
+ *
+ */
+template<class NtkSource, class NtkDest = NtkSource>
+NtkDest cleanup_dangling_generic( NtkSource const& ntk )
+{
+  using signal = typename NtkDest::signal;
+
+  /* create a new network copy */
+  node_map<signal, NtkSource> old2new( ntk );
+  NtkDest res = detail::create_copy_generic<NtkSource, NtkDest>( ntk, old2new );
+
+  topo_view topo{ ntk };
+  topo.foreach_gate( [&]( auto const& n ) {
+    if ( ntk.is_po( n ) )
+    {
+      res.create_po( old2new[ntk.get_fanin0( n )] );
+    }
+    else if ( ntk.is_box_input( n ) || ntk.is_box_output( n ) )
+    {
+      /* link to children */
+      signal children;
+      children = old2new[ntk.get_fanin0( n )];
+
+      old2new[n] = children;
+    }
+    else if ( ntk.is_latch( n ) )
+    {
+      /* copy latch */
+      signal children;
+      children = old2new[ntk.get_fanin0( n )];
+
+      auto const in_latch = res.create_box_input( res.make_signal( children ) );
+      auto const latch = res.create_latch( in_latch );
+      auto const latch_out = res.create_box_output( latch );
+
+      old2new[n] = latch_out;
+    }
+    else
+    {
+      /* copy gate */
+      std::vector<signal> children;
+
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        children.push_back( old2new[f] );
+      } );
+
+      const auto f = res.create_node( children, ntk.node_function( n ) );
+      old2new[n] = f;
+
+      if constexpr ( has_add_binding_v<NtkDest> && has_add_binding_v<NtkSource> )
+      {
+        res.add_binding( res.get_node( f ), ntk.get_binding_index( n ) );
+      }
+    }
   } );
 
   return res;

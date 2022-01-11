@@ -165,17 +165,17 @@ public:
     _bindings.erase( n );
   }
 
-  const gate& get_binding( node const& n) const
+  const gate& get_binding( node const& n ) const
   {
     return _library[_bindings[n]];
   }
 
-  bool has_binding( node const& n) const
+  bool has_binding( node const& n ) const
   {
     return _bindings.has( n );
   }
 
-  unsigned int get_binding_index( node const& n) const
+  unsigned int get_binding_index( node const& n ) const
   {
     return _bindings[n];
   }

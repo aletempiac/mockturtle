@@ -37,7 +37,6 @@
 
 #include <fmt/format.h>
 #include "../utils/stopwatch.hpp"
-
 #include "../views/fanout_view.hpp"
 #include "../views/topo_view.hpp"
 
@@ -57,7 +56,7 @@ struct retime_params
   /*! \brief Do backward only retiming. */
   bool backward_only{ false };
 
-  /*! \brief Retiming iterations. */
+  /*! \brief Retiming max iterations. */
   uint32_t iterations{ UINT32_MAX };
 
   /*! \brief Be verbose */
@@ -102,8 +101,7 @@ public:
     : _ntk( ntk ),
       _ps( ps ),
       _st( st ),
-      _flow_path( ntk ),
-      _top_order()
+      _flow_path( ntk )
   {}
 
 public:
@@ -138,18 +136,20 @@ private:
   template<bool forward>
   bool retime_area()
   {
-    /* compute and save topological order */
-    _top_order.reserve( _ntk.size() );
-    _top_order.clear();
-    topo_view<Ntk>( _ntk ).foreach_node( [this]( auto n ) {
-      _top_order.push_back( n );
-    } );
+    auto const num_latches_pre = _ntk.num_latches();
 
     init_values<forward>();
 
     auto min_cut = max_flow<forward>();
 
-    if ( min_cut.size() >= _ntk.num_latches() )
+    if ( _ps.verbose )
+    {
+      float latch_improvement = ( (float) num_latches_pre - min_cut.size() ) / num_latches_pre * 100; 
+      std::cout << fmt::format( "[i] Retiming {}\t pre = {:7d}\t post = {:7d}\t improvement = {:>5.2f}%\n",
+                                 forward ? "forward" : "backward", num_latches_pre, min_cut.size(), latch_improvement );
+    }
+
+    if ( min_cut.size() >= num_latches_pre )
       return false;
 
     /* move latches */
@@ -472,17 +472,20 @@ private:
       } );
 
       /* mark childrens of marked nodes */
-      for ( auto const& n : _top_order )
-      {
-        if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
-          continue;
-
+      std::vector<node> to_mark;
+      to_mark.reserve( 200 );
+      _ntk.foreach_gate( [&]( auto const& n ) {
         if ( _ntk.value( n ) == 1 )
         {
           _ntk.foreach_fanin( n, [&]( auto const& f ) {
-            _ntk.set_value( _ntk.get_node( f ), 1 );
+            if ( _ntk.value( _ntk.get_node( f ) ) == 0 )
+              to_mark.push_back( _ntk.get_node( f ) );
           } );
         }
+      } );
+      for ( auto const& n : to_mark )
+      {
+        _ntk.set_value( n, 1 );
       }
     }
     else
@@ -512,12 +515,9 @@ private:
   {
     _ntk.incr_trav_id();
 
-    // std::cout << "Mincut: ";
-
     /* create new latches and mark the ones to reuse */
     for ( auto const& n : min_cut )
     {
-      // std::cout << n << " ";
       if constexpr ( forward )
       {
         if ( _ntk.is_box_output( n ) )
@@ -586,7 +586,6 @@ private:
         }
       }
     }
-    // std::cout << "\n";
 
     /* remove retimed latches */
     _ntk.foreach_gate( [&]( auto const& n )
@@ -607,7 +606,125 @@ private:
 
       return true;
     } );
+
+    /* cleanup dangling nodes */
+    // _ntk = fanout_view( cleanup_dangling_generic<fanout_view<Ntk>, Ntk>( _ntk ) );
   }
+
+  // template<bool forward>
+  // void update_latches_position( std::vector<node> const& min_cut )
+  // {
+  //   _ntk.incr_trav_id();
+
+  //   /* mark latches to reuse */
+  //   for ( auto const& n : min_cut )
+  //   {
+  //     /* mark mincut nodes */
+  //     _ntk.set_visited( n, _ntk.trav_id() );
+
+  //     if constexpr ( forward )
+  //     {
+  //       if ( _ntk.is_box_output( n ) )
+  //       {
+  //         /* reuse the current latch */
+  //         _ntk.foreach_fanin( n, [&]( auto const& f ) {
+  //           if ( _ntk.is_latch( _ntk.get_node( f ) ) )
+  //             _ntk.set_visited( _ntk.get_node( f ), _ntk.trav_id() );
+  //         } );
+
+  //         /* check for not marked fanouts */
+  //         // _ntk.foreach_fanout( n, [&]( auto const& f ) {
+  //         //   if ( !_ntk.value( f ) )
+  //         //     std::cout << "not marked fanout\n";
+  //         // } );
+  //       }
+  //     }
+  //     else
+  //     {
+  //       if ( _ntk.is_box_input( n ) )
+  //       {
+  //         _ntk.foreach_fanout( n, [&]( auto const& f ) {
+  //           if ( _ntk.is_latch( f ) )
+  //             _ntk.set_visited( f, _ntk.trav_id() );
+  //         } );
+  //       }
+  //     }
+  //   }
+
+  //   /* create a new network copy */
+  //   node_map<signal, Ntk> old2new( _ntk );
+  //   Ntk res = create_copy_retiming( old2new );
+
+  //   _ntk.foreach_gate( [&]( auto const& n ) {
+  //     if ( _ntk.is_po( n ) )
+  //     {
+  //       signal children;
+  //       children = old2new[_ntk.get_fanin0( n )];
+  //       res.create_po( children );
+  //     }
+  //     else if ( _ntk.is_box_input( n ) || _ntk.is_box_output( n ) )
+  //     {
+  //       /* link to children */
+  //       signal children;
+  //       children = old2new[_ntk.get_fanin0( n )];
+
+  //       old2new[n] = children;
+  //     }
+  //     else if ( !_ntk.is_latch( n ) )
+  //     {
+  //       /* copy gate */
+  //       std::vector<signal> children;
+
+  //       _ntk.foreach_fanin( n, [&]( auto const& f ) {
+  //         signal child = old2new[f];
+
+  //         if ( _ntk.value( n ) ^ forward )
+  //           child = res.get_fanin0
+  //         children.push_back( child );
+  //       } );
+
+  //       const auto f = res.create_node( children, _ntk.node_function( n ) );
+  //       old2new[n] = f;
+
+  //       if constexpr ( has_add_binding_v<Ntk> )
+  //       {
+  //         res.add_binding( res.get_node( f ), _ntk.get_binding_index( n ) );
+  //       }
+
+  //       if ( _ntk.visited( n ) == _ntk.trav_id() )
+  //       {
+  //         /* create a new latch */
+  //         auto const in_latch = res.create_box_input( f );
+  //         auto const latch = res.create_latch( in_latch );
+  //         auto const latch_out = res.create_box_output( latch );
+
+  //         old2new[n] = latch_out;
+  //       }
+  //     }
+  //     else
+  //     {
+  //       /* latch/register */
+  //       if ( _ntk.visited( n ) == _ntk.trav_id() )
+  //       {
+  //         /* copy latch */
+  //         signal children;
+  //         children = old2new[_ntk.get_fanin0( n )];
+
+  //         auto const in_latch = res.create_box_input( res.make_signal( children ) );
+  //         auto const latch = res.create_latch( in_latch );
+  //         auto const latch_out = res.create_box_output( latch );
+
+  //         old2new[n] = latch_out;
+  //       }
+  //       else
+  //       {
+  //         old2new[n] = old2new[_ntk.get_fanin0( n )];
+  //       }
+  //     }
+  //   } );
+
+  //   _ntk = fanout_view( res );
+  // }
 
   void rec_mark_tfo( node const& n )
   {
@@ -650,7 +767,7 @@ private:
       }
       else
       {
-        node fanin =_ntk.get_node( _ntk.get_node0( n ) );
+        node fanin =_ntk.get_node( _ntk.get_fanin0( n ) );
         if ( !check_min_cut_rec<forward>( fanin ) )
           check = false;
       }
@@ -707,13 +824,46 @@ private:
     return check;
   }
 
+  // inline Ntk create_copy_retiming( node_map<signal, Ntk>& old2new )
+  // {
+  //   if constexpr ( has_add_binding_v<Ntk> )
+  //   {
+  //     Ntk res( _ntk.get_library() );
+
+  //     old2new[_ntk.get_constant( false )] = res.get_constant( false );
+  //     if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
+  //     {
+  //       old2new[_ntk.get_constant( true )] = res.get_constant( true );
+  //     }
+  //     _ntk.foreach_pi( [&]( auto const& n ) {
+  //       old2new[n] = res.create_pi();
+  //     } );
+
+  //     return res;
+  //   }
+  //   else
+  //   {
+  //     Ntk res;
+
+  //     old2new[_ntk.get_constant( false )] = res.get_constant( false );
+  //     if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
+  //     {
+  //       old2new[_ntk.get_constant( true )] = res.get_constant( true );
+  //     }
+  //     _ntk.foreach_pi( [&]( auto const& n ) {
+  //       old2new[n] = res.create_pi();
+  //     } );
+
+  //     return res;
+  //   }
+  // }
+
 private:
   Ntk& _ntk;
   retime_params const& _ps;
   retime_stats& _st;
 
   node_map<uint32_t, Ntk> _flow_path;
-  std::vector<node> _top_order;
   uint32_t sink_node{UINT32_MAX};
 };
 

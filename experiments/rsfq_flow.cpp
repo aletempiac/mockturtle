@@ -47,6 +47,7 @@
 #include <mockturtle/algorithms/balancing.hpp>
 #include <mockturtle/algorithms/balancing/sop_balancing.hpp>
 #include <mockturtle/algorithms/rsfq/rsfq_path_balancing.hpp>
+// #include <mockturtle/algorithms/rsfq/rsfq_splitter.hpp>
 #include <mockturtle/algorithms/rsfq/network_conversion.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
@@ -277,11 +278,11 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
-    if ( benchmark == "hyp" || benchmark == "sqrt" )
+    if ( benchmark == "hyp" || benchmark == "div" || benchmark == "sqrt" )
       continue;
 
     xag_network aig;
@@ -330,6 +331,8 @@ void rsfq_flow( int opt_iter )
     map_stats st;
     binding_view<klut_network> res = map( xag, tech_lib, ps, &st );
 
+    // write_verilog( res, benchmark + ".v" );
+
     /* path balancing with buffers */
     auto res_test = rsfq_path_balancing( res );
 
@@ -339,19 +342,25 @@ void rsfq_flow( int opt_iter )
     retime_params rps;
     retime_stats rst;
     rps.backward_only = true;
+    rps.verbose = false;
     auto net = generic_network_create_from_mapped( res_test );
     retime( net, rps, &rst );
     auto retime_res = mapped_create_from_generic_network( net );
 
     /* splitter insertion */
+    double area_final = retime_res.compute_area();
+    retime_res.foreach_node( [&]( auto const& n ) {
+      if ( !retime_res.is_constant( n ) )
+        area_final += 3 * ( retime_res.fanout_size( n ) - 1 );
+    } );
 
-    // const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
-    const auto cec = true;
+    const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
+    // const auto cec = true;
 
-    std::cout << "Area after retime: " << retime_res.compute_area() << " buffers check: " << check_buffering( retime_res );
+    std::cout << "Area after retime and splitters: " << area_final << " check: " << check_buffering( retime_res );
     std::cout << " cec: " << cec << "\n";
 
-    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), retime_res.compute_area(), retime_res.compute_worst_delay(), to_seconds( st.time_total ), cec );
+    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), area_final, retime_res.compute_worst_delay(), to_seconds( rst.time_total ), cec );
   }
 
   exp.save();

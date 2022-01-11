@@ -144,6 +144,13 @@ private:
 
     /* buffer POs based on circuit depth */
     _ntk.foreach_po( [&]( auto const& f ) {
+      /* don't buffer constant POs */
+      if ( _ntk.is_constant( _ntk.get_node( f ) ) )
+      {
+        res_d.create_po( old2new[f][0] );
+        return true;
+      }
+
       uint32_t level = depth - res_d.level( old2new[f][0] );
       auto& buffers = old2new[f];
       /* create buffers to pad up to the depth */
@@ -157,6 +164,7 @@ private:
         res.set_as_latch( res.get_node( buf ) );
       }
       res_d.create_po( old2new[f][i - 1] );
+      return true;
     } );
 
     res_d.set_depth( depth );
@@ -189,6 +197,8 @@ private:
     {
       auto depth = res_d.depth();
       res_d.foreach_po( [&]( auto const& f ) {
+        if ( res_d.is_constant( res_d.get_node( f ) ) )
+          return true;
         if ( res_d.level( res_d.get_node( f ) ) != depth )
         {
           correct = false;
@@ -251,7 +261,7 @@ bool check_buffering( Ntk const& ntk )
   bool result = true;
 
   /* check path balancing */
-  ntk.foreach_node( [&]( auto const& n ) {
+  ntk.foreach_gate( [&]( auto const& n ) {
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       if ( ntk_d.level( ntk.get_node( f ) ) != ntk_d.level( n ) - 1 )
         result = false;
@@ -265,6 +275,9 @@ bool check_buffering( Ntk const& ntk )
   {
     auto depth = ntk_d.depth();
     ntk_d.foreach_po( [&]( auto const& f ) {
+      /* don't check constant POs */
+      if ( ntk.is_constant( ntk.get_node( f ) ) )
+        return true;
       if ( ntk_d.level( ntk_d.get_node( f ) ) != depth )
       {
         result = false;
