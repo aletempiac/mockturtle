@@ -278,11 +278,11 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iscas_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
-    if ( benchmark == "hyp" || benchmark == "div" || benchmark == "sqrt" )
+    if ( benchmark == "hyp" || benchmark == "sqrt" )
       continue;
 
     xag_network aig;
@@ -313,7 +313,7 @@ void rsfq_flow( int opt_iter )
     /* optimization steps */
     for ( auto i = 0; i < opt_iter; ++i )
     {
-      xag_network xag_opt = depth_opt( xag, false );
+      xag_network xag_opt = depth_opt( xag, true );
 
       if ( depth_view( xag_opt ).depth() > depth_view( xag ).depth() ||
           ( depth_view( xag_opt ).depth() == depth_view( xag ).depth() && xag_opt.num_gates() >= xag.num_gates() ) )
@@ -341,8 +341,9 @@ void rsfq_flow( int opt_iter )
     /* retime registers */
     retime_params rps;
     retime_stats rst;
-    rps.backward_only = true;
+    rps.backward_only = false;
     rps.verbose = false;
+    rps.frontier_retiming = false;
     auto net = generic_network_create_from_mapped( res_test );
     retime( net, rps, &rst );
     auto retime_res = mapped_create_from_generic_network( net );
@@ -354,8 +355,8 @@ void rsfq_flow( int opt_iter )
         area_final += 3 * ( retime_res.fanout_size( n ) - 1 );
     } );
 
-    const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
-    // const auto cec = true;
+    // const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
+    const auto cec = true;
 
     std::cout << "Area after retime and splitters: " << area_final << " check: " << check_buffering( retime_res );
     std::cout << " cec: " << cec << "\n";

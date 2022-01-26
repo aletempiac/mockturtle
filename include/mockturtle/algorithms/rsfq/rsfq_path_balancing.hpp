@@ -264,7 +264,9 @@ bool check_buffering( Ntk const& ntk )
   ntk.foreach_gate( [&]( auto const& n ) {
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       if ( ntk_d.level( ntk.get_node( f ) ) != ntk_d.level( n ) - 1 )
+      {
         result = false;
+      }
       return result;
     } );
     return result;

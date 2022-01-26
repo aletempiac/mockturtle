@@ -64,6 +64,7 @@ struct generic_storage_data
  * `data[1].h1`: Function literal in truth table cache
  * `data[1].h2`: Visited flags
  * `data[2].h1`: Node type
+ * `data[2].h2`: Application-specific value
  * 
  * Node types:
  * - 0: unknown
@@ -204,9 +205,6 @@ public:
     /* check f is not a PO already */
     if ( is_po( get_node( f ) ) )
       return get_node( f );
-
-    /* increase ref-count to children */
-    _storage->nodes[f].data[0].h1++;
 
     const auto index = _storage->nodes.size();
     const auto po = create_buf( f );
@@ -502,7 +500,7 @@ signal create_maj( signal a, signal b, signal c )
   void take_out_node( node const& n )
   {
     /* we cannot delete PIs, constants, or already dead nodes */
-    if ( n == 0 || is_pi( n ) || is_dead( n ) )
+    if ( n <= 1 || is_pi( n ) || is_dead( n ) )
       return;
 
     auto& nobj = _storage->nodes[n];
@@ -903,7 +901,7 @@ signal create_maj( signal a, signal b, signal c )
   template<typename Fn>
   void foreach_fanin( node const& n, Fn&& fn ) const
   {
-    if ( n == 0 ) /* || is_ci( n ) */
+    if ( n <= 1 ) /* || is_ci( n ) */
       return;
 
     using IteratorType = decltype( _storage->outputs.begin() );
@@ -980,6 +978,21 @@ signal create_maj( signal a, signal b, signal c )
   uint32_t decr_value( node const& n ) const
   {
     return static_cast<uint32_t>( --_storage->nodes[n].data[0].h2 );
+  }
+
+  void clear_values2() const
+  {
+    std::for_each( _storage->nodes.begin(), _storage->nodes.end(), []( auto& n ) { n.data[2].h2 = 0; } );
+  }
+
+  uint32_t value2( node const& n ) const
+  {
+    return _storage->nodes[n].data[2].h2;
+  }
+
+  void set_value2( node const& n, uint32_t v ) const
+  {
+    _storage->nodes[n].data[2].h2 = v;
   }
 #pragma endregion
 

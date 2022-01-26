@@ -222,6 +222,7 @@ binding_view<klut_network> mapped_create_from_generic_network( binding_view<gene
     if ( ntk.is_latch( n ) )
     {
       res.add_binding( res.get_node( f ), buf_id );
+      res.set_as_latch( res.get_node( f ) );
     }
     else if ( ntk.has_binding( n ) )
     {
