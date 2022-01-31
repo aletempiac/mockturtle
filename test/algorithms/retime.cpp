@@ -9,6 +9,7 @@
 #include <mockturtle/networks/generic.hpp>
 #include <mockturtle/views/binding_view.hpp>
 #include <mockturtle/algorithms/retime.hpp>
+#include <mockturtle/algorithms/rsfq/network_conversion.hpp>
 
 using namespace mockturtle;
 
@@ -32,7 +33,7 @@ TEST_CASE( "Retime forward 1", "[retime]" )
   ntk.create_po( f );
 
   retime( ntk );
-  // CHECK( luts.size() == 6u );
+  CHECK( ntk.num_latches() == 1u );
 }
 
 TEST_CASE( "Retime backward 1", "[retime]" )
@@ -49,7 +50,7 @@ TEST_CASE( "Retime backward 1", "[retime]" )
   ntk.create_po( b2 );
 
   retime( ntk );
-  // CHECK( luts.size() == 6u );
+  CHECK( ntk.num_latches() == 1u );
 }
 
 TEST_CASE( "Zero retime forward", "[retime]" )
@@ -67,7 +68,7 @@ TEST_CASE( "Zero retime forward", "[retime]" )
   ntk.create_po( x2 );
 
   retime( ntk );
-  // CHECK( luts.size() == 6u );
+  CHECK( ntk.num_latches() == 2u );
 }
 
 TEST_CASE( "Retime forward 2", "[retime]" )
@@ -88,7 +89,7 @@ TEST_CASE( "Retime forward 2", "[retime]" )
   ntk.create_po( b4 );
 
   retime( ntk );
-  // CHECK( luts.size() == 6u );
+  CHECK( ntk.num_latches() == 2u );
 }
 
 TEST_CASE( "Retime backward 2", "[retime]" )
@@ -112,5 +113,51 @@ TEST_CASE( "Retime backward 2", "[retime]" )
   ntk.create_po( x8 );
 
   retime( ntk );
-  // CHECK( luts.size() == 6u );
+  CHECK( ntk.num_latches() == 2u );
+}
+
+TEST_CASE( "Retime forward 3", "[retime]" )
+{
+  generic_network ntk;
+  const auto a = ntk.create_pi();
+  const auto b = ntk.create_pi();
+  const auto c = ntk.create_pi();
+  const auto b1 = create_latch_box( ntk, a );
+  const auto b2 = create_latch_box( ntk, b );
+  const auto b3 = create_latch_box( ntk, c );
+
+  const auto x1 = ntk.create_maj( b1, b2, b3 );
+
+  const auto b4 = create_latch_box( ntk, x1 );
+
+  ntk.create_po( ntk.create_not( b1 ) );
+  ntk.create_po( b4 );
+
+  retime( ntk );
+  CHECK( ntk.num_latches() == 3u );
+}
+
+TEST_CASE( "Retime backward 3", "[retime]" )
+{
+  generic_network ntk;
+  const auto a = ntk.create_pi();
+  const auto b = ntk.create_pi();
+  const auto c = ntk.create_pi();
+  const auto d = ntk.create_pi();
+
+  const auto x1 = ntk.create_and( a, b );
+  const auto x2 = ntk.create_or( c, d );
+  const auto x3 = ntk.create_not( a );
+  const auto r1 = create_latch_box( ntk, x3 );
+  const auto r2 = create_latch_box( ntk, b );
+  const auto r3 = create_latch_box( ntk, x1 );
+  const auto r4 = create_latch_box( ntk, r3 );
+  const auto x4 = ntk.create_or( r2, x2 );
+  const auto x5 = ntk.create_and( r1, x4 );
+  const auto x6 = ntk.create_and( x5, r4 );
+
+  ntk.create_po( x6 );
+
+  retime( ntk );
+  CHECK( ntk.num_latches() == 3u );
 }

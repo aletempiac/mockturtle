@@ -113,8 +113,9 @@ public:
 
     if ( _ps.update_on_add )
     {
-      _event_index = Ntk::events().on_add.size();
-      Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
+      _add_event = Ntk::events().register_add_event( [this]( auto const& n ) {
+        on_add( n );
+      } );
     }
   }
 
@@ -135,8 +136,9 @@ public:
 
     if ( _ps.update_on_add )
     {
-      _event_index = Ntk::events().on_add.size();
-      Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
+      _add_event = Ntk::events().register_add_event( [this]( auto const& n ) {
+        on_add( n );
+      } );
     }
   }
 
@@ -151,8 +153,9 @@ public:
     }
     if ( _ps.update_on_add )
     {
-      _event_index = Ntk::events().on_add.size();
-      Ntk::events().on_add.push_back( [this]( auto const& n ) { on_add( n ); } );
+      _add_event = Ntk::events().register_add_event( [this]( auto const& n ) {
+        on_add( n );
+      } );
     }
     return *this;
   }
@@ -160,10 +163,10 @@ public:
 
   ~choice_view()
   {
-    // if ( _ps.update_on_add /*&& _choice_repr.use_count() == 1*/ )
-    // {
-    //   Ntk::events().on_add.erase( Ntk::events().on_add.begin() + _event_index );
-    // }
+    if ( _ps.update_on_add )
+    {
+      Ntk::events().release_add_event( _add_event );
+    }
   }
 
 
@@ -597,7 +600,7 @@ private:
   std::shared_ptr<std::vector<node>> _choice_repr;
   std::shared_ptr<std::vector<signal>> _choice_phase;
   choice_view_params _ps;
-  unsigned _event_index;
+  std::shared_ptr<typename network_events<Ntk>::add_event_type> _add_event;
 };
 
 template<class T>
