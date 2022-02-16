@@ -295,10 +295,8 @@ private:
     Ntk ntk = aqfp_push_buffers_forward( ntk_start );
     Ntk res = ntk_start;
 
-    bool additional_try = true;
     while ( true )
     {
-      std::cout << "-------------------\n";
       aqfp_level_t d_ntk{ ntk };
       fanout_view<aqfp_level_t> f_ntk{ d_ntk };
 
@@ -329,6 +327,15 @@ private:
           legal_cut = select_buf_cut_critical_rec( d_ntk, ntk.get_node( f ), 1 );
         return legal_cut;
       } );
+
+      if ( legal_cut )
+      {
+        ntk.foreach_po( [&]( auto const& f ) {
+          if ( ntk.value( ntk.get_node( f ) ) && ntk.fanout_size( ntk.get_node( f ) ) > 1 )
+            legal_cut = false;
+          return legal_cut;
+        } );
+      }
 
       if ( !legal_cut )
       {
@@ -361,18 +368,11 @@ private:
       lower_critical_section( f_generic_net );
       auto ntk_rewired = convert_to_buffered( generic_net );
 
-      std::cout << aqfp_level_t( ntk_rewired ).depth() << std::endl;
-
       /* remove cut of buffers */
       auto result = run_cut_based_depth_reduction( ntk_rewired, 1 );
 
       if ( !result )
-      {
-        if ( !additional_try )
-          break;
-        else
-          additional_try = false;
-      }
+        break;
       else
         success = true;
 
@@ -540,6 +540,7 @@ private:
     } );
 
     /* remove TFI of critical cut from being critical */
+    ntk.incr_trav_id();
     for ( auto n : critical_cut )
     {
       reset_value2_tfi( ntk, ntk.get_node( ntk.get_fanin0( n ) ) );
@@ -552,12 +553,6 @@ private:
     ntk.set_visited( ntk.get_node( ntk.get_constant( true ) ), ntk.trav_id() );
     ntk.foreach_pi( [&]( auto const& n ) {
       visit_and_mark_tfo_buffer_rec( ntk, n );
-    } );
-
-    ntk.foreach_po( [&]( auto const& f ) {
-      auto n = ntk.get_node( ntk.get_fanin0( ntk.get_node( f ) ) );
-      if ( ntk.visited( n ) == ntk.trav_id() && !ntk.is_latch( n ) )
-        std::cout << n << " visited" << std::endl;
     } );
 
     /* find lower boundary (cut) of the critical section */
@@ -637,7 +632,6 @@ private:
     /* check not a cut */
     if ( ntk.visited( n ) == ntk.trav_id() - 1 )
     {
-      std::cout << "Failed: " << n << "\n";
       ntk.set_visited( n, ntk.trav_id() );
       return false;
     }
@@ -656,6 +650,10 @@ private:
 
   void reset_value2_tfi( fanout_view<generic_network>& ntk, node_g const& n )
   {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    ntk.set_visited( n, ntk.trav_id() );
     ntk.set_value2( n, 0 );
 
     if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
@@ -765,7 +763,6 @@ private:
 
     if ( f_ntk.is_latch( n ) )
     {
-      std::cout << n << std::endl;
       return;
     }
     
@@ -869,7 +866,14 @@ private:
       return legal_cut;
     } );
 
-    std::cout << fmt::format( "Experiment legal cut : {}\n", legal_cut );
+    if ( legal_cut )
+    {
+      ntk.foreach_po( [&]( auto const& f ) {
+        if ( ntk.value( ntk.get_node( f ) ) && ntk.fanout_size( ntk.get_node( f ) ) > 1 )
+          legal_cut = false;
+        return legal_cut;
+      } );
+    }
   }
 
   void mark_cut_critical_rec_experiment( fanout_view<aqfp_level_t>& f_ntk, node const& n, node_map<uint32_t, Ntk> const& req_time )
@@ -891,7 +895,7 @@ private:
     /* find a cut */
     if ( f_ntk.is_buf( n ) )
     {
-      if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_splitter_experiment( f_ntk, n, req_time ) )
+      if ( f_ntk.fanout_size( n ) == 1 /* || check_cut_critical_splitter_experiment( f_ntk, n, req_time ) */ )
       {
         return;
       }
@@ -1042,7 +1046,7 @@ private:
           if ( ntk.value( n ) == 2 )
             res.set_value( res.get_node( not_s ), 2 );
 
-          if ( ntk.is_on_critical_path( n ) )
+          if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
             res.set_value2( res.get_node( not_s ), 1 );
 
           children.push_back( not_s );
@@ -1498,6 +1502,35 @@ private:
       }
     } );
   }
+
+  // void reconstruct_splitter_trees( generic_network& ntk )
+  // {
+  //   fanout_view f_ntk{ ntk };
+
+  //   /* reconstruct splitter trees optimally */
+  //   ntk.foreach_node( [&]( auto const& n ) {
+  //     if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
+  //       return;
+
+  //     /* is splitter root */
+  //     auto g = ntk.get_node( ntk.get_fanin0( n ) );
+  //     if ( ntk.node_function( g )._bits[0] == 0x1 )
+  //       g = ntk.get_node( ntk.get_fanin0( n ) );
+
+  //     if ( ntk.fanout_size( n ) > 1 && )
+  //     {
+  //       while ( check_push_backward( f_ntk, n ) )
+  //       {
+  //         backward_push_rec( f_ntk, n );
+  //         /* add buffer */
+  //         signal_g fanin = ntk.get_fanin0( n );
+  //         auto buf = f_ntk.create_latch( fanin );
+  //         f_ntk.replace_in_node( n, fanin, buf );
+  //         f_ntk.decr_fanout_size( fanin );
+  //       }
+  //     }
+  //   } );
+  // }
 
   bool check_push_backward( fanout_view<generic_network>& ntk, node_g const& n )
   {
