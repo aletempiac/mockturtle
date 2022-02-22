@@ -37,6 +37,7 @@
 
 #include "aqfp_assumptions.hpp"
 #include "buffer_insertion.hpp"
+#include "aqfp_network_convertion.hpp"
 #include "../../networks/buffered.hpp"
 #include "../../networks/generic.hpp"
 #include "../../utils/node_map.hpp"
@@ -294,7 +295,8 @@ private:
   {
     bool success = false;
 
-    Ntk ntk = aqfp_push_buffers_forward( ntk_start );
+    push_buffers_forward( ntk_start );
+    Ntk ntk = cleanup_dangling_buffered( ntk_start );
     Ntk res = ntk_start;
 
     while ( true )
@@ -1277,12 +1279,13 @@ Ntk aqfp_optimize_depth( Ntk& ntk, aqfp_optimize_depth_params const& ps = {}, aq
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
   static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
-  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
   static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
   static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
-  static_assert( is_buffered_network_type_v<Ntk>, "BufNtk is not a buffered network type" );
-  static_assert( has_is_buf_v<Ntk>, "BufNtk does not implement the is_buf method" );
-  static_assert( has_create_buf_v<Ntk>, "BufNtk does not implement the create_buf method" );
+  static_assert( has_substitute_node_v<Ntk>, "Ntk does not implement the substitute_node method" );
+  static_assert( has_replace_in_node_v<Ntk>, "Ntk does not implement the replace_in_node method" );
+  static_assert( has_take_out_node_v<Ntk>, "Ntk does not implement the take_out_node method" );
+  static_assert( is_buffered_network_type_v<Ntk>, "Ntk is not a buffered network type" );
+  static_assert( has_is_buf_v<Ntk>, "Ntk does not implement the is_buf method" );
 
   aqfp_optimize_depth_stats st;
   detail::aqfp_optimize_depth_impl p( ntk, ps, st );
@@ -1778,9 +1781,9 @@ Ntk aqfp_push_buffers_backward( Ntk& ntk )
   static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
   static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
   static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
-  static_assert( is_buffered_network_type_v<Ntk>, "BufNtk is not a buffered network type" );
-  static_assert( has_is_buf_v<Ntk>, "BufNtk does not implement the is_buf method" );
-  static_assert( has_create_buf_v<Ntk>, "BufNtk does not implement the create_buf method" );
+  static_assert( is_buffered_network_type_v<Ntk>, "Ntk is not a buffered network type" );
+  static_assert( has_is_buf_v<Ntk>, "Ntk does not implement the is_buf method" );
+  static_assert( has_create_buf_v<Ntk>, "Ntk does not implement the create_buf method" );
 
   detail::aqfp_push_buffers_backward_impl p( ntk );
   return p.run();

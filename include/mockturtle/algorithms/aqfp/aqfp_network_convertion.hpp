@@ -41,6 +41,69 @@
 namespace mockturtle
 {
 
+/*! \brief Buffered cleanup dangling.
+ *
+ * This function implements `cleanup_dangling` for buffered networks.
+ *
+ * \param ntk buffered network type
+ */
+template<class Ntk>
+Ntk cleanup_dangling_buffered( Ntk const& ntk )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( is_buffered_network_type_v<Ntk>, "Ntk is not a buffered network type" );
+  static_assert( has_is_buf_v<Ntk>, "Ntk does not implement the is_buf method" );
+  static_assert( has_create_buf_v<Ntk>, "Ntk does not implement the create_buf method" );
+
+  using signal = typename Ntk::signal;
+
+  Ntk res;
+  node_map<signal, Ntk> old2new( ntk );
+
+  old2new[ntk.get_constant( false )] = res.get_constant( false );
+  if ( ntk.get_node( ntk.get_constant( false ) ) != ntk.get_node( ntk.get_constant( true ) ) )
+  {
+    old2new[ntk.get_constant( true )] = res.get_constant( true );
+  }
+
+  ntk.foreach_pi( [&]( auto const& n ) {
+    old2new[n] = res.create_pi();
+  } );
+
+  topo_view topo{ ntk };
+  topo.foreach_node( [&]( auto const& n ) {
+    if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
+      return;
+
+    std::vector<signal> children;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      children.push_back( old2new[f] ^ ntk.is_complemented( f ) );
+    } );
+
+    signal f;
+    if ( ntk.is_buf( n ) )
+    {
+      f = res.create_buf( children[0] );
+    }
+    else
+    {
+      f = res.clone_node( ntk, n, children );
+    }
+
+    old2new[n] = f;
+  } );
+
+  ntk.foreach_po( [&]( auto const& f ) {
+    if ( ntk.is_complemented( f ) )
+      res.create_po( res.create_not( old2new[f] ) );
+    else
+      res.create_po( old2new[f] );
+  } );
+
+  return res;
+}
+
 /*! \brief Converts a `buffered_mig_network` to a `buffered_aqfp_network`.
  *
  * This function converts a `buffered_mig_network` to a `buffered_aqfp_network`.
