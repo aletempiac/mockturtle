@@ -331,7 +331,10 @@ private:
         /* TODO: a more "in depth" study */
         ntk.foreach_po( [&]( auto const& f ) {
           if ( ntk.value( ntk.get_node( f ) ) && ntk.fanout_size( ntk.get_node( f ) ) > 1 )
+          {
+            /* check validity */
             legal_cut = false;
+          }
           return legal_cut;
         } );
       }
@@ -341,24 +344,6 @@ private:
         /* critical path cannot be reduced */
         break;
       }
-
-      /* mark critical splitters to reposition */
-      ntk.foreach_node( [&]( auto const& n ) {
-        if ( ntk.value( n ) == 1 )
-        {
-          if ( ntk.fanout_size( n ) > 1 )
-          {
-            f_ntk.foreach_fanout( n, [&]( auto const& f ) {
-              if ( d_ntk.is_on_critical_path( f ) )
-                d_ntk.set_value( f, 2 );
-            } );
-          }
-          else
-          {
-            ntk.set_value( n, 0 );
-          }
-        }
-      } );
 
       /* modify selected splitter trees and critical section */
       std::vector<node> critical_cut;

@@ -217,6 +217,11 @@ public:
     _levels[n] = level;
   }
 
+  void set_on_critical_path( node const& n, bool on_critical )
+  {
+    _crit_path[n] = on_critical;
+  }
+
   void set_depth( uint32_t level )
   {
     _depth = level;
@@ -319,6 +324,7 @@ private:
   void on_add( node const& n )
   {
     _levels.resize();
+    _crit_path.resize();
 
     uint32_t level{0};
     this->foreach_fanin( n, [&]( auto const& f ) {
