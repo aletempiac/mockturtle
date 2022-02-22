@@ -134,44 +134,42 @@ public:
     _st.depth_pre = current_depth;
     _st.depth_post = current_depth;
 
+    Ntk ntk = cleanup_dangling_buffered( _ntk );
+
+    /* reposition buffers */
+    push_buffers_forward( ntk );
+
     bool success = true;
     _ntk.clear_values();
     if ( achievable_depth < current_depth )
     {
-      success = run_cut_based_depth_reduction( _ntk, current_depth - achievable_depth );
+      success = run_cut_based_depth_reduction( ntk, current_depth - achievable_depth );
     }
 
     /* create resulting network */
-    node_map<signal, Ntk> old2new( _ntk );
-    Ntk res;
-
-    create_res_net( _ntk, res, old2new );
-
-    if ( !success )
+    if ( success )
     {
-      /* push buffers over splitters to separate paths */
-      auto current_depth2 = depth_view<Ntk>( res ).depth();
-      push_buffers_forward( res );
-
-      run_cut_based_depth_reduction( res, current_depth2 - achievable_depth );
-
-      Ntk res2;
-      node_map<signal, Ntk> old2new2( res );
-      create_res_net( res, res2, old2new2 );
-
-      res = aqfp_push_buffers_backward( res2 );
-      res = res2;
+      node_map<signal, Ntk> old2new( ntk );
+      Ntk res;
+      create_res_net( ntk, res, old2new );
+      ntk = res;
     }
+
+    /* splitter trees reconstruction params */
+    buffer_insertion_params buf_ps;
+    buf_ps.assume = _ps.aqfp_assumptions_ps;
+    buf_ps.scheduling = buffer_insertion_params::provided;
+    buf_ps.optimization_effort = buffer_insertion_params::none;
 
     if ( _ps.critical_depth_reduction )
     {
-      res = run_critical_depth_reduction( res );
+      run_critical_depth_reduction( ntk );
     }
 
     /* experiment */
-    try_splitter_trees_repositioning( res );
+    // try_splitter_trees_repositioning( res );
 
-    return res;
+    return aqfp_reconstruct_splitter_trees( ntk, buf_ps );
   }
 
 private:
@@ -214,8 +212,8 @@ private:
       --_st.depth_post;
     }
 
-    /* last iteration is not a cut */
-    if ( i != iterations + 1 )
+    /* no cut found */
+    if ( i == 1 )
     {
       return false;
     }
@@ -291,13 +289,9 @@ private:
     return legal;
   }
 
-  Ntk run_critical_depth_reduction( Ntk& ntk_start )
+  void run_critical_depth_reduction( Ntk& ntk )
   {
     bool success = false;
-
-    push_buffers_forward( ntk_start );
-    Ntk ntk = cleanup_dangling_buffered( ntk_start );
-    Ntk res = ntk_start;
 
     while ( true )
     {
@@ -334,6 +328,7 @@ private:
 
       if ( legal_cut )
       {
+        /* TODO: a more "in depth" study */
         ntk.foreach_po( [&]( auto const& f ) {
           if ( ntk.value( ntk.get_node( f ) ) && ntk.fanout_size( ntk.get_node( f ) ) > 1 )
             legal_cut = false;
@@ -366,14 +361,12 @@ private:
       } );
 
       /* modify selected splitter trees and critical section */
-      auto generic_net = convert_to_generic( d_ntk );
-      fanout_view<generic_network> f_generic_net{ generic_net };
-      change_splitter_trees( f_generic_net );
-      lower_critical_section( f_generic_net );
-      auto ntk_rewired = convert_to_buffered( generic_net );
+      std::vector<node> critical_cut;
+      change_splitter_trees( f_ntk, critical_cut );
+      lower_critical_section( f_ntk, critical_cut );
 
       /* remove cut of buffers */
-      auto result = run_cut_based_depth_reduction( ntk_rewired, 1 );
+      auto result = run_cut_based_depth_reduction( ntk, 1 );
 
       if ( !result )
         break;
@@ -382,18 +375,12 @@ private:
 
       /* create the new network */
       Ntk res_local;
-      node_map<signal, Ntk> old2new( ntk_rewired );
+      node_map<signal, Ntk> old2new( ntk );
 
-      create_res_net( ntk_rewired, res_local, old2new );
+      create_res_net( ntk, res_local, old2new );
 
-      res = res_local;
       ntk = res_local;
     }
-
-    if ( success )
-      return aqfp_push_buffers_backward( res );
-    else
-      return res;
   }
 
   void mark_cut_critical_rec( fanout_view<aqfp_level_t>& f_ntk, node const& n )
@@ -495,66 +482,65 @@ private:
     return legal;
   }
 
-  void change_splitter_trees( fanout_view<generic_network>& ntk )
+  void change_splitter_trees( fanout_view<aqfp_level_t>& ntk, std::vector<node>& critical_cut )
   {
     ntk.foreach_node( [&]( auto const& n ) {
       if ( ntk.value( n ) == 1 )
       {
-        auto fanin = ntk.get_fanin0( n );
-        for ( auto const& f : ntk.fanout( n ) )
+        if ( ntk.fanout_size( n ) > 1 )
         {
-          if ( ntk.value( f ) == 2 )
+          signal fanin;
+          ntk.foreach_fanin( n, [&]( auto const& f ) {
+            fanin = f;
+          } );
+          for ( auto const& f : ntk.fanout( n ) )
           {
-            auto const buf = ntk.create_latch( fanin );
-            ntk.replace_in_node( f, n, buf );
-            ntk.decr_fanout_size( n );
-            /* add to critical path */
-            ntk.set_value2( ntk.get_node( buf ), 1 );
+            if ( ntk.is_on_critical_path( f ) )
+            {
+              auto const buf = ntk.create_buf( fanin );
+              ntk.replace_in_node( f, n, buf );
+              ntk.decr_fanout_size( n );
+              /* add to critical path */
+              ntk.set_level( ntk.get_node( buf ), ntk.level( n ) );
+              ntk.set_on_critical_path( ntk.get_node( buf ), true );
+              /* add to critical cut */
+              critical_cut.push_back( ntk.get_node( buf ) );
+            }
+          }
+
+          /* remove n from critiacl path */
+          ntk.set_on_critical_path( n, false );
+
+          if ( ntk.fanout_size( n ) == 0 )
+          {
+            ntk.take_out_node( n );
           }
         }
-
-        if ( ntk.fanout_size( n ) == 0 )
+        else
         {
-          ntk.take_out_node( n );
+          critical_cut.push_back( n );
         }
-        /* remove from critical path */
-        ntk.set_value2( n, 0 );
       }
     } );
   }
 
-  void lower_critical_section( fanout_view<generic_network>& ntk )
+  void lower_critical_section( fanout_view<aqfp_level_t>& ntk, std::vector<node> const& critical_cut )
   {
-    std::vector<node_g> critical_cut;
-
-    /* get critical cut */
-    ntk.incr_trav_id();
-    ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), ntk.trav_id() );
-    ntk.set_visited( ntk.get_node( ntk.get_constant( true ) ), ntk.trav_id() );
-    ntk.foreach_pi( [&]( auto const& n ) {
-      if ( ntk.value2( n ) )
-        mark_cut_critical_generic_rec( ntk, n );
-    } );
-
-    ntk.incr_trav_id();
-    ntk.foreach_po( [&]( auto const& f ) {
-      auto n = ntk.get_node( ntk.get_fanin0( ntk.get_node( f ) ) );
-      if ( ntk.value2( n ) )
-        select_critical_cut_rec( ntk, n, critical_cut );
-    } );
-
     /* remove TFI of critical cut from being critical */
     ntk.incr_trav_id();
     for ( auto n : critical_cut )
     {
-      reset_value2_tfi( ntk, ntk.get_node( ntk.get_fanin0( n ) ) );
+      node g;
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        g = ntk.get_node( f );
+      } );
+      reset_on_critical_path_tfi( ntk, g );
     }
 
     /* find blocking path buffers */
     ntk.incr_trav_id();
     ntk.clear_values();
     ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), ntk.trav_id() );
-    ntk.set_visited( ntk.get_node( ntk.get_constant( true ) ), ntk.trav_id() );
     ntk.foreach_pi( [&]( auto const& n ) {
       visit_and_mark_tfo_buffer_rec( ntk, n );
     } );
@@ -577,9 +563,10 @@ private:
     ntk.foreach_pi( [&]( auto const& n ) {
       if ( ntk.visited( n ) == ntk.trav_id() )
         incompatibilities = false;
+      return incompatibilities;
     } );
 
-    /* the cut is legal */
+    /* the cut is legal or configuration is not valid */
     if ( !incompatibilities )
     {
       return;
@@ -588,89 +575,25 @@ private:
     move_critical_section_down( ntk );
   }
 
-  void mark_cut_critical_generic_rec( fanout_view<generic_network>& f_ntk, node const& n )
-  {
-    if ( f_ntk.visited( n ) == f_ntk.trav_id() )
-      return;
-
-    f_ntk.set_visited( n, f_ntk.trav_id() );
-
-    /* recur towards critical TFI */
-    f_ntk.foreach_fanin( n, [&]( auto const& f ) {
-      auto const g = f_ntk.get_node( f );
-      if ( f_ntk.visited( g ) != f_ntk.trav_id() && f_ntk.value2( g ) )
-      {
-        mark_cut_critical_generic_rec( f_ntk, g );
-      }
-    } );
-
-    /* find a cut */
-    if ( f_ntk.is_latch( n ) )
-      return;
-
-    /* recur towards critical TFO */
-    f_ntk.foreach_fanout( n, [&]( auto const& f ) {
-      if ( f_ntk.visited( f ) != f_ntk.trav_id() && f_ntk.value2( f ) )
-      {
-        mark_cut_critical_generic_rec( f_ntk, f );
-      }
-    } );
-  }
-
-  bool select_critical_cut_rec( fanout_view<generic_network>& ntk, node const& n, std::vector<node_g>& cut )
-  {
-    if ( ntk.is_constant( n ) )
-      return true;
-
-    if ( ntk.visited( n ) == ntk.trav_id() )
-      return true;
-
-    /* if selected buffer, set as removable */
-    if ( ntk.visited( n ) == ntk.trav_id() - 1 && ntk.is_latch( n ) )
-    {
-      ntk.set_visited( n, ntk.trav_id() );
-      cut.push_back( n );
-      return true;
-    }
-
-    /* check not a cut */
-    if ( ntk.visited( n ) == ntk.trav_id() - 1 )
-    {
-      ntk.set_visited( n, ntk.trav_id() );
-      return false;
-    }
-
-    ntk.set_visited( n, ntk.trav_id() );
-
-    bool legal = true;
-    ntk.foreach_fanin( n, [&]( auto const& f ) {
-      if ( ntk.value2( ntk.get_node( f ) ) )
-        legal = select_critical_cut_rec( ntk, ntk.get_node( f ), cut );
-      return legal;
-    } );
-
-    return legal;
-  }
-
-  void reset_value2_tfi( fanout_view<generic_network>& ntk, node_g const& n )
+  void reset_on_critical_path_tfi( fanout_view<aqfp_level_t>& ntk, node const& n )
   {
     if ( ntk.visited( n ) == ntk.trav_id() )
       return;
 
     ntk.set_visited( n, ntk.trav_id() );
-    ntk.set_value2( n, 0 );
+    ntk.set_on_critical_path( n, false );
 
     if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
       return;
 
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       auto g = ntk.get_node( f );
-      if ( !ntk.is_constant( g ) && ntk.value2( g ) )
-        reset_value2_tfi( ntk, g );
+      if ( !ntk.is_constant( g ) && ntk.is_on_critical_path( g ) )
+        reset_on_critical_path_tfi( ntk, g );
     } );
   }
 
-  void visit_and_mark_tfo_buffer_rec( fanout_view<generic_network>& f_ntk, node_g const& n )
+  void visit_and_mark_tfo_buffer_rec( fanout_view<aqfp_level_t>& f_ntk, node_g const& n )
   {
     if ( f_ntk.visited( n ) == f_ntk.trav_id() )
       return;
@@ -687,13 +610,13 @@ private:
     } );
 
     /* stop tfo recursion */
-    if ( f_ntk.is_latch( n ) )
+    if ( f_ntk.is_buf( n ) && f_ntk.fanout_size( n ) == 1 )
     {
       return;
     }
 
     /* recur towards TFO if not in critical section after the cut */
-    if ( !f_ntk.value2( n ) )
+    if ( !f_ntk.is_on_critical_path( n ) )
     {
       f_ntk.foreach_fanout( n, [&]( auto const& f ) {
         if ( f_ntk.visited( f ) != f_ntk.trav_id() )
@@ -702,7 +625,7 @@ private:
     }
   }
 
-  void move_critical_section_down( fanout_view<generic_network>& ntk )
+  void move_critical_section_down( fanout_view<aqfp_level_t>& ntk )
   {
     ntk.clear_values();
 
@@ -710,28 +633,35 @@ private:
     ntk.foreach_node( [&]( auto const& n ) {
       if ( ntk.visited( n ) == ntk.trav_id() )
       {
-        if ( ntk.is_latch( n ) && ntk.visited( ntk.get_node( ntk.get_fanin0( n ) ) ) != ntk.trav_id() )
+        if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
         {
-          ntk.set_value( n, 1 );
+          node fanin;
+          ntk.foreach_fanin( n, [&]( auto const& f ) {
+            fanin = ntk.get_node( f );
+          } );
+          if ( ntk.visited( fanin ) != ntk.trav_id() )
+          {
+            ntk.set_value( n, 1 );
+          }
         }
-        auto buf = ntk.get_constant( false );
+        auto splitter = ntk.get_constant( false );
         for ( auto const& f : ntk.fanout( n ) )
         {
           if ( ntk.visited( f ) != ntk.trav_id() )
           {
-            if ( !ntk.value2( n ) )
+            if ( !ntk.is_on_critical_path( n ) )
             {
-              if ( buf == ntk.get_constant( false ) )
+              if ( splitter == ntk.get_constant( false ) )
               {
-                buf = ntk.create_buf( n );
+                splitter = ntk.create_buf( ntk.make_signal( n ) );
               }
-              ntk.replace_in_node( f, n, buf );
+              ntk.replace_in_node( f, n, splitter );
               ntk.decr_fanout_size( n );
             }
             else
             {
-              auto latch = ntk.create_latch( n );
-              ntk.replace_in_node( f, n, latch );
+              auto buf = ntk.create_buf( ntk.make_signal( n ) );
+              ntk.replace_in_node( f, n, buf );
               ntk.decr_fanout_size( n );
             }
           }
@@ -743,7 +673,10 @@ private:
     ntk.foreach_node( [&]( auto const& n ) {
       if ( ntk.value( n ) )
       {
-        auto fanin = ntk.get_fanin0( n );
+        signal fanin;
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          fanin = f;
+        } );
         for ( auto const& f : ntk.fanout( n ) )
         {
           ntk.replace_in_node( f, n, fanin );
@@ -753,7 +686,7 @@ private:
     } );
   }
 
-  void mark_critical_section_tfo( fanout_view<generic_network>& f_ntk, node_g const& n )
+  void mark_critical_section_tfo( fanout_view<aqfp_level_t>& f_ntk, node_g const& n )
   {
     if ( f_ntk.visited( n ) == f_ntk.trav_id() )
       return;
@@ -761,18 +694,18 @@ private:
     f_ntk.set_visited( n, f_ntk.trav_id() );
 
     f_ntk.foreach_fanout( n, [&]( auto const& f ) {
-      if ( f_ntk.value2( f ) && f_ntk.visited( f ) == f_ntk.trav_id() - 1 )
+      if ( f_ntk.is_on_critical_path( f ) && f_ntk.visited( f ) == f_ntk.trav_id() - 1 )
         mark_critical_section_tfo( f_ntk, f );
     } );
 
-    if ( f_ntk.is_latch( n ) )
+    if ( f_ntk.is_buf( n ) && f_ntk.fanout_size( n ) == 1 )
     {
       return;
     }
     
     f_ntk.foreach_fanin( n, [&]( auto const& f ) {
       if ( !f_ntk.is_constant( f_ntk.get_node( f ) ) )
-          mark_critical_section_tfo( f_ntk, f );
+          mark_critical_section_tfo( f_ntk, f_ntk.get_node( f ) );
     } );
   }
 
@@ -944,30 +877,6 @@ private:
     return valid;
   }
 
-  // bool check_balancing()
-  // {
-  //   depth_view<Ntk, aqfp_depth_cost_balancing> d_ntk{ _ntk };
-  //   bool balanced = true;
-
-  //   for ( auto const& n : _topo_order )
-  //   {
-  //     if ( _ntk.value( n ) )
-  //       continue;
-
-  //     _ntk.foreach_fanin( n, [&]( auto const& f ) {
-  //       if ( !_ntk.is_constant( _ntk.get_node( f ) ) && d_ntk.level( _ntk.get_node( f ) ) != d_ntk.level( n ) - 1 )
-  //       {
-  //         balanced = false;
-  //       }
-  //     } );
-
-  //     if ( !balanced )
-  //       return false;
-  //   }
-
-  //   return true;
-  // }
-
   void create_res_net( Ntk& ntk, Ntk& res, node_map<signal, Ntk>& old2new )
   {
     old2new[ntk.get_constant( false )] = res.get_constant( false );
@@ -1017,155 +926,6 @@ private:
       else
         res.create_po( old2new[f] );
     } );
-  }
-
-  generic_network convert_to_generic( aqfp_level_t const& ntk )
-  {
-    node_map<signal_g, Ntk> old2new( ntk );
-    generic_network res;
-
-    old2new[ntk.get_constant( false )] = res.get_constant( false );
-    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
-    {
-      old2new[ntk.get_constant( true )] = res.get_constant( true );
-    }
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-
-      if ( ntk.is_on_critical_path( n ) )
-        res.set_value2( res.get_node( old2new[n] ), 1 );
-    } );
-
-    ntk.foreach_node( [&]( auto const& n ) {
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return;
-
-      std::vector<signal_g> children;
-
-      ntk.foreach_fanin( n, [&]( auto const& f ) {
-        if ( ntk.is_complemented( f ) )
-        {
-          auto not_s = res.create_not( old2new[f] );
-
-          if ( ntk.value( n ) == 2 )
-            res.set_value( res.get_node( not_s ), 2 );
-
-          if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
-            res.set_value2( res.get_node( not_s ), 1 );
-
-          children.push_back( not_s );
-        }
-        else
-        {
-          children.push_back( old2new[f] );
-        }
-      } );
-
-      if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
-      {
-        /* create registers (without box-in and box-out) */
-        auto const latch = res.create_latch( children[0] );
-        old2new[n] = latch;
-      }
-      else
-      {
-        const auto f = res.create_node( children, ntk.node_function( n ) );
-        old2new[n] = f;
-      }
-
-      /* mark splitter trees */
-      if ( ntk.value( n ) )
-      {
-        res.set_value( res.get_node( old2new[n] ), ntk.value( n ) );
-      }
-      if ( ntk.is_on_critical_path( n ) )
-      {
-        res.set_value2( res.get_node( old2new[n] ), 1 );
-      }
-    } );
-
-    ntk.foreach_po( [&]( auto const& f ) {
-      if ( ntk.is_complemented( f ) )
-      {
-        auto not_s = res.create_not( old2new[f] );
-
-        if ( ntk.value( ntk.get_node( f ) ) == 2 )
-          res.set_value( res.get_node( not_s ), 2 );
-        
-        if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
-          res.set_value2( res.get_node( not_s ), 1 );
-
-        res.create_po( not_s );
-      }
-      else
-      {
-        res.create_po( old2new[f] );
-      }
-    } );
-
-    return res;
-  }
-
-  Ntk convert_to_buffered( generic_network& ntk )
-  {
-    node_map<signal, generic_network> old2new( ntk );
-    Ntk res;
-
-    old2new[ntk.get_constant( false )] = res.get_constant( false );
-    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
-    {
-      old2new[ntk.get_constant( true )] = res.get_constant( true );
-    }
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
-
-    topo_view topo{ ntk };
-
-    topo.foreach_node( [&] ( auto const& n ) {
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return;
-
-      /* remove not represented nodes */
-      if ( ntk.is_po( n ) )
-      {
-        old2new[n] = old2new[ntk.get_fanin0( n )];
-        return;
-      }
-
-      std::vector<signal> children;
-
-      ntk.foreach_fanin( n, [&]( auto const& f ) {
-        children.push_back( old2new[f] );
-      } );
-
-      signal f;
-      if ( ntk.fanin_size( n ) == 3 )
-      {
-        /* majority */
-        assert( children.size() == 3 );
-        f = res.create_maj( children[0], children[1], children[2] );
-      }
-      else if ( ntk.fanin_size( n ) == 1 && ntk.node_function( n )._bits[0] == 0x1 )
-      {
-        /* not */
-        assert( children.size() == 1 );
-        f = !children[0];
-      }
-      else
-      {
-        /* buffer */
-        f = res.create_buf( children[0] );
-      }
-
-      old2new[n] = f;
-    } );
-
-    ntk.foreach_po( [&]( auto const& f ) {
-      res.create_po( old2new[f] );
-    } );
-
-    return res;
   }
 
   void push_buffers_forward( Ntk& ntk )
@@ -1298,495 +1058,6 @@ Ntk aqfp_optimize_depth( Ntk& ntk, aqfp_optimize_depth_params const& ps = {}, aq
     *pst = st;
 
   return res;
-}
-
-
-namespace detail
-{
-
-template<class Ntk>
-class aqfp_push_buffers_forward_impl
-{
-public:
-  using node = typename Ntk::node;
-  using signal = typename Ntk::signal;
-  using node_g = typename generic_network::node;
-  using signal_g = typename generic_network::signal;
-
-public:
-  aqfp_push_buffers_forward_impl( Ntk const& ntk )
-    : _ntk( ntk ) {}
-
-  Ntk run()
-  {
-    /* convert to generic (to deactivate strashing on node substitute) */
-    auto res = to_generic();
-    push_forward( res );
-    /* convert back to buffered network */
-    return to_buffered( res );
-  }
-
-private:
-  void push_forward( generic_network& ntk )
-  {
-    /* collect the buffers (latches) */
-    std::vector<node_g> buffers;
-    buffers.reserve( ntk.num_latches() );
-
-    ntk.foreach_latch( [&]( auto const& n ) {
-      buffers.push_back( n );
-    } );
-
-    fanout_view f_ntk{ntk};
-
-    /* move buffers (reverse order) */
-    for ( auto it = buffers.rbegin(); it != buffers.rend(); ++it )
-    {
-      node_g g = f_ntk.fanout( *it )[0];
-      if ( ntk.fanout_size( g ) != 1 || ntk.node_function( g )._bits[0] == 0x1 )
-      {
-        forward_push_rec( f_ntk, g );
-        /* remove current register */
-        signal_g fanin = ntk.get_fanin0( *it );
-        f_ntk.substitute_node( *it, fanin );
-      }
-    }
-  }
-
-  void forward_push_rec( fanout_view<generic_network>& ntk, node_g const& g )
-  {
-    auto const fanouts = ntk.fanout( g );
-    for ( auto const& f : fanouts )
-    {
-      if ( ntk.fanout_size( f ) == 1 && ntk.node_function( f )._bits[0] != 0x1 )
-      {
-        auto buf = ntk.create_latch( ntk.make_signal( g ) );
-        ntk.replace_in_node( f, g, buf );
-        ntk.decr_fanout_size( g );
-      }
-      else
-      {
-        forward_push_rec( ntk, f );
-      }
-    }
-  }
-
-  generic_network to_generic()
-  {
-    node_map<signal_g, Ntk> old2new( _ntk );
-    generic_network res;
-
-    old2new[_ntk.get_constant( false )] = res.get_constant( false );
-    if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
-    {
-      old2new[_ntk.get_constant( true )] = res.get_constant( true );
-    }
-    _ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
-
-    topo_view topo{ _ntk };
-
-    topo.foreach_node( [&]( auto const& n ) {
-      if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
-        return;
-
-      std::vector<signal_g> children;
-
-      _ntk.foreach_fanin( n, [&]( auto const& f ) {
-        if ( _ntk.is_complemented( f ) )
-        {
-          children.push_back( res.create_not( old2new[f] ) );
-        }
-        else
-        {
-          children.push_back( old2new[f] );
-        }
-      } );
-
-      if ( _ntk.is_buf( n ) && _ntk.fanout_size( n ) == 1 )
-      {
-        /* create registers (without box-in and box-out) */
-        auto const latch = res.create_latch( children[0] );
-        old2new[n] = latch;
-      }
-      else
-      {
-        const auto f = res.create_node( children, topo.node_function( n ) );
-        old2new[n] = f;
-      }
-    } );
-
-    _ntk.foreach_po( [&]( auto const& f ) {
-      if ( _ntk.is_complemented( f ) )
-        res.create_po( res.create_not( old2new[f] ) );
-      else
-        res.create_po( old2new[f] );
-    } );
-
-    return res;
-  }
-
-  Ntk to_buffered( generic_network& ntk )
-  {
-    node_map<signal, generic_network> old2new( ntk );
-    Ntk res;
-
-    old2new[ntk.get_constant( false )] = res.get_constant( false );
-    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
-    {
-      old2new[ntk.get_constant( true )] = res.get_constant( true );
-    }
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
-
-    topo_view topo{ ntk };
-
-    topo.foreach_node( [&] ( auto const& n ) {
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return;
-
-      /* remove not represented nodes */
-      if ( ntk.is_po( n ) )
-      {
-        old2new[n] = old2new[ntk.get_fanin0( n )];
-        return;
-      }
-
-      std::vector<signal> children;
-
-      ntk.foreach_fanin( n, [&]( auto const& f ) {
-        children.push_back( old2new[f] );
-      } );
-
-      signal f;
-      if ( ntk.fanin_size( n ) == 3 )
-      {
-        /* majority */
-        assert( children.size() == 3 );
-        f = res.create_maj( children[0], children[1], children[2] );
-      }
-      else if ( ntk.fanin_size( n ) == 1 && ntk.node_function( n )._bits[0] == 0x1 )
-      {
-        /* not */
-        assert( children.size() == 1 );
-        f = !children[0];
-      }
-      else
-      {
-        /* buffer */
-        f = res.create_buf( children[0] );
-      }
-
-      old2new[n] = f;
-    } );
-
-    ntk.foreach_po( [&]( auto const& f ) {
-      res.create_po( old2new[f] );
-    } );
-
-    return res;
-  }
-
-private:
-  Ntk const& _ntk;
-};
-
-} /* namespace detail */
-
-
-/*! \brief Moves buffers forward in AQFP networks.
- *
- * This function pushes buffers forward over splitter trees
- *
- * \param ntk Mapped AQFP network
- */
-template<class Ntk>
-Ntk aqfp_push_buffers_forward( Ntk& ntk )
-{
-  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
-  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
-  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
-  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
-  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
-  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
-  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
-  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
-  static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
-  static_assert( is_buffered_network_type_v<Ntk>, "BufNtk is not a buffered network type" );
-  static_assert( has_is_buf_v<Ntk>, "BufNtk does not implement the is_buf method" );
-  static_assert( has_create_buf_v<Ntk>, "BufNtk does not implement the create_buf method" );
-
-  detail::aqfp_push_buffers_forward_impl p( ntk );
-  return p.run();
-}
-
-namespace detail
-{
-
-template<class Ntk>
-class aqfp_push_buffers_backward_impl
-{
-public:
-  using node = typename Ntk::node;
-  using signal = typename Ntk::signal;
-  using node_g = typename generic_network::node;
-  using signal_g = typename generic_network::signal;
-
-public:
-  aqfp_push_buffers_backward_impl( Ntk const& ntk )
-    : _ntk( ntk ) {}
-
-  Ntk run()
-  {
-    /* convert to generic (to deactivate strashing on node substitute) */
-    auto res = to_generic();
-    push_backward( res );
-    /* convert back to buffered network */
-    return to_buffered( res );
-  }
-
-private:
-  void push_backward( generic_network& ntk )
-  {
-    fanout_view f_ntk{ ntk };
-
-    /* move buffers in topological order */
-    ntk.foreach_node( [&]( auto const& n ) {
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return;
-
-      if ( ntk.fanout_size( n ) > 1 )
-      {
-        while ( check_push_backward( f_ntk, n ) )
-        {
-          backward_push_rec( f_ntk, n );
-          /* add buffer */
-          signal_g fanin = ntk.get_fanin0( n );
-          auto buf = f_ntk.create_latch( fanin );
-          f_ntk.replace_in_node( n, fanin, buf );
-          f_ntk.decr_fanout_size( fanin );
-        }
-      }
-    } );
-  }
-
-  // void reconstruct_splitter_trees( generic_network& ntk )
-  // {
-  //   fanout_view f_ntk{ ntk };
-
-  //   /* reconstruct splitter trees optimally */
-  //   ntk.foreach_node( [&]( auto const& n ) {
-  //     if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-  //       return;
-
-  //     /* is splitter root */
-  //     auto g = ntk.get_node( ntk.get_fanin0( n ) );
-  //     if ( ntk.node_function( g )._bits[0] == 0x1 )
-  //       g = ntk.get_node( ntk.get_fanin0( n ) );
-
-  //     if ( ntk.fanout_size( n ) > 1 && )
-  //     {
-  //       while ( check_push_backward( f_ntk, n ) )
-  //       {
-  //         backward_push_rec( f_ntk, n );
-  //         /* add buffer */
-  //         signal_g fanin = ntk.get_fanin0( n );
-  //         auto buf = f_ntk.create_latch( fanin );
-  //         f_ntk.replace_in_node( n, fanin, buf );
-  //         f_ntk.decr_fanout_size( fanin );
-  //       }
-  //     }
-  //   } );
-  // }
-
-  bool check_push_backward( fanout_view<generic_network>& ntk, node_g const& n )
-  {
-    bool valid = true;
-
-    ntk.foreach_fanout( n, [&]( auto const& f ) {
-      if ( !ntk.is_latch( f ) )
-      {
-        if ( ntk.fanout_size( f ) == 1 && ntk.node_function( f )._bits[0] != 0x1 )
-          valid = false;
-        else
-          valid &= check_push_backward( ntk, f );
-      }
-
-      return valid;
-    } );
-
-    return valid;
-  }
-
-  void backward_push_rec( fanout_view<generic_network>& ntk, node_g const& n )
-  {
-    auto const fanouts = ntk.fanout( n );
-    for ( auto const& f : fanouts )
-    {
-      if ( !ntk.is_latch( f ) )
-      {
-        backward_push_rec( ntk, f );
-      }
-      else
-      {
-        /* remove */
-        ntk.substitute_node( f, ntk.make_signal( n ) );
-      }
-    }
-  }
-
-  generic_network to_generic()
-  {
-    node_map<signal_g, Ntk> old2new( _ntk );
-    generic_network res;
-
-    old2new[_ntk.get_constant( false )] = res.get_constant( false );
-    if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
-    {
-      old2new[_ntk.get_constant( true )] = res.get_constant( true );
-    }
-    _ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
-
-    topo_view topo{ _ntk };
-
-    topo.foreach_node( [&]( auto const& n ) {
-      if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
-        return;
-
-      std::vector<signal_g> children;
-
-      _ntk.foreach_fanin( n, [&]( auto const& f ) {
-        if ( _ntk.is_complemented( f ) )
-        {
-          children.push_back( res.create_not( old2new[f] ) );
-        }
-        else
-        {
-          children.push_back( old2new[f] );
-        }
-      } );
-
-      if ( _ntk.is_buf( n ) && _ntk.fanout_size( n ) == 1 )
-      {
-        /* create registers (without box-in and box-out) */
-        auto const latch = res.create_latch( children[0] );
-        old2new[n] = latch;
-      }
-      else
-      {
-        const auto f = res.create_node( children, topo.node_function( n ) );
-        old2new[n] = f;
-      }
-    } );
-
-    _ntk.foreach_po( [&]( auto const& f ) {
-      if ( _ntk.is_complemented( f ) )
-        res.create_po( res.create_not( old2new[f] ) );
-      else
-        res.create_po( old2new[f] );
-    } );
-
-    return res;
-  }
-
-  Ntk to_buffered( generic_network& ntk )
-  {
-    node_map<signal, generic_network> old2new( ntk );
-    Ntk res;
-
-    old2new[ntk.get_constant( false )] = res.get_constant( false );
-    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
-    {
-      old2new[ntk.get_constant( true )] = res.get_constant( true );
-    }
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[n] = res.create_pi();
-    } );
-
-    topo_view topo{ ntk };
-
-    topo.foreach_node( [&] ( auto const& n ) {
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return;
-
-      /* remove not represented nodes */
-      if ( ntk.is_po( n ) )
-      {
-        old2new[n] = old2new[ntk.get_fanin0( n )];
-        return;
-      }
-
-      std::vector<signal> children;
-
-      ntk.foreach_fanin( n, [&]( auto const& f ) {
-        children.push_back( old2new[f] );
-      } );
-
-      signal f;
-      if ( ntk.fanin_size( n ) == 3 )
-      {
-        /* majority */
-        assert( children.size() == 3 );
-        f = res.create_maj( children[0], children[1], children[2] );
-      }
-      else if ( ntk.fanin_size( n ) == 1 && ntk.node_function( n )._bits[0] == 0x1 )
-      {
-        /* not */
-        assert( children.size() == 1 );
-        f = !children[0];
-      }
-      else
-      {
-        /* buffer */
-        f = res.create_buf( children[0] );
-      }
-
-      old2new[n] = f;
-    } );
-
-    ntk.foreach_po( [&]( auto const& f ) {
-      res.create_po( old2new[f] );
-    } );
-
-    return res;
-  }
-
-private:
-  Ntk const& _ntk;
-};
-
-} /* namespace detail */
-
-/*! \brief Moves buffers backward in AQFP networks.
- *
- * This function pushes buffers backward before splitter trees
- *
- * \param ntk Mapped AQFP network
- */
-template<class Ntk>
-Ntk aqfp_push_buffers_backward( Ntk& ntk )
-{
-  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
-  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
-  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
-  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
-  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
-  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
-  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
-  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
-  static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
-  static_assert( is_buffered_network_type_v<Ntk>, "Ntk is not a buffered network type" );
-  static_assert( has_is_buf_v<Ntk>, "Ntk does not implement the is_buf method" );
-  static_assert( has_create_buf_v<Ntk>, "Ntk does not implement the create_buf method" );
-
-  detail::aqfp_push_buffers_backward_impl p( ntk );
-  return p.run();
 }
 
 namespace detail
