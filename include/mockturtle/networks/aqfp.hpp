@@ -521,7 +521,8 @@ public:
 
     std::vector<signal> old_children;
 
-    for ( auto i = 0u; i <= node.children.size(); ++i )
+    size_t i;
+    for ( i = 0u; i <= node.children.size(); ++i )
     {
       if ( i == node.children.size() )
       {
@@ -533,11 +534,20 @@ public:
       if ( node.children[i].index == old_node )
       {
         node.children[i] = node.children[i].weight ? !new_signal : new_signal;
-        new_signal.complement ^= node.children[i].weight;
+        // new_signal.complement ^= node.children[i].weight;
+        break;
       }
     }
 
-    /* TODO: Do the simplifications if possible */
+    while ( ++i < node.children.size() )
+    {
+      old_children.push_back( signal{ node.children[i] } );
+    }
+
+    /* TODO: Do the simplifications if possible and ordering */
+
+    // update the reference counter of the new signal
+    _storage->nodes[new_signal.index].data[0].h1++;
 
     for ( auto const& fn : _events->on_modified )
     {

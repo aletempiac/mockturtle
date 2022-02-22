@@ -28,6 +28,7 @@
   \brief Buffered networks implementation
 
   \author Siang-Yun (Sonia) Lee
+  \author Alessandro Tempia Calvino
 */
 
 #pragma once
@@ -526,6 +527,32 @@ class buffered_aqfp_network : public aqfp_network
 {
 public:
 
+#pragma region Primary I / O and constants
+  bool is_ci( node const& n ) const
+  {
+    if ( is_buf( n ) )
+      return false;
+
+    return _storage->nodes[n].children[0].data == _storage->nodes[n].children[1].data && _storage->nodes[n].children[0].data == _storage->nodes[n].children[2].data;
+  }
+
+  bool is_pi( node const& n ) const
+  {
+    if ( is_buf( n ) )
+      return false;
+
+    return _storage->nodes[n].children[0].data == ~static_cast<uint64_t>( 0 ) && _storage->nodes[n].children[1].data == ~static_cast<uint64_t>( 0 ) && _storage->nodes[n].children[2].data == ~static_cast<uint64_t>( 0 );
+  }
+
+  bool is_ro( node const& n ) const
+  {
+    if ( is_buf( n ) )
+      return false;
+
+    return _storage->nodes[n].children[0].data == _storage->nodes[n].children[1].data && _storage->nodes[n].children[0].data == _storage->nodes[n].children[2].data && _storage->nodes[n].children[0].data >= static_cast<uint64_t>( _storage->data.num_pis );
+  }
+#pragma endregion
+
 #pragma region Create unary functions
   signal create_buf( signal const& a )
   {
@@ -562,6 +589,16 @@ public:
 #pragma endregion
 
 #pragma region Structural properties
+  /* redefinition of num_gates counting the gates */
+  auto num_gates() const
+  {
+    uint32_t gate_count = 0;
+    foreach_gate( [&gate_count]( auto const& n ) {
+      ++gate_count;
+    } );
+    return gate_count;
+  }
+
   bool is_buf( node const& n ) const
   {
     return _storage->nodes[n].children.size() == 1;

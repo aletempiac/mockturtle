@@ -36,6 +36,7 @@
 #include <random>
 
 #include "aqfp_assumptions.hpp"
+#include "buffer_insertion.hpp"
 #include "../../networks/buffered.hpp"
 #include "../../networks/generic.hpp"
 #include "../../utils/node_map.hpp"
@@ -149,15 +150,16 @@ public:
     {
       /* push buffers over splitters to separate paths */
       auto current_depth2 = depth_view<Ntk>( res ).depth();
-      Ntk ntk_forward = aqfp_push_buffers_forward( res );
+      push_buffers_forward( res );
 
-      run_cut_based_depth_reduction( ntk_forward, current_depth2 - achievable_depth );
+      run_cut_based_depth_reduction( res, current_depth2 - achievable_depth );
 
       Ntk res2;
-      node_map<signal, Ntk> old2new2( ntk_forward );
-      create_res_net( ntk_forward, res2, old2new2 );
+      node_map<signal, Ntk> old2new2( res );
+      create_res_net( res, res2, old2new2 );
 
       res = aqfp_push_buffers_backward( res2 );
+      res = res2;
     }
 
     if ( _ps.critical_depth_reduction )
@@ -1002,7 +1004,7 @@ private:
       }
       else
       {
-        f = res.create_maj( children[0], children[1], children[2] );
+        f = res.clone_node( ntk, n, children );
       }
       old2new[n] = f;
     } );
@@ -1105,7 +1107,7 @@ private:
   Ntk convert_to_buffered( generic_network& ntk )
   {
     node_map<signal, generic_network> old2new( ntk );
-    buffered_mig_network res;
+    Ntk res;
 
     old2new[ntk.get_constant( false )] = res.get_constant( false );
     if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
@@ -1162,6 +1164,71 @@ private:
     } );
 
     return res;
+  }
+
+  void push_buffers_forward( Ntk& ntk )
+  {
+    topo_view<Ntk> topo{ ntk };
+
+    /* collect the buffers (latches) */
+    std::vector<node> buffers;
+    buffers.reserve( 100 );
+
+    topo.foreach_gate( [&]( auto const& n ) {
+      if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
+        buffers.push_back( n );
+    } );
+
+    fanout_view<Ntk> f_ntk{ ntk };
+
+    /* reverse topological order */
+    for ( auto it = buffers.rbegin(); it != buffers.rend(); ++it )
+    {
+      for ( auto const g : f_ntk.fanout( *it ) )
+      {
+        /* output splitter */
+        if ( ntk.fanout_size( g ) != 1 )
+        {
+          forward_push_rec( f_ntk, g );
+          /* remove current buffer */
+          signal fanin;
+          ntk.foreach_fanin( *it, [&]( auto const& f ) {
+            fanin = f;
+          } );
+          f_ntk.substitute_node( *it, fanin );
+        }
+      }
+    }
+  }
+
+  bool forward_push_rec( fanout_view<Ntk>& ntk, node const n )
+  {
+    auto const fanouts = ntk.fanout( n );
+    for ( auto const& f : fanouts )
+    {
+      if ( ntk.fanout_size( f ) == 1 )
+      {
+        auto buf = ntk.create_buf( ntk.make_signal( n ) );
+        ntk.replace_in_node( f, n, buf );
+        ntk.decr_fanout_size( n );
+      }
+      else
+      {
+        forward_push_rec( ntk, f );
+      }
+    }
+    /* PO */
+    if ( fanouts.size() == 0 )
+    {
+      /* set it as a fanin */
+      signal fanin;
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        fanin = f ^ ntk.is_complemented( f );
+      } );
+      auto buf = ntk.create_buf( fanin );
+      ntk.replace_in_node( n, ntk.get_node( fanin ), buf );
+      ntk.decr_fanout_size( ntk.get_node( fanin ) );
+    }
   }
 
   struct aqfp_depth_cost
@@ -1360,7 +1427,7 @@ private:
   Ntk to_buffered( generic_network& ntk )
   {
     node_map<signal, generic_network> old2new( ntk );
-    buffered_mig_network res;
+    Ntk res;
 
     old2new[ntk.get_constant( false )] = res.get_constant( false );
     if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
@@ -1627,7 +1694,7 @@ private:
   Ntk to_buffered( generic_network& ntk )
   {
     node_map<signal, generic_network> old2new( ntk );
-    buffered_mig_network res;
+    Ntk res;
 
     old2new[ntk.get_constant( false )] = res.get_constant( false );
     if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
@@ -1716,6 +1783,102 @@ Ntk aqfp_push_buffers_backward( Ntk& ntk )
   static_assert( has_create_buf_v<Ntk>, "BufNtk does not implement the create_buf method" );
 
   detail::aqfp_push_buffers_backward_impl p( ntk );
+  return p.run();
+}
+
+namespace detail
+{
+
+class aqfp_reconstruct_splitter_trees_impl
+{
+public:
+  using node = typename aqfp_network::node;
+  using signal = typename aqfp_network::signal;
+
+public:
+  aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps )
+    : _ntk( ntk )
+    , _ps( ps )
+    {}
+
+  buffered_aqfp_network run()
+  {
+    /* save the level of each node */
+    depth_view ntk_level{ _ntk };
+
+    /* create a network removing the splitter trees */
+    aqfp_network clean_ntk;
+    node_map<signal, buffered_aqfp_network> old2new( _ntk );
+    remove_splitter_trees( clean_ntk, old2new );
+
+    /* compute the node level on the new network */
+    node_map<uint32_t, aqfp_network> levels( clean_ntk );
+    _ntk.foreach_gate( [&]( auto const& n ) {
+      levels[old2new[n]] = ntk_level.level( n );
+    } );
+
+    /* recompute splitter trees and return the new buffered network */
+    buffered_aqfp_network res;
+    buffer_insertion buf_inst( clean_ntk, levels, _ps );
+    buf_inst.run( res );
+    return res;
+  }
+
+private:
+  void remove_splitter_trees( aqfp_network& res, node_map<signal, buffered_aqfp_network>& old2new )
+  {
+    topo_view topo{ _ntk };
+
+    old2new[_ntk.get_constant( false )] = res.get_constant( false );
+ 
+    _ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[n] = res.create_pi();
+    } );
+
+    topo.foreach_node( [&]( auto const& n ) {
+      if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
+        return;
+
+      std::vector<signal> children;
+      _ntk.foreach_fanin( n, [&]( auto const& f ) {
+        children.push_back( old2new[f] ^ _ntk.is_complemented( f ) );
+      } );
+
+      if ( _ntk.is_buf( n ) )
+      {
+        old2new[n] = children[0];
+      }
+      else if ( children.size() == 3 )
+      {
+        old2new[n] = res.create_maj( children[0], children[1], children[2] );
+      }
+      else
+      {
+        old2new[n] = res.create_maj( children );
+      }
+    } );
+
+    _ntk.foreach_po( [&]( auto const& f ) {
+      res.create_po( old2new[f] ^ _ntk.is_complemented( f ) );
+    } );
+  }
+
+private:
+  buffered_aqfp_network const& _ntk;
+  buffer_insertion_params const& _ps;
+};
+
+} /* namespace detail */
+
+/*! \brief Rebuilds buffer trees in AQFP network.
+ *
+ * This function rebuilds buffer trees in AQFP network.
+ *
+ * \param ntk Buffered AQFP network
+ */
+buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network& ntk, buffer_insertion_params const& ps = {} )
+{
+  detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps );
   return p.run();
 }
 
