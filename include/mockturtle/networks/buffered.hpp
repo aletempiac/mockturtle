@@ -669,6 +669,49 @@ public:
                                 [this]( auto n ) { return !is_ci( n ) && !is_dead( n ) && !is_buf( n ); },
                                 fn );
   }
+
+  template<typename Fn>
+  void foreach_fanin( node const& n, Fn&& fn ) const
+  {
+    if ( n == 0 || is_ci( n ) )
+      return;
+
+    static_assert( detail::is_callable_without_index_v<Fn, signal, bool> ||
+                   detail::is_callable_with_index_v<Fn, signal, bool> ||
+                   detail::is_callable_without_index_v<Fn, signal, void> ||
+                   detail::is_callable_with_index_v<Fn, signal, void> );
+
+    if constexpr ( detail::is_callable_without_index_v<Fn, signal, bool> )
+    {
+      for ( auto i = 0u; i < _storage->nodes[n].children.size(); i++ )
+      {
+        if ( !fn( signal{ _storage->nodes[n].children[i] } ) )
+          return;
+      }
+    }
+    else if constexpr ( detail::is_callable_with_index_v<Fn, signal, bool> )
+    {
+      for ( auto i = 0u; i < _storage->nodes[n].children.size(); i++ )
+      {
+        if ( !fn( signal{ _storage->nodes[n].children[i] }, i ) )
+          return;
+      }
+    }
+    else if constexpr ( detail::is_callable_without_index_v<Fn, signal, void> )
+    {
+      for ( auto i = 0u; i < _storage->nodes[n].children.size(); i++ )
+      {
+        fn( signal{ _storage->nodes[n].children[i] } );
+      }
+    }
+    else if constexpr ( detail::is_callable_with_index_v<Fn, signal, void> )
+    {
+      for ( auto i = 0u; i < _storage->nodes[n].children.size(); i++ )
+      {
+        fn( signal{ _storage->nodes[n].children[i] }, i );
+      }
+    }
+  }
 #pragma endregion
 
 #pragma region Value simulation
