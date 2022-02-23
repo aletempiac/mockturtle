@@ -165,7 +165,7 @@ public:
 
     if ( _ps.critical_depth_reduction )
     {
-      run_critical_depth_reduction<false>( ntk );
+      // run_critical_depth_reduction<false>( ntk );
       run_critical_depth_reduction<true>( ntk );
     }
 
@@ -293,7 +293,6 @@ private:
         change_splitter_trees( f_ntk, critical_cut );
       }
 
-      std::cout << fmt::format( "Depth: {}\n", aqfp_level_t( ntk ).depth() );
       lower_critical_section( f_ntk, critical_cut );
 
       /* remove cut of buffers */
@@ -648,8 +647,18 @@ private:
 
           bool modify = collect_splitter_tree_leaves( ntk, n, 0, signal_assignment, false );
 
-          // if ( modify == false )
-          //   return;
+          if ( modify == false )
+          {
+            /* no need to rewrite the splitter tree, just collect the critical cut */
+            for ( auto const& t : signal_assignment )
+            {
+              if ( ntk.is_on_critical_path( ntk.get_node( std::get<0>( t ) ) ) )
+              {
+                critical_cut.push_back( ntk.get_node( std::get<0>( t ) ) );
+              }
+            }
+            return;
+          }
 
           std::sort( signal_assignment.begin(), signal_assignment.end(), []( auto const& a, auto const& b ) {
             return std::get<2>( a ) > std::get<2>( b );
@@ -660,11 +669,9 @@ private:
           uint32_t nodes_in_level = 0;
           uint32_t last_level = max_level;
 
-          std::cout << "assignment: ";
           for ( auto const& t : signal_assignment )
           {
             auto l = std::get<2>( t );
-            std::cout << l << " ";
             if ( l == max_level )
             {
               ++nodes_in_level;
@@ -687,14 +694,6 @@ private:
             splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
             nodes_in_level = splitters_per_level[i - 1];
           }
-          std::cout << "\n";
-
-          std::cout << "b/s in level: ";
-          for ( auto const& l : splitters_per_level )
-          {
-            std::cout << l << " ";
-          }
-          std::cout << "\n";
 
           /* get root node */
           signal root_s;
@@ -759,7 +758,6 @@ private:
         }
         else
         {
-          std::cout << "buffer: " << n << "\n";
           critical_cut.push_back( n );
         }
       }
@@ -1064,8 +1062,6 @@ private:
         return legal_cut;
       } );
     }
-
-    std::cout << fmt::format( "\n[i] Try legal_cut: {}\n", legal_cut );
 
     if ( !legal_cut )
       return;
