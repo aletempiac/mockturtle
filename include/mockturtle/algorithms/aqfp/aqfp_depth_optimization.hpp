@@ -141,14 +141,14 @@ public:
     /* reposition buffers */
     push_buffers_forward( ntk );
 
-    bool success = true;
+    bool success = false;
     ntk.clear_values();
     if ( achievable_depth < current_depth )
     {
-      success = run_cut_based_depth_reduction( ntk, current_depth - achievable_depth );
+      fanout_view<Ntk> f_ntk{ ntk };
+      success = run_cut_based_depth_reduction( f_ntk, current_depth - achievable_depth );
     }
 
-    /* create resulting network */
     if ( success )
     {
       node_map<signal, Ntk> old2new( ntk );
@@ -157,28 +157,24 @@ public:
       ntk = res;
     }
 
+    if ( _ps.critical_depth_reduction )
+    {
+      run_critical_depth_reduction( ntk );
+    }
+
     /* splitter trees reconstruction params */
     buffer_insertion_params buf_ps;
     buf_ps.assume = _ps.aqfp_assumptions_ps;
     buf_ps.scheduling = buffer_insertion_params::provided;
     buf_ps.optimization_effort = buffer_insertion_params::none;
-
-    if ( _ps.critical_depth_reduction )
-    {
-      // run_critical_depth_reduction<false>( ntk );
-      run_critical_depth_reduction<true>( ntk );
-    }
-
-    /* experiment */
-    // try_splitter_trees_repositioning( ntk );
-
     return aqfp_reconstruct_splitter_trees( ntk, buf_ps );
   }
 
 private:
-  bool run_cut_based_depth_reduction( Ntk& ntk, uint32_t iterations )
+  template<class FNtk>
+  bool run_cut_based_depth_reduction( FNtk& ntk, uint32_t iterations )
   {
-    fanout_view<Ntk> f_ntk{ ntk };
+    static_assert( has_foreach_fanout_v<FNtk>, "Ntk does not implement the foreach_fanout method" );
 
     /* find a cut of buffers and mark them as removable */
     uint32_t i;
@@ -191,7 +187,7 @@ private:
 
       /* mark nodes to define a cut */
       ntk.foreach_pi( [&]( auto const& n ) {
-        mark_cut_rec( f_ntk, n );
+        mark_cut_rec( ntk, n );
       } );
 
       /* extract a cut if it exist */
@@ -213,6 +209,11 @@ private:
       }
 
       --_st.depth_post;
+
+      if ( _ps.verbose )
+      {
+        std::cout << fmt::format( "[i] Initial depth = {:7d}\t Final depth = {:7d}\r", _st.depth_pre, _st.depth_post ) << std::flush;
+      }
     }
 
     /* no cut found */
@@ -224,15 +225,14 @@ private:
     return true;
   }
 
-  template<bool rewrite_trees>
   void run_critical_depth_reduction( Ntk& ntk )
   {
+    aqfp_level_t d_ntk{ ntk };
+    fanout_view<aqfp_level_t> f_ntk{ d_ntk };
+
     bool success = false;
     while ( true )
     {
-      aqfp_level_t d_ntk{ ntk };
-      fanout_view<aqfp_level_t> f_ntk{ d_ntk };
-
       ntk.clear_values();
       ntk.incr_trav_id();
       uint32_t trav_id = ntk.trav_id();
@@ -249,7 +249,7 @@ private:
       ntk.foreach_pi( [&]( auto const& n ) {
         if ( d_ntk.is_on_critical_path( n ) )
         {
-          mark_cut_critical_rec<rewrite_trees>( f_ntk, n );
+          mark_cut_critical_rec( f_ntk, n );
         }
       } );
 
@@ -284,36 +284,25 @@ private:
 
       /* modify selected splitter trees and critical section */
       std::vector<node> critical_cut;
-      if constexpr ( rewrite_trees )
-      {
-        change_splitter_trees2( f_ntk, critical_cut );
-      }
-      else
-      {
-        change_splitter_trees( f_ntk, critical_cut );
-      }
+      change_splitter_trees2( f_ntk, critical_cut );
 
       lower_critical_section( f_ntk, critical_cut );
 
       /* remove cut of buffers */
-      auto result = run_cut_based_depth_reduction( ntk, 1 );
+      auto result = run_cut_based_depth_reduction( f_ntk, 1 );
 
       if ( !result )
         break;
       else
         success = true;
 
-      /* create the new network */
-      Ntk res_local;
-      node_map<signal, Ntk> old2new( ntk );
-
-      create_res_net( ntk, res_local, old2new );
-
-      ntk = res_local;
+      remove_buffers_inplace( f_ntk );
+      f_ntk.update_levels();
     }
   }
 
-  void mark_cut_rec( fanout_view<Ntk>& f_ntk, node const& n )
+  template<class FNtk>
+  void mark_cut_rec( fanout_view<FNtk>& f_ntk, node const& n )
   {
     if ( f_ntk.visited( n ) == f_ntk.trav_id() )
       return;
@@ -343,7 +332,8 @@ private:
     } );
   }
 
-  bool select_buf_cut_rec( Ntk& ntk, node const& n, uint32_t value )
+  template<class FNtk>
+  bool select_buf_cut_rec( FNtk& ntk, node const& n, uint32_t value )
   {
     if ( ntk.is_constant( n ) )
       return true;
@@ -381,7 +371,6 @@ private:
     return legal;
   }
 
-  template<bool rewrite_trees>
   void mark_cut_critical_rec( fanout_view<aqfp_level_t>& f_ntk, node const& n )
   {
     if ( f_ntk.visited( n ) == f_ntk.trav_id() )
@@ -394,26 +383,16 @@ private:
       auto g = f_ntk.get_node( f );
       if ( f_ntk.visited( g ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( g ) )
       {
-        mark_cut_critical_rec<rewrite_trees>( f_ntk, g );
+        mark_cut_critical_rec( f_ntk, g );
       }
     } );
 
     /* find a cut */
     if ( f_ntk.is_buf( n ) )
     {
-      if constexpr ( rewrite_trees )
+      if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_splitter2( f_ntk, n ) )
       {
-        if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_splitter2( f_ntk, n ) )
-        {
-          return;
-        }
-      }
-      else
-      {
-        if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_splitter( f_ntk, n ) )
-        {
-          return;
-        }
+        return;
       }
     }
 
@@ -421,11 +400,12 @@ private:
     f_ntk.foreach_fanout( n, [&]( auto const& f ) {
       if ( f_ntk.visited( f ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( f ) )
       {
-        mark_cut_critical_rec<rewrite_trees>( f_ntk, f );
+        mark_cut_critical_rec( f_ntk, f );
       }
     } );
   }
 
+  /* old version: fast, but finds less optimization opportunities that the newer version */
   inline bool check_cut_critical_splitter( fanout_view<aqfp_level_t>& f_ntk, node const& n )
   {
     /* check for input splitter */
@@ -456,6 +436,7 @@ private:
     return valid;
   }
 
+  /* new version: slightly slower, but finds more optimization opportunities that the old version */
   inline bool check_cut_critical_splitter2( fanout_view<aqfp_level_t>& ntk, node const& n )
   {
     /* TODO: extend using required time */
@@ -470,7 +451,11 @@ private:
 
     std::vector<int> level_assignment;
 
-    collect_splitter_tree_leaves_levels( ntk, n, 0, level_assignment );
+    bool modify = collect_splitter_tree_leaves_levels( ntk, n, 0, level_assignment );
+
+    /* no need to rewrite the splitter tree */
+    if ( modify == false )
+      return true;
 
     /* sort vector by level in decreasing order */
     std::sort( level_assignment.begin(), level_assignment.end(), std::greater<int>() );
@@ -507,24 +492,31 @@ private:
       return true;
   }
 
-  void collect_splitter_tree_leaves_levels( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<int>& level_assignment )
+  bool collect_splitter_tree_leaves_levels( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<int>& level_assignment )
   {
+    bool modify = false;
     ntk.foreach_fanout( n, [&]( auto const& f ) {
       if ( ntk.is_buf( f ) && ntk.fanout_size( f ) > 1 )
       {
-        collect_splitter_tree_leaves_levels( ntk, f, level + 1, level_assignment );
+        modify |= collect_splitter_tree_leaves_levels( ntk, f, level + 1, level_assignment );
       }
       else
       {
         /* lower critical signal by one ( if not a buffer ) */
         if ( ntk.is_on_critical_path( f ) && !ntk.is_buf( f ) )
+        {
           level_assignment.push_back( level - 1 );
+          modify = true;
+        }
         else
+        {
           level_assignment.push_back( level );
+        }
       }
     } );
 
     /* TODO: consider POs, for now POs are considered as balanced */
+    return modify;
   }
 
   bool collect_splitter_tree_leaves( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<splitter_tuple>& signal_assignment, bool phase )
@@ -593,6 +585,7 @@ private:
     return legal;
   }
 
+  /* old version: fast, but finds less optimization opportunities that the newer version */
   void change_splitter_trees( fanout_view<aqfp_level_t>& ntk, std::vector<node>& critical_cut )
   {
     ntk.foreach_node( [&]( auto const& n ) {
@@ -635,6 +628,7 @@ private:
     } );
   }
 
+  /* new version: slightly slower, but finds more optimization opportunities that the old version */
   void change_splitter_trees2( fanout_view<aqfp_level_t>& ntk, std::vector<node>& critical_cut )
   {
     ntk.foreach_node( [&]( auto const& n ) {
@@ -1200,15 +1194,47 @@ private:
     } );
   }
 
+  template<class FNtk>
+  void remove_buffers_inplace( FNtk& ntk )
+  {
+    static_assert( has_foreach_fanout_v<FNtk>, "Ntk does not implement the foreach_fanout method" );
+
+    ntk.foreach_node( [&]( auto const& n ) {
+      /* remove selected buffers */
+      if ( ntk.value( n ) )
+      {
+        signal fanin;
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          fanin = f;
+        } );
+        
+        assert( ntk.fanout_size( n ) == 1 );
+
+        std::vector<node> fanout = ntk.fanout( n );
+        
+        if ( fanout.empty() )
+        {
+          /* PO */
+          ntk.replace_in_outputs( n, fanin );
+        }
+        else
+        {
+          ntk.replace_in_node( fanout[0], n, fanin );
+        }
+        ntk.take_out_node( n );
+      }
+    } );
+  }
+
   void push_buffers_forward( Ntk& ntk )
   {
-    topo_view<Ntk> topo{ ntk };
+    /* ntk must be topologically sorted */
 
     /* collect the buffers (latches) */
     std::vector<node> buffers;
     buffers.reserve( 100 );
 
-    topo.foreach_gate( [&]( auto const& n ) {
+    ntk.foreach_node( [&]( auto const& n ) {
       if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
         buffers.push_back( n );
     } );
