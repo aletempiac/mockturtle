@@ -32,19 +32,19 @@
 
 #pragma once
 
-#include <vector>
-#include <list>
 #include <algorithm>
+#include <list>
+#include <vector>
 
-#include "aqfp_assumptions.hpp"
-#include "buffer_insertion.hpp"
-#include "aqfp_network_convertion.hpp"
 #include "../../networks/buffered.hpp"
 #include "../../networks/generic.hpp"
 #include "../../utils/node_map.hpp"
-#include "../../views/topo_view.hpp"
 #include "../../views/depth_view.hpp"
 #include "../../views/fanout_view.hpp"
+#include "../../views/topo_view.hpp"
+#include "aqfp_assumptions.hpp"
+#include "aqfp_network_convertion.hpp"
+#include "buffer_insertion.hpp"
 
 namespace mockturtle
 {
@@ -118,11 +118,10 @@ public:
   using splitter_tuple = std::tuple<signal, node, int>;
 
 public:
-  explicit aqfp_optimize_depth_impl( Ntk& ntk, aqfp_optimize_depth_params const& ps, aqfp_optimize_depth_stats& st )
-    : _ntk( ntk )
-    , _ps( ps )
-    , _st( st )
-    {}
+  explicit aqfp_optimize_depth_impl( Ntk const& ntk, aqfp_optimize_depth_params const& ps, aqfp_optimize_depth_stats& st )
+      : _ntk( ntk ), _ps( ps ), _st( st )
+  {
+  }
 
 public:
   Ntk run()
@@ -149,7 +148,6 @@ public:
       success = run_cut_based_depth_reduction( f_ntk, current_depth - achievable_depth );
     }
 
-    if ( success )
     {
       node_map<signal, Ntk> old2new( ntk );
       Ntk res;
@@ -194,7 +192,8 @@ private:
       ntk.incr_trav_id();
       bool legal_cut = true;
       ntk.foreach_po( [&]( auto const& f ) {
-        legal_cut = select_buf_cut_rec( ntk, ntk.get_node( f ), i );
+        if ( !ntk.is_constant( ntk.get_node( f ) ) )
+          legal_cut = select_buf_cut_rec( ntk, ntk.get_node( f ), i );
         return legal_cut;
       } );
 
@@ -258,7 +257,7 @@ private:
       ntk.clear_values();
       ntk.incr_trav_id();
       ntk.foreach_po( [&]( auto const& f ) {
-        if ( d_ntk.is_on_critical_path( ntk.get_node( f ) ) )
+        if ( !ntk.is_constant( ntk.get_node( f ) ) && d_ntk.is_on_critical_path( ntk.get_node( f ) ) )
           legal_cut = select_buf_cut_critical_rec( d_ntk, ntk.get_node( f ), 1 );
         return legal_cut;
       } );
@@ -335,9 +334,6 @@ private:
   template<class FNtk>
   bool select_buf_cut_rec( FNtk& ntk, node const& n, uint32_t value )
   {
-    if ( ntk.is_constant( n ) )
-      return true;
-
     if ( ntk.visited( n ) == ntk.trav_id() )
       return true;
 
@@ -364,7 +360,8 @@ private:
 
     bool legal = true;
     ntk.foreach_fanin( n, [&]( auto const& f ) {
-      legal = select_buf_cut_rec( ntk, ntk.get_node( f ), value );
+      if ( !ntk.is_constant( ntk.get_node( f ) ) )
+        legal = select_buf_cut_rec( ntk, ntk.get_node( f ), value );
       return legal;
     } );
 
@@ -552,9 +549,6 @@ private:
 
   bool select_buf_cut_critical_rec( aqfp_level_t& ntk, node const& n, uint32_t value )
   {
-    if ( ntk.is_constant( n ) )
-      return true;
-
     if ( ntk.visited( n ) == ntk.trav_id() )
       return true;
 
@@ -577,7 +571,7 @@ private:
 
     bool legal = true;
     ntk.foreach_fanin( n, [&]( auto const& f ) {
-      if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
+      if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.is_on_critical_path( ntk.get_node( f ) ) )
         legal = select_buf_cut_critical_rec( ntk, ntk.get_node( f ), value );
       return legal;
     } );
@@ -1314,7 +1308,7 @@ private:
   };
 
 private:
-  Ntk &_ntk;
+  Ntk const& _ntk;
   aqfp_optimize_depth_params const& _ps;
   aqfp_optimize_depth_stats& _st;
 };
@@ -1328,7 +1322,7 @@ private:
  * \param ntk Mapped AQFP network
  */
 template<class Ntk>
-Ntk aqfp_optimize_depth( Ntk& ntk, aqfp_optimize_depth_params const& ps = {}, aqfp_optimize_depth_stats *pst = nullptr )
+Ntk aqfp_optimize_depth( Ntk const& ntk, aqfp_optimize_depth_params const& ps = {}, aqfp_optimize_depth_stats *pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
@@ -1368,10 +1362,10 @@ public:
   using signal = typename aqfp_network::signal;
 
 public:
-  aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps )
-    : _ntk( ntk )
-    , _ps( ps )
-    {}
+  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps )
+      : _ntk( ntk ), _ps( ps )
+  {
+  }
 
   buffered_aqfp_network run()
   {
@@ -1448,7 +1442,7 @@ private:
  *
  * \param ntk Buffered AQFP network
  */
-buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network& ntk, buffer_insertion_params const& ps = {} )
+buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {} )
 {
   detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps );
   return p.run();
