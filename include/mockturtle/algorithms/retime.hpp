@@ -63,17 +63,6 @@ struct retime_params
   /*! \brief Frontier based retiming. */
   bool frontier_retiming{ false };
 
-  /*! \brief Retiming mode base on the technology.
-  * Extends retiming based on the technology
-  * - `GENERIC`: CMOS, RSFQ, etc.
-  * - `AQFP`: technology using clocked splitters
-  */
-  enum
-  {
-    GENERIC,
-    AQFP
-  } mode = GENERIC;
-
   uint32_t splitter_capacity{ 3 };
 
   /*! \brief Be verbose */
@@ -162,11 +151,6 @@ private:
   bool retime_area( uint32_t iteration )
   {
     auto const num_latches_pre = _ntk.num_latches();
-
-    if ( _ps.mode == retime_params::AQFP )
-    {
-      pick_retimeable_registers();
-    }
 
     init_values<forward>();
 
@@ -282,7 +266,7 @@ private:
       } );
     }
 
-    std::cout << "frontiers = " << max_frontiers << "\n";
+    // std::cout << "frontiers = " << max_frontiers << "\n";
   }
 
   template<bool forward>
@@ -296,8 +280,6 @@ private:
     /* run max flow from each register (capacity 1) */
     _ntk.foreach_latch( [&]( auto const& n ) {
       if ( _ps.frontier_retiming && ( _ntk.value2( n ) > iteration ) )
-        return true;
-      if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
         return true;
 
       uint32_t local_flow;
@@ -323,8 +305,6 @@ private:
     _ntk.incr_trav_id();
     _ntk.foreach_latch( [&]( auto const& n ) {
       if ( _ps.frontier_retiming && ( _ntk.value2( n ) > iteration  ) )
-        return true;
-      if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
         return true;
 
       uint32_t local_flow;
@@ -532,10 +512,6 @@ private:
       {
         _ntk.set_value( _ntk.fanout( n )[0], 2 );
       }
-      // else if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
-      // {
-      //   _ntk.set_value( n, 2 );
-      // }
       else
       {
         _ntk.set_value( _ntk.fanout( n )[0], 1 );
@@ -579,8 +555,6 @@ private:
       _ntk.foreach_latch( [&]( auto const& n ) {
         if ( _ps.frontier_retiming && ( _ntk.value2( n ) > iteration  ) )
           return true;
-        // if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
-        //   return true;
 
         node fanin = _ntk.get_node( _ntk.get_fanin0( n ) );
         collect_cut_nodes_tfi( fanin, min_cut );
@@ -849,8 +823,6 @@ private:
     {
       if ( _ps.frontier_retiming && ( _ntk.value2( n ) > iteration  ) )
         return true;
-      if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
-          return true;
 
       if ( _ntk.visited( n ) == _ntk.trav_id() )
         return true;
@@ -869,11 +841,6 @@ private:
       auto fanin_type = _ntk.is_box_output( _ntk.get_node( latch_in_in ) );
 
       _ntk.substitute_node( latch_out, latch_in_in );
-
-      if ( _ntk.fanout_size( _ntk.get_node( latch_in_in ) ) > 4 )
-      {
-        std::cout << _ntk.fanout_size( _ntk.get_node( latch_in_in ) ) << std::endl;
-      }
 
       return true;
     } );
@@ -1036,8 +1003,6 @@ private:
     _ntk.foreach_latch( [&]( auto const& n ) {
       if ( _ps.frontier_retiming && _ntk.value2( n ) > iteration )
         return true;
-      if ( _ps.mode == retime_params::AQFP && _ntk.value2( n ) == 0 )
-        return true;
 
       if constexpr ( forward )
       {
@@ -1105,73 +1070,6 @@ private:
 
     return check;
   }
-
-  void pick_retimeable_registers()
-  {
-    _ntk.clear_values2();
-
-    /* mark retimeable registers */
-    _ntk.foreach_latch( [&]( auto const& n ) {
-      uint32_t latch_fanout = _ntk.fanout_size( _ntk.fanout(n)[0] );
-      if ( latch_fanout > 1 )
-      {
-        auto fanin = _ntk.get_fanin0( _ntk.get_fanin0( n ) );
-        // if ( _ntk.is_box_output( fanin ) )
-        // {
-        //   /* is splitter retimeable ? */
-        //   uint32_t free_spots = _ps.splitter_capacity - _ntk.fanout_size( fanin ) + 1;
-        //   _ntk.foreach_fanout( fanin, [&]( auto f ) {
-        //     if ( _ntk.is_box_input( f ) )
-        //     {
-        //       auto reg = _ntk.fanout( f )[0];
-        //       if ( _ntk.value2( reg ) && _ntk.fanout_size( _ntk.fanout( reg )[0] ) != 1 )
-        //         free_spots -= _ntk.fanout_size( _ntk.fanout( reg )[0] ) - 1;
-        //     }
-        //   } );
-        //   if ( free_spots >= latch_fanout )
-        //     _ntk.set_value2( n, 1 );
-        // }
-      }
-      else
-      {
-        _ntk.set_value2( n, 1 );
-      }
-    } );
-  }
-
-  // inline Ntk create_copy_retiming( node_map<signal, Ntk>& old2new )
-  // {
-  //   if constexpr ( has_add_binding_v<Ntk> )
-  //   {
-  //     Ntk res( _ntk.get_library() );
-
-  //     old2new[_ntk.get_constant( false )] = res.get_constant( false );
-  //     if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
-  //     {
-  //       old2new[_ntk.get_constant( true )] = res.get_constant( true );
-  //     }
-  //     _ntk.foreach_pi( [&]( auto const& n ) {
-  //       old2new[n] = res.create_pi();
-  //     } );
-
-  //     return res;
-  //   }
-  //   else
-  //   {
-  //     Ntk res;
-
-  //     old2new[_ntk.get_constant( false )] = res.get_constant( false );
-  //     if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
-  //     {
-  //       old2new[_ntk.get_constant( true )] = res.get_constant( true );
-  //     }
-  //     _ntk.foreach_pi( [&]( auto const& n ) {
-  //       old2new[n] = res.create_pi();
-  //     } );
-
-  //     return res;
-  //   }
-  // }
 
 private:
   Ntk& _ntk;
