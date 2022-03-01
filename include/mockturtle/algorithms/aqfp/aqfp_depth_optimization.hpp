@@ -70,10 +70,10 @@ struct aqfp_optimize_depth_params
 struct aqfp_optimize_depth_stats
 {
   /*! \brief Initial number of buffers/splitters. */
-  // uint32_t buffers_pre{ 0 };
+  uint32_t buffers_pre{ 0 };
 
   /*! \brief Number of buffers/splitters after the algorithm. */
-  // uint32_t buffers_post{ 0 };
+  uint32_t buffers_post{ 0 };
 
   /*! \brief Initial depth. */
   uint32_t depth_pre{ 0 };
@@ -86,8 +86,8 @@ struct aqfp_optimize_depth_stats
 
   void report() const
   {
-    // std::cout << fmt::format( "[i] Initial B/S   = {:7d}\t Final B/S   = {:7d}\n", buffers_pre, buffers_post );
     std::cout << fmt::format( "[i] Initial depth = {:7d}\t Final depth = {:7d}\n", depth_pre, depth_post );
+    std::cout << fmt::format( "[i] Initial B/S   = {:7d}\t Final B/S   = {:7d}\n", buffers_pre, buffers_post );
     std::cout << fmt::format( "[i] Total runtime = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
@@ -166,7 +166,7 @@ public:
     buf_ps.assume = _ps.aqfp_assumptions_ps;
     buf_ps.scheduling = buffer_insertion_params::provided;
     buf_ps.optimization_effort = buffer_insertion_params::none;
-    return aqfp_reconstruct_splitter_trees( ntk, buf_ps );
+    return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
   }
 
 private:
@@ -1229,10 +1229,18 @@ private:
     std::vector<node> buffers;
     buffers.reserve( 100 );
 
+    uint32_t bs_count = 0;
+
     ntk.foreach_node( [&]( auto const& n ) {
-      if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
-        buffers.push_back( n );
+      if ( ntk.is_buf( n ) )
+      {
+        ++bs_count;
+        if ( ntk.fanout_size( n ) == 1 )
+          buffers.push_back( n );
+      }
     } );
+
+    _st.buffers_pre = bs_count;
 
     fanout_view<Ntk> f_ntk{ ntk };
 
@@ -1363,8 +1371,8 @@ public:
   using signal = typename aqfp_network::signal;
 
 public:
-  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps )
-      : _ntk( ntk ), _ps( ps )
+  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps, uint32_t& num_buffers )
+      : _ntk( ntk ), _ps( ps ), _num_buffers( num_buffers )
   {
   }
 
@@ -1387,7 +1395,7 @@ public:
     /* recompute splitter trees and return the new buffered network */
     buffered_aqfp_network res;
     buffer_insertion buf_inst( clean_ntk, levels, _ps );
-    buf_inst.run( res );
+    _num_buffers = buf_inst.run( res );
     return res;
   }
 
@@ -1433,6 +1441,7 @@ private:
 private:
   buffered_aqfp_network const& _ntk;
   buffer_insertion_params const& _ps;
+  uint32_t& _num_buffers;
 };
 
 } /* namespace detail */
@@ -1443,10 +1452,16 @@ private:
  *
  * \param ntk Buffered AQFP network
  */
-buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {} )
+buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {}, uint32_t* pnum_buffers = nullptr )
 {
-  detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps );
-  return p.run();
+  uint32_t num_buffers;
+  detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps, num_buffers );
+  auto res = p.run();
+
+  if ( pnum_buffers )
+    *pnum_buffers = num_buffers;
+
+  return res;
 }
 
 } // namespace mockturtle
