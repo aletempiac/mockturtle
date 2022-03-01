@@ -39,6 +39,7 @@
 #include "../../networks/buffered.hpp"
 #include "../../networks/generic.hpp"
 #include "../../utils/node_map.hpp"
+#include "../../utils/stopwatch.hpp"
 #include "../../views/depth_view.hpp"
 #include "../../views/fanout_view.hpp"
 #include "../../views/topo_view.hpp"

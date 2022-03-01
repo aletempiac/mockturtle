@@ -439,7 +439,7 @@ private:
       return true;
     });
 
-    /* //debugging checks
+    //debugging checks
     if ( !_ps.assume.branch_pis )
     {
       _ntk.foreach_pi( [&]( auto const& n ) { assert( _fanouts[n].size() == 0 ); });
@@ -457,7 +457,6 @@ private:
         return true;
       });
     }
-    */
 
     _ntk.foreach_gate( [&]( auto const& n ) {
       count_edges( n );
