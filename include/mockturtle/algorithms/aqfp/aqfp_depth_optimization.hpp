@@ -55,8 +55,11 @@ struct aqfp_optimize_depth_params
   /*! \brief AQFP technology assumptions. */
   aqfp_assumptions aqfp_assumptions_ps{};
 
-  /*! \brief Critical depth reduction. */
-  bool critical_depth_reduction{ true };
+  /*! \brief Maximum number of iterations. */
+  uint32_t iterations{ UINT32_MAX };
+
+  /*! \brief Allow area increase in depth reduction. */
+  bool allow_area_increase{ false };
 
   /*! \brief Be verbose. */
   bool verbose{ false };
@@ -138,6 +141,13 @@ public:
 
     Ntk ntk = cleanup_dangling_buffered( _ntk );
 
+    // {
+    //   depth_view<Ntk> d_ntk{ ntk };
+    //   fanout_view<depth_view<Ntk>> f_ntk{ d_ntk };
+    //   unordered_node_map<uint32_t, Ntk> mobility( ntk );
+    //   move_logic_up( f_ntk, mobility );
+    // }
+
     /* reposition buffers */
     push_buffers_forward( ntk );
 
@@ -155,11 +165,9 @@ public:
       create_res_net( ntk, res, old2new );
       ntk = res;
     }
-
-    if ( _ps.critical_depth_reduction )
-    {
-      run_critical_depth_reduction( ntk );
-    }
+    
+    // run_critical_depth_reduction( ntk );
+    run_critical_depth_reduction_dup( ntk );
 
     /* splitter trees reconstruction params */
     buffer_insertion_params buf_ps;
@@ -171,13 +179,13 @@ public:
 
 private:
   template<class FNtk>
-  bool run_cut_based_depth_reduction( FNtk& ntk, uint32_t iterations )
+  bool run_cut_based_depth_reduction( FNtk& ntk, uint32_t rounds )
   {
     static_assert( has_foreach_fanout_v<FNtk>, "Ntk does not implement the foreach_fanout method" );
 
     /* find a cut of buffers and mark them as removable */
     uint32_t i;
-    for ( i = 1; i <= iterations; ++i )
+    for ( i = 1; i <= rounds; ++i )
     {
       ntk.incr_trav_id();
       uint32_t trav_id = ntk.trav_id();
@@ -214,6 +222,12 @@ private:
       {
         std::cout << fmt::format( "[i] Initial depth = {:7d}\t Final depth = {:7d}\r", _st.depth_pre, _st.depth_post ) << std::flush;
       }
+
+      if ( ++iterations >= _ps.iterations )
+      {
+        ++i;
+        break;
+      }
     }
 
     /* no cut found */
@@ -230,7 +244,6 @@ private:
     aqfp_level_t d_ntk{ ntk };
     fanout_view<aqfp_level_t> f_ntk{ d_ntk };
 
-    bool success = false;
     while ( true )
     {
       ntk.clear_values();
@@ -240,10 +253,10 @@ private:
       ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), trav_id );
 
       /* set free spots foreach splitter */
-      ntk.foreach_node( [&]( auto const& n ) {
-        if ( ntk.is_buf( n ) )
-          ntk.set_value( n, _ps.aqfp_assumptions_ps.splitter_capacity - ntk.fanout_size( n ) );
-      } );
+      // ntk.foreach_node( [&]( auto const& n ) {
+      //   if ( ntk.is_buf( n ) )
+      //     ntk.set_value( n, _ps.aqfp_assumptions_ps.splitter_capacity - ntk.fanout_size( n ) );
+      // } );
 
       /* A cut of buffers/splitters on the critical paths may exist */
       ntk.foreach_pi( [&]( auto const& n ) {
@@ -255,8 +268,8 @@ private:
 
       /* search for the critical cut */
       bool legal_cut = true;
-      ntk.clear_values();
       ntk.incr_trav_id();
+      ntk.clear_values();
       ntk.foreach_po( [&]( auto const& f ) {
         if ( !ntk.is_constant( ntk.get_node( f ) ) && d_ntk.is_on_critical_path( ntk.get_node( f ) ) )
           legal_cut = select_buf_cut_critical_rec( d_ntk, ntk.get_node( f ), 1 );
@@ -265,7 +278,7 @@ private:
 
       if ( legal_cut )
       {
-        /* TODO: a more "in depth" study */
+        /* PO splitter cannot be removed, the cut arrived until POs */
         ntk.foreach_po( [&]( auto const& f ) {
           if ( ntk.value( ntk.get_node( f ) ) && ntk.fanout_size( ntk.get_node( f ) ) > 1 )
           {
@@ -293,10 +306,85 @@ private:
 
       if ( !result )
         break;
-      else
-        success = true;
 
       remove_buffers_inplace( f_ntk );
+
+      if ( iterations >= _ps.iterations )
+        break;
+
+      f_ntk.update_levels();
+    }
+  }
+
+  void run_critical_depth_reduction_dup( Ntk& ntk )
+  {
+    aqfp_level_t d_ntk{ ntk };
+    fanout_view<aqfp_level_t> f_ntk{ d_ntk };
+
+    while ( true )
+    {
+      ntk.clear_values();
+      ntk.incr_trav_id();
+      uint32_t trav_id = ntk.trav_id();
+
+      ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), trav_id );
+
+      /* A cut of buffers/splitters on the critical paths may exist */
+      ntk.clear_values();
+      ntk.foreach_po( [&]( auto const& f ) {
+        if ( !ntk.is_constant( ntk.get_node( f ) ) && d_ntk.is_on_critical_path( ntk.get_node( f ) ) )
+        {
+          mark_cut_critical_dup_rec( f_ntk, ntk.get_node( f ) );
+        }
+      } );
+
+      /* search for the critical cut */
+      bool legal_cut = true;
+      ntk.incr_trav_id();
+      ntk.foreach_pi( [&]( auto const& n ) {
+        if ( d_ntk.is_on_critical_path( n ) )
+          legal_cut = select_buf_cut_critical_dup_rec( f_ntk, n, 1 );
+        return legal_cut;
+      } );
+
+      if ( legal_cut )
+      {
+        /* PO splitter cannot be removed, the cut arrived until POs */
+        ntk.foreach_pi( [&]( auto const& n ) {
+          if ( ntk.value( n ) ) /* TODO: correct here */
+          {
+            /* check validity */
+            legal_cut = false;
+          }
+          return legal_cut;
+        } );
+      }
+
+      if ( !legal_cut )
+      {
+        /* critical path cannot be reduced */
+        break;
+      }
+
+      std::cout << "Found a legal node duplication\n";
+
+      /* modify selected splitter trees and critical section */
+      std::vector<node> critical_cut;
+      change_splitter_trees_dup( f_ntk, critical_cut );
+
+      lower_critical_section( f_ntk, critical_cut );
+
+      /* remove cut of buffers */
+      auto result = run_cut_based_depth_reduction( f_ntk, 1 );
+
+      if ( !result )
+        break;
+
+      remove_buffers_inplace( f_ntk );
+
+      if ( iterations >= _ps.iterations )
+        break;
+
       f_ntk.update_levels();
     }
   }
@@ -403,6 +491,45 @@ private:
     } );
   }
 
+  void mark_cut_critical_dup_rec( fanout_view<aqfp_level_t>& f_ntk, node const& n )
+  {
+    if ( f_ntk.visited( n ) == f_ntk.trav_id() )
+      return;
+
+    f_ntk.set_visited( n, f_ntk.trav_id() );
+
+    /* recur towards critical TFO */
+    f_ntk.foreach_fanout( n, [&]( auto const& f ) {
+      if ( f_ntk.visited( f ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( f ) )
+      {
+        mark_cut_critical_dup_rec( f_ntk, f );
+      }
+      else if (  f_ntk.visited( f ) == f_ntk.trav_id() )
+      {
+        f_ntk.set_value( f, 0 );
+      }
+    } );
+
+    /* find a cut */
+    if ( f_ntk.is_buf( n ) )
+    {
+      /* TODO: add clean TFO */
+      if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_dup( f_ntk, n ) )
+      {
+        return;
+      }
+    }
+
+    /* recur towards critical TFI */
+    f_ntk.foreach_fanin( n, [&]( auto const& f ) {
+      auto g = f_ntk.get_node( f );
+      if ( f_ntk.visited( g ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( g ) )
+      {
+        mark_cut_critical_dup_rec( f_ntk, g );
+      }
+    } );
+  }
+
   /* old version: fast, but finds less optimization opportunities that the newer version */
   inline bool check_cut_critical_splitter( fanout_view<aqfp_level_t>& f_ntk, node const& n )
   {
@@ -490,6 +617,143 @@ private:
       return true;
   }
 
+  inline bool check_cut_critical_dup( fanout_view<aqfp_level_t>& ntk, node const& n )
+  {
+    node fanin;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      fanin = ntk.get_node( f );
+    } );
+
+    /* return if not a splitter tree root */
+    if ( ntk.is_buf( fanin ) )
+      return false;
+
+    /* if PI, return standard splitter tree deduction */
+    if ( ntk.is_pi( fanin ) )
+      return check_cut_critical_splitter2( ntk, n );
+
+    std::vector<int> level_assignment;
+    collect_splitter_tree_leaves_levels( ntk, fanin, 0, level_assignment );
+
+    /* sort vector by level in decreasing order */
+    std::sort( level_assignment.begin(), level_assignment.end(), std::greater<int>() );
+
+    /* check if negative level (not valid) */
+    if ( level_assignment.empty() )
+      return false;
+
+    /* node duplication needs */
+    uint32_t copies = 0;
+
+    /* see if the new level assignment has a solution */
+    uint32_t nodes_in_level = 0;
+    uint32_t last_level = level_assignment.front();
+    for ( int const l : level_assignment )
+    {
+      if ( l == last_level )
+      {
+        ++nodes_in_level;
+      }
+      else
+      {
+        /* update splitters */
+        for ( auto i = 0; ( i < last_level - l ) && ( nodes_in_level != 1 ); ++i )
+          nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+        ++nodes_in_level;
+        last_level = l;
+      }
+    }
+    for ( auto i = 0; i < last_level; ++i )
+      nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+    if ( nodes_in_level == 1 )
+      return true;
+
+    /* need another copy */
+    copies += nodes_in_level - 1;
+
+    /* add copies */
+    ntk.set_value( fanin, copies );
+
+    /* check that the number copies would not need a fanin duplication */
+    if ( check_copy( ntk, fanin ) )
+    {
+      return true;
+    }
+    else
+    {
+      /* clean copies */
+      ntk.set_value( n, 0 );
+      return false;
+    }
+  }
+
+  bool check_copy( fanout_view<aqfp_level_t>& ntk, node const& n )
+  {
+    /* get the children nodes */
+    bool valid = true;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      if ( !ntk.is_constant( ntk.get_node( f ) ) )
+      {
+        auto g = rec_get_splitter_tree_root( ntk, ntk.get_node( f ) );
+        valid = check_node_dup_splitter_tree( ntk, g );
+      }
+      return valid;
+    } );
+
+    return valid;
+  }
+
+  node rec_get_splitter_tree_root( fanout_view<aqfp_level_t>& ntk, node const& n )
+  {
+    if ( !ntk.is_buf( n ) )
+      return n;
+    
+    node g;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      g = rec_get_splitter_tree_root( ntk, ntk.get_node( f ) );
+    } );
+
+    return g;
+  }
+
+  bool check_node_dup_splitter_tree( fanout_view<aqfp_level_t>& ntk, node const& n )
+  {
+    std::vector<int> level_assignment;
+    bool modify = collect_splitter_tree_leaves_levels_dup( ntk, n, 0, level_assignment );
+
+    /* sort by descending order of levels */
+    std::sort( level_assignment.begin(), level_assignment.end(), std::greater<uint32_t>() );
+
+    /* simulate splitter tree reconstruction */
+    uint32_t nodes_in_level = 0;
+    uint32_t last_level = level_assignment.front();
+    for ( int const l : level_assignment )
+    {
+      if ( l == last_level )
+      {
+        ++nodes_in_level;
+      }
+      else
+      {
+        /* update splitters */
+        for ( auto i = 0; ( i < last_level - l ) && ( nodes_in_level != 1 ); ++i )
+          nodes_in_level = std::ceil( float( nodes_in_level ) / float(  _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+        ++nodes_in_level;
+        last_level = l;
+      }
+    }
+
+    for ( auto i = 0; i < last_level && nodes_in_level != 1; ++i )
+    {
+      nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+    }
+
+    return nodes_in_level == 1;
+  }
+
   bool collect_splitter_tree_leaves_levels( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<int>& level_assignment )
   {
     bool modify = false;
@@ -514,6 +778,34 @@ private:
     } );
 
     /* TODO: consider POs, for now POs are considered as balanced */
+    for ( auto i = ntk.fanout( n ).size(); i < ntk.fanout_size( n ); ++i )
+    {
+      level_assignment.push_back( _st.depth_post + 1 );
+    }
+    return modify;
+  }
+
+  bool collect_splitter_tree_leaves_levels_dup( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<int>& level_assignment )
+  {
+    bool modify = false;
+    ntk.foreach_fanout( n, [&]( auto const& f ) {
+      if ( ntk.is_buf( f ) )
+      {
+        modify |= collect_splitter_tree_leaves_levels_dup( ntk, f, level + 1, level_assignment );
+      }
+      else
+      {
+        level_assignment.push_back( level );
+        for ( auto i = 0; i < ntk.value( f ); ++i )
+          level_assignment.push_back( level );
+      }
+    } );
+
+    /* TODO: consider POs, for now POs are considered as balanced */
+    for ( auto i = ntk.fanout( n ).size(); i < ntk.fanout_size( n ); ++i )
+    {
+      level_assignment.push_back( _st.depth_post + 1 );
+    }
     return modify;
   }
 
@@ -548,6 +840,25 @@ private:
     return modify;
   }
 
+  void collect_splitter_tree_leaves_preserve_level( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<splitter_tuple>& signal_assignment, bool phase )
+  {
+    ntk.foreach_fanout( n, [&]( auto const& f ) {
+      if ( ntk.is_buf( f ) )
+      {
+        bool phase_s = phase;
+        ntk.foreach_fanin( n, [&]( auto const& fanin ) {
+          phase_s ^= ntk.is_complemented( fanin );
+        } );
+        collect_splitter_tree_leaves_preserve_level( ntk, f, level + 1, signal_assignment, phase_s );
+      }
+      else
+      {
+        /* lower critical signal by one */
+        signal_assignment.emplace_back( std::make_tuple( ntk.make_signal( f ) ^ phase, n, level ) );
+      }
+    } );
+  }
+
   bool select_buf_cut_critical_rec( aqfp_level_t& ntk, node const& n, uint32_t value )
   {
     if ( ntk.visited( n ) == ntk.trav_id() )
@@ -574,6 +885,38 @@ private:
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.is_on_critical_path( ntk.get_node( f ) ) )
         legal = select_buf_cut_critical_rec( ntk, ntk.get_node( f ), value );
+      return legal;
+    } );
+
+    return legal;
+  }
+
+  bool select_buf_cut_critical_dup_rec( fanout_view<aqfp_level_t>& ntk, node const& n, uint32_t value )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return true;
+
+    /* if selected buffer, set as removable */
+    if ( ntk.visited( n ) == ntk.trav_id() - 1 && ntk.is_buf( n ) )
+    {
+      ntk.set_visited( n, ntk.trav_id() );
+      ntk.set_value( n, ntk.value( n ) | ( 1 << 31 ) );
+      return true;
+    }
+
+    /* check not a cut */
+    if ( ntk.visited( n ) == ntk.trav_id() - 1 )
+    {
+      ntk.set_visited( n, ntk.trav_id() );
+      return false;
+    }
+
+    ntk.set_visited( n, ntk.trav_id() );
+
+    bool legal = true;
+    ntk.foreach_fanout( n, [&]( auto const& f ) {
+      if ( ntk.is_on_critical_path( f ) )
+        legal = select_buf_cut_critical_dup_rec( ntk, f, value );
       return legal;
     } );
 
@@ -751,6 +1094,385 @@ private:
         }
       }
     } );
+  }
+
+  /* new version: slightly slower, but finds more optimization opportunities that the old version */
+  void change_splitter_trees_dup( fanout_view<aqfp_level_t>& ntk, std::vector<node>& critical_cut )
+  {
+    /* create copies first */
+    ntk.foreach_node( [&]( auto const& n ) {
+      if ( ntk.value( n ) >> 31 == 1 )
+      {
+        uint32_t copies = ntk.value( n ) & 0x8FFFFFFF;
+        if ( copies > 0 )
+        {
+          signal fanin;
+          ntk.foreach_fanin( n, [&]( auto const& f ) {
+            fanin = f;
+          } );
+          reconstruct_splitter_tree_dup( ntk, ntk.get_node( fanin ), ntk.is_complemented( fanin ), critical_cut );
+          ntk.foreach_fanin( ntk.get_node( fanin ), [&]( auto const& f ) {
+            if ( !ntk.is_constant( ntk.get_node( f ) ) )
+            {
+              auto g = ntk.fanout( rec_get_splitter_tree_root( ntk, ntk.get_node( f ) ) )[0];
+              /* restructure splitter tree */
+              // reconstruct_splitter_tree( ntk, ntk.fanout( g )[0] );
+              ntk.set_value( g, ntk.value( g ) | ( 1 << 30 ) );
+            }
+          } );
+        }
+        else if ( ntk.fanout_size( n ) == 1 )
+        {
+          critical_cut.push_back( n );
+        }
+      }
+    } );
+
+    /* modify splitter trees */
+    ntk.foreach_node( [&]( auto const& n ) {
+      if ( ( ntk.value( n ) >> 31 ) == 1 )
+      {
+        uint32_t copies = ntk.value( n ) & 0x8FFFFFFF;
+        if ( ntk.fanout_size( n ) > 1 && copies == 0 )
+        {
+          /* reconstruct splitter tree lowering the critical paths */
+          std::vector<splitter_tuple> signal_assignment;
+
+          bool modify = collect_splitter_tree_leaves( ntk, n, 0, signal_assignment, false );
+
+          if ( modify == false )
+          {
+            /* no need to rewrite the splitter tree, just collect the critical cut */
+            for ( auto const& t : signal_assignment )
+            {
+              if ( ntk.is_on_critical_path( ntk.get_node( std::get<0>( t ) ) ) )
+              {
+                critical_cut.push_back( ntk.get_node( std::get<0>( t ) ) );
+              }
+            }
+            return;
+          }
+
+          std::sort( signal_assignment.begin(), signal_assignment.end(), []( auto const& a, auto const& b ) {
+            return std::get<2>( a ) > std::get<2>( b );
+          } );
+
+          uint32_t max_level = std::get<2>( signal_assignment.front() );
+          std::vector<uint32_t> splitters_per_level( max_level, 0 );
+          uint32_t nodes_in_level = 0;
+          uint32_t last_level = max_level;
+
+          for ( auto const& t : signal_assignment )
+          {
+            auto l = std::get<2>( t );
+            if ( l == max_level )
+            {
+              ++nodes_in_level;
+            }
+            else
+            {
+              /* update splitters */
+              for ( auto i = last_level; i > l; --i )
+              {
+                splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+                nodes_in_level = splitters_per_level[i - 1];
+              }
+
+              ++nodes_in_level;
+              last_level = l;
+            }
+          }
+          for ( auto i = last_level; i > 0; --i )
+          {
+            splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+            nodes_in_level = splitters_per_level[i - 1];
+          }
+
+          /* get root node */
+          signal root_s;
+          ntk.foreach_fanin( n, [&]( auto const& f ) {
+            root_s = f;
+          } );
+
+          std::vector<std::list<signal>> splitters( max_level + 1 );
+          splitters[0].push_back( ntk.create_buf( root_s ) );
+
+          /* create copies */
+          for ( auto i = 1; i < nodes_in_level; ++i )
+          {
+
+          }
+
+          /* create splitter tree */
+          for ( auto i = 0; i < splitters_per_level.size(); ++i )
+          {
+            auto it = splitters[i].begin();
+            for ( auto j = 0; j < splitters_per_level[i]; ++j )
+            {
+              splitters[i + 1].push_back( ntk.create_buf( *it ) );
+              if ( ntk.fanout_size( ntk.get_node( *it ) ) == _ps.aqfp_assumptions_ps.splitter_capacity )
+                ++it;
+            }
+          }
+
+          /* assign signals from splitter trees */
+          last_level = max_level;
+          auto it = splitters[max_level].begin();
+          for ( auto const& t : signal_assignment )
+          {
+            if ( std::get<2>( t ) != last_level )
+            {
+              it = splitters[std::get<2>( t )].begin();
+              while ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+                ++it;
+              last_level = std::get<2>( t );
+            }
+            signal f = std::get<0>( t );
+            if ( ntk.is_on_critical_path( ntk.get_node( f ) ) && !ntk.is_buf( ntk.get_node( f ) ) )
+            {
+              signal buf = ntk.create_buf( *it ) ^ ntk.is_complemented( f );
+              ntk.replace_in_node( ntk.get_node( f ), std::get<1>( t ), buf );
+              critical_cut.push_back( ntk.get_node( buf ) );
+              set_critical_path_fanin_rec( ntk, ntk.get_node( buf ) );
+            }
+            else
+            {
+              ntk.replace_in_node( ntk.get_node( f ), std::get<1>( t ), *it ^ ntk.is_complemented( f ) );
+              if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
+              {
+                critical_cut.push_back( ntk.get_node( f ) );
+                set_critical_path_fanin_rec( ntk, ntk.get_node( *it ) );
+              }
+            }
+            if ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+              ++it;
+          }
+
+          /* take out nodes */
+          for ( auto const& t : signal_assignment )
+          {
+            if ( !ntk.is_dead( std::get<1>( t ) ) )
+              ntk.take_out_node( std::get<1>( t ) );
+          }
+        }
+      }
+      else if ( ( ntk.value( n ) >> 30 ) == 1 )
+      {
+        reconstruct_splitter_tree( ntk, n );
+      }
+    } );
+  }
+
+  void reconstruct_splitter_tree_dup( fanout_view<aqfp_level_t>& ntk, node const& n, bool phase, std::vector<node>& critical_cut )
+  {
+    std::vector<splitter_tuple> signal_assignment;
+
+    bool modify = collect_splitter_tree_leaves( ntk, n, 0, signal_assignment, false );
+
+    std::sort( signal_assignment.begin(), signal_assignment.end(), []( auto const& a, auto const& b ) {
+      return std::get<2>( a ) > std::get<2>( b );
+    } );
+
+    uint32_t max_level = std::get<2>( signal_assignment.front() );
+    std::vector<uint32_t> splitters_per_level( max_level, 0 );
+    uint32_t nodes_in_level = 0;
+    uint32_t last_level = max_level;
+
+    for ( auto const& t : signal_assignment )
+    {
+      auto l = std::get<2>( t );
+      if ( l == max_level )
+      {
+        ++nodes_in_level;
+      }
+      else
+      {
+        /* update splitters */
+        for ( auto i = last_level; i > l; --i )
+        {
+          splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+          nodes_in_level = splitters_per_level[i - 1];
+        }
+
+        ++nodes_in_level;
+        last_level = l;
+      }
+    }
+    for ( auto i = last_level; i > 0; --i )
+    {
+      splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+      nodes_in_level = splitters_per_level[i - 1];
+    }
+
+    std::vector<std::list<signal>> splitters( max_level + 1 );
+    splitters[0].push_back( ntk.make_signal( n ) ^ phase );
+
+    std::vector<signal> children;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      children.push_back( f );
+    } );
+
+    /* create copies */
+    for ( auto i = 1; i < nodes_in_level; ++i )
+    {
+      signal copy = ntk.clone_node( ntk, n, children );
+      // critical_cut.push_back( ntk.get_node( buf ) );
+      // set_critical_path_fanin_rec( ntk, ntk.get_node( buf ) );
+      // --copies;
+      splitters[0].push_back( copy ^ phase );
+    }
+
+    /* create splitter tree */
+    for ( auto i = 0; i < splitters_per_level.size(); ++i )
+    {
+      auto it = splitters[i].begin();
+      for ( auto j = 0; j < splitters_per_level[i]; ++j )
+      {
+        splitters[i + 1].push_back( ntk.create_buf( *it ) );
+        if ( ntk.fanout_size( ntk.get_node( *it ) ) == _ps.aqfp_assumptions_ps.splitter_capacity )
+          ++it;
+        else if ( i == 0 && ntk.fanout_size( ntk.get_node( *it ) ) >= 1 )
+          ++it;
+      }
+    }
+
+    /* assign signals from splitter trees */
+    last_level = max_level;
+    auto it = splitters[max_level].begin();
+    for ( auto const& t : signal_assignment )
+    {
+      if ( std::get<2>( t ) != last_level )
+      {
+        it = splitters[std::get<2>( t )].begin();
+        while ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+          ++it;
+        if ( std::get<2>( t ) == 0 )
+        {
+          /* level zero has a sigle fanin */
+          while ( ntk.fanout_size( ntk.get_node( *it ) ) != 0 )
+            ++it;
+        }
+        last_level = std::get<2>( t );
+      }
+      signal f = std::get<0>( t );
+      if ( ntk.is_on_critical_path( ntk.get_node( f ) ) && !ntk.is_buf( ntk.get_node( f ) ) )
+      {
+        signal buf = ntk.create_buf( *it ) ^ ntk.is_complemented( f );
+        ntk.replace_in_node( ntk.get_node( f ), std::get<1>( t ), buf );
+        critical_cut.push_back( ntk.get_node( buf ) );
+        set_critical_path_fanin_rec( ntk, ntk.get_node( buf ) );
+      }
+      else
+      {
+        ntk.replace_in_node( ntk.get_node( f ), std::get<1>( t ), *it ^ ntk.is_complemented( f ) );
+        if ( ntk.is_on_critical_path( ntk.get_node( f ) ) )
+        {
+          critical_cut.push_back( ntk.get_node( f ) );
+          set_critical_path_fanin_rec( ntk, ntk.get_node( *it ) );
+        }
+      }
+      if ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+        ++it;
+      /* level zero allows a signe fanin */
+      if ( last_level == 0 )
+        ++it;
+    }
+
+    /* take out nodes */
+    for ( auto const& t : signal_assignment )
+    {
+      if ( !ntk.is_dead( std::get<1>( t ) ) )
+        ntk.take_out_node( std::get<1>( t ) );
+    }
+  }
+
+  void reconstruct_splitter_tree( fanout_view<aqfp_level_t>& ntk, node const& n )
+  {
+    /* reconstruct splitter tree lowering the critical paths */
+    std::vector<splitter_tuple> signal_assignment;
+
+    collect_splitter_tree_leaves_preserve_level( ntk, n, 0, signal_assignment, false );
+
+    std::sort( signal_assignment.begin(), signal_assignment.end(), []( auto const& a, auto const& b ) {
+      return std::get<2>( a ) > std::get<2>( b );
+    } );
+
+    uint32_t max_level = std::get<2>( signal_assignment.front() );
+    std::vector<uint32_t> splitters_per_level( max_level, 0 );
+    uint32_t nodes_in_level = 0;
+    uint32_t last_level = max_level;
+
+    for ( auto const& t : signal_assignment )
+    {
+      auto l = std::get<2>( t );
+      if ( l == max_level )
+      {
+        ++nodes_in_level;
+      }
+      else
+      {
+        /* update splitters */
+        for ( auto i = last_level; i > l; --i )
+        {
+          splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+          nodes_in_level = splitters_per_level[i - 1];
+        }
+
+        ++nodes_in_level;
+        last_level = l;
+      }
+    }
+    for ( auto i = last_level; i > 0; --i )
+    {
+      splitters_per_level[i - 1] = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+      nodes_in_level = splitters_per_level[i - 1];
+    }
+
+    /* get root node */
+    signal root_s;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      root_s = f;
+    } );
+
+    std::vector<std::list<signal>> splitters( max_level + 1 );
+    splitters[0].push_back( ntk.create_buf( root_s ) );
+
+    /* create splitter tree */
+    for ( auto i = 0; i < splitters_per_level.size(); ++i )
+    {
+      auto it = splitters[i].begin();
+      for ( auto j = 0; j < splitters_per_level[i]; ++j )
+      {
+        splitters[i + 1].push_back( ntk.create_buf( *it ) );
+        if ( ntk.fanout_size( ntk.get_node( *it ) ) == _ps.aqfp_assumptions_ps.splitter_capacity )
+          ++it;
+      }
+    }
+
+    /* assign signals from splitter trees */
+    last_level = max_level;
+    auto it = splitters[max_level].begin();
+    for ( auto const& t : signal_assignment )
+    {
+      if ( std::get<2>( t ) != last_level )
+      {
+        it = splitters[std::get<2>( t )].begin();
+        while ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+          ++it;
+        last_level = std::get<2>( t );
+      }
+      signal f = std::get<0>( t );
+      ntk.replace_in_node( ntk.get_node( f ), std::get<1>( t ), *it ^ ntk.is_complemented( f ) );
+      if ( ntk.fanout_size( ntk.get_node( *it ) ) >= _ps.aqfp_assumptions_ps.splitter_capacity )
+        ++it;
+    }
+
+    /* take out nodes */
+    for ( auto const& t : signal_assignment )
+    {
+      if ( !ntk.is_dead( std::get<1>( t ) ) )
+        ntk.take_out_node( std::get<1>( t ) );
+    }
   }
 
   void set_critical_path_fanin_rec( fanout_view<aqfp_level_t>& ntk, node const& n )
@@ -1294,6 +2016,259 @@ private:
     }
   }
 
+  // void analyze_move_logic_up( fanout_view<aqfp_level_t>& ntk )
+  // {
+  //   unordered_node_map<uint32_t, Ntk> mobility( ntk );
+
+  //   move_logic_up( ntk, mobility );
+
+  //   ntk.clear_values();
+  //   ntk.incr_trav_id();
+  //   uint32_t trav_id = ntk.trav_id();
+
+  //   ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), trav_id );
+
+  //   /* set free spots foreach splitter */
+  //   ntk.foreach_node( [&]( auto const& n ) {
+  //     if ( ntk.is_buf( n ) )
+  //       ntk.set_value( n, _ps.aqfp_assumptions_ps.splitter_capacity - ntk.fanout_size( n ) );
+  //   } );
+
+  //   /* A cut of buffers/splitters on the critical paths may exist */
+  //   ntk.foreach_pi( [&]( auto const& n ) {
+  //     if ( d_ntk.is_on_critical_path( n ) )
+  //     {
+  //       mark_cut_critical_rec( f_ntk, n );
+  //     }
+  //   } );
+  // }
+
+  void move_logic_up( fanout_view<depth_view<Ntk>>& ntk, unordered_node_map<uint32_t, Ntk>& mobility )
+  {
+    /* this function computes the logic fanout mobility in the not critical paths */
+    std::vector<node> topo_order;
+    topo_order.reserve( ntk.size() );
+
+    ntk.clear_values();
+
+    topo_view<fanout_view<depth_view<Ntk>>>( ntk ).foreach_node( [&]( auto const& n ) {
+      if ( ntk.is_constant( n ) )
+        return;
+      if ( !ntk.is_buf( n ) )
+        topo_order.push_back( n );
+    } );
+
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
+    {
+      auto mob = try_decrease_splitter_tree_height( ntk, *it );
+      mobility[*it] = mob;
+      ntk.set_value( *it, ntk.level( *it ) + mob );
+    }
+
+    uint32_t depth = _st.depth_post;
+    uint32_t min_mobility = UINT32_MAX;
+    ntk.foreach_pi( [&]( auto const& n ) {
+      if ( mobility.has( n ) )
+        min_mobility = std::min( min_mobility, mobility[n] );
+    } );
+    std::cout << "mobility: " << min_mobility << "\n";
+    std::cout << fmt::format( "Minimum depth: {}\n", ntk.depth() - min_mobility );
+  }
+
+  uint32_t try_decrease_splitter_tree_height( fanout_view<depth_view<Ntk>>& ntk, node const& n )
+  {
+    std::vector<uint32_t> level_assignment;
+
+    collect_splitter_tree_heigth_rec( ntk, n, level_assignment );
+
+    /* dangling PI */
+    if ( level_assignment.empty() )
+    {
+      uint32_t level = ntk.depth();
+      return level - ntk.level( n );
+    }
+
+    /* sort vector by level in decreasing order */
+    std::sort( level_assignment.begin(), level_assignment.end(), std::greater<uint32_t>() );
+
+    /* simulate splitter tree reconstruction */
+    uint32_t nodes_in_level = 0;
+    uint32_t last_level = level_assignment.front();
+    for ( int const l : level_assignment )
+    {
+      if ( l == last_level )
+      {
+        ++nodes_in_level;
+      }
+      else
+      {
+        /* update splitters */
+        for ( auto i = 0; ( i < last_level - l ) && ( nodes_in_level != 1 ); ++i )
+          nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+        ++nodes_in_level;
+        last_level = l;
+      }
+    }
+
+    uint32_t mobility = 0;
+    for ( auto i = ntk.level( n ) + 1; i < last_level; ++i )
+    {
+      if ( nodes_in_level == 1 )
+        ++mobility;
+      nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+    }
+
+    assert( nodes_in_level == 1 );
+
+    auto future_level = ntk.level( n ) + mobility;
+
+    return mobility;
+  }
+
+  void collect_splitter_tree_heigth_rec( fanout_view<depth_view<Ntk>>& ntk, node const& n, std::vector<uint32_t>& level_assignment )
+  {
+    ntk.foreach_fanout( n, [&]( auto const& f ) {
+      if ( ntk.is_buf( f ) )
+      {
+        collect_splitter_tree_heigth_rec( ntk, f, level_assignment );
+      }
+      else
+      {
+        level_assignment.push_back( ntk.value( f ) );
+      }
+    } );
+
+    /* POs */
+    for ( auto i = ntk.fanout( n ).size(); i < ntk.fanout_size( n ); ++i )
+    {
+      level_assignment.push_back( ntk.depth() + 1 );
+    }
+  }
+
+  // void mark_cut_critical_rec_mobility( fanout_view<aqfp_level_t>& f_ntk, node const& n, unordered_node_map<uint32_t, Ntk>& mobility )
+  // {
+  //   if ( f_ntk.visited( n ) == f_ntk.trav_id() )
+  //     return;
+
+  //   f_ntk.set_visited( n, f_ntk.trav_id() );
+
+  //   /* recur towards critical TFI */
+  //   f_ntk.foreach_fanin( n, [&]( auto const& f ) {
+  //     auto g = f_ntk.get_node( f );
+  //     if ( f_ntk.visited( g ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( g ) )
+  //     {
+  //       mark_cut_critical_rec_mobility( f_ntk, g, mobility );
+  //     }
+  //   } );
+
+  //   /* find a cut */
+  //   if ( f_ntk.is_buf( n ) )
+  //   {
+  //     if ( f_ntk.fanout_size( n ) == 1 || check_cut_critical_splitter_mobility( f_ntk, n, mobility ) )
+  //     {
+  //       return;
+  //     }
+  //   }
+
+  //   /* recur towards critical TFO */
+  //   f_ntk.foreach_fanout( n, [&]( auto const& f ) {
+  //     if ( f_ntk.visited( f ) != f_ntk.trav_id() && f_ntk.is_on_critical_path( f ) )
+  //     {
+  //       mark_cut_critical_rec_mobility( f_ntk, f, mobility );
+  //     }
+  //   } );
+  // }
+
+  // inline bool check_cut_critical_splitter_mobility( fanout_view<aqfp_level_t>& ntk, node const& n, unordered_node_map<uint32_t, Ntk>& mobility )
+  // {
+  //   node fanin;
+  //   ntk.foreach_fanin( n, [&]( auto const& f ) {
+  //     fanin = ntk.get_node( f );
+  //   } );
+
+  //   /* return if not a splitter tree root */
+  //   if ( ntk.is_buf( fanin ) )
+  //     return false;
+
+  //   std::vector<std::pair<node, int>>& level_assignment;
+
+  //   uint32_t modify = collect_splitter_tree_leaves_levels( ntk, n, 0, level_assignment );
+
+  //   /* no need to rewrite the splitter tree */
+  //   if ( modify == 0 )
+  //     return true;
+
+  //   /* sort vector by level in descending order */
+  //   std::sort( level_assignment.begin(), level_assignment.end(), [&]( auto const& a, auto const& b ) {
+  //     return a.second > b.second;
+  //   } );
+
+  //   /* check if negative level (not valid) */
+  //   if ( level_assignment.empty() || level_assignment.back().second < 0 )
+  //     return false;
+
+  //   /* see if the new level assignment has a solution */
+  //   uint32_t nodes_in_level = 0;
+  //   uint32_t last_level = level_assignment.front();
+  //   for ( auto const& p : level_assignment )
+  //   {
+  //     int l = p.second;
+  //     if ( l == last_level )
+  //     {
+  //       ++nodes_in_level;
+  //     }
+  //     else
+  //     {
+  //       /* update splitters */
+  //       for ( auto i = 0; ( i < last_level - l ) && ( nodes_in_level != 1 ); ++i )
+  //         nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+  //       ++nodes_in_level;
+  //       last_level = l;
+  //     }
+  //   }
+  //   for ( auto i = 0; i < last_level; ++i )
+  //     nodes_in_level = std::ceil( float( nodes_in_level ) / float( _ps.aqfp_assumptions_ps.splitter_capacity ) );
+
+  //   if ( nodes_in_level <= _ps.aqfp_assumptions_ps.splitter_capacity )
+  //     return true;
+
+  //   /* study the mobility of the nodes */
+
+  //   /* a node with mobility must be in a lower/equal level position to the one of a critical one */
+  //   for ( auto it = level_assignment.rbegin(); it != level_assignment.rend(); ++it )
+  //   {
+
+  //   }
+  // }
+
+  // uint32_t collect_splitter_tree_leaves_levels_mobility( fanout_view<aqfp_level_t> const& ntk, node const& n, int level, std::vector<std::pair<node, int>>& level_assignment )
+  // {
+  //   uint32_t modify = 0;
+  //   ntk.foreach_fanout( n, [&]( auto const& f ) {
+  //     if ( ntk.is_buf( f ) && ntk.fanout_size( f ) > 1 )
+  //     {
+  //       modify += collect_splitter_tree_leaves_levels_mobility( ntk, f, level + 1, level_assignment );
+  //     }
+  //     else
+  //     {
+  //       /* lower critical signal by one ( if not a buffer ) */
+  //       if ( ntk.is_on_critical_path( f ) && !ntk.is_buf( f ) )
+  //       {
+  //         level_assignment.push_back( std::make_pair( ntk.get_node( f ), level - 1 ) );
+  //         ++modify;
+  //       }
+  //       else
+  //       {
+  //         level_assignment.push_back( std::make_pair( ntk.get_node( f ), level ) );
+  //       }
+  //     }
+  //   } );
+
+  //   return modify;
+  // }
+
   struct aqfp_depth_cost
   {
     uint32_t operator()( Ntk const& ntk, node const& node ) const
@@ -1317,6 +2292,8 @@ private:
   };
 
 private:
+  uint32_t iterations{ 0u };
+
   Ntk const& _ntk;
   aqfp_optimize_depth_params const& _ps;
   aqfp_optimize_depth_stats& _st;
