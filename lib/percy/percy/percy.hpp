@@ -106,6 +106,8 @@ namespace percy
                     stats->unsat_time += elapsed_time;
                 }
                 spec.nr_steps++;
+                if ( spec.nr_steps > spec.steps_limit )
+                    return failure;
             } else {
                 return timeout;
             }
