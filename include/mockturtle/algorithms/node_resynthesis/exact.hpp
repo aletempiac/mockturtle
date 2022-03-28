@@ -325,7 +325,11 @@ public:
     {
       spec.initial_steps = *_lower_bound;
     }
+    percy::bsat_wrapper solver;
+    percy::ssv_encoder encoder(solver);
+
     spec[0] = function;
+
     bool with_dont_cares{false};
     if ( !kitty::is_const0( dont_cares ) )
     {
@@ -334,92 +338,146 @@ public:
     }
 
     /* add existing functions */
-    for ( const auto& f : existing_functions )
-    {
-      spec.add_function( f.second );
-    }
+    // for ( const auto& f : existing_functions )
+    // {
+    //   spec.add_function( f.second );
+    // }
 
-    auto c = [&]() -> std::optional<percy::chain> {
-      if ( !with_dont_cares && _ps.cache )
+    // auto c = [&]() -> std::optional<percy::chain> {
+    //   if ( !with_dont_cares && _ps.cache )
+    //   {
+    //     const auto it = _ps.cache->find( function );
+    //     if ( it != _ps.cache->end() )
+    //     {
+    //       return it->second;
+    //     }
+    //   }
+    //   if ( !with_dont_cares && _ps.blacklist_cache )
+    //   {
+    //     const auto it = _ps.blacklist_cache->find( function );
+    //     if ( it != _ps.blacklist_cache->end() && ( it->second == 0 || _ps.conflict_limit <= it->second ) )
+    //     {
+    //       return std::nullopt;
+    //     }
+    //   }
+
+    //   percy::chain c;
+    //   if ( const auto result = percy::synthesize( spec, c, _ps.solver_type,
+    //                                               _ps.encoder_type,
+    //                                               _ps.synthesis_method );
+    //        result != percy::success )
+    //   {
+    //     if ( !with_dont_cares && _ps.blacklist_cache )
+    //     {
+    //       ( *_ps.blacklist_cache )[function] = (result == percy::timeout) ? _ps.conflict_limit : 0;
+    //     }
+    //     return std::nullopt;
+    //   }
+
+    //   assert( kitty::to_hex( c.simulate()[0u] ) == kitty::to_hex( function ) );
+
+    //   if ( !with_dont_cares && _ps.cache )
+    //   {
+    //     ( *_ps.cache )[function] = c;
+    //   }
+    //   return c;
+    // }();
+
+    percy::chain chain;
+    for ( auto i = 0u; i < _num_candidates; ++i )
+    {
+      auto const result = percy::next_struct_solution( spec, chain, solver, encoder );
+      if ( result != percy::success )
+        break;
+
+      assert( result == percy::success );
+
+      auto const sim = chain.simulate();
+      assert( chain.simulate()[0] == spec[0] );
+
+      std::vector<signal> signals( function.num_vars(), ntk.get_constant( false ) );
+      std::copy( begin, end, signals.begin() );
+
+      for ( auto i = 0; i < chain.get_nr_steps(); ++i )
       {
-        const auto it = _ps.cache->find( function );
-        if ( it != _ps.cache->end() )
+        auto const c1 = signals[chain.get_step( i )[0]];
+        auto const c2 = signals[chain.get_step( i )[1]];
+
+        switch ( chain.get_operator( i )._bits[0] )
         {
-          return it->second;
+        default:
+          std::cerr << "[e] unsupported operation " << kitty::to_hex( chain.get_operator( i ) ) << "\n";
+          assert( false );
+          break;
+        case 0x8:
+          signals.emplace_back( ntk.create_and( c1, c2 ) );
+          break;
+        case 0x4:
+          signals.emplace_back( ntk.create_and( !c1, c2 ) );
+          break;
+        case 0x2:
+          signals.emplace_back( ntk.create_and( c1, !c2 ) );
+          break;
+        case 0xe:
+          signals.emplace_back( !ntk.create_and( !c1, !c2 ) );
+          break;
+        case 0x6:
+          signals.emplace_back( ntk.create_xor( c1, c2 ) );
+          break;
         }
       }
-      if ( !with_dont_cares && _ps.blacklist_cache )
-      {
-        const auto it = _ps.blacklist_cache->find( function );
-        if ( it != _ps.blacklist_cache->end() && ( it->second == 0 || _ps.conflict_limit <= it->second ) )
-        {
-          return std::nullopt;
-        }
-      }
 
-      percy::chain c;
-      if ( const auto result = percy::synthesize( spec, c, _ps.solver_type,
-                                                  _ps.encoder_type,
-                                                  _ps.synthesis_method );
-           result != percy::success )
-      {
-        if ( !with_dont_cares && _ps.blacklist_cache )
-        {
-          ( *_ps.blacklist_cache )[function] = (result == percy::timeout) ? _ps.conflict_limit : 0;
-        }
-        return std::nullopt;
-      }
-
-      assert( kitty::to_hex( c.simulate()[0u] ) == kitty::to_hex( function ) );
-
-      if ( !with_dont_cares && _ps.cache )
-      {
-        ( *_ps.cache )[function] = c;
-      }
-      return c;
-    }();
-
-    if ( !c )
-    {
-      return;
+      uint32_t const output_index = ( chain.get_outputs()[0u] >> 1u );
+      auto const output_signal = output_index == 0u ? ntk.get_constant( false ) : signals[output_index - 1];
+      fn( chain.is_output_inverted( 0 ) ? !output_signal : output_signal );
     }
 
-    std::vector<signal> signals( begin, end );
-    for ( const auto& f : existing_functions )
-    {
-      signals.emplace_back( f.first );
-    }
+    // if ( !c )
+    // {
+    //   return;
+    // }
 
-    for ( auto i = 0; i < c->get_nr_steps(); ++i )
-    {
-      auto const c1 = signals[c->get_step( i )[0]];
-      auto const c2 = signals[c->get_step( i )[1]];
+    // std::vector<signal> signals( begin, end );
+    // for ( const auto& f : existing_functions )
+    // {
+    //   signals.emplace_back( f.first );
+    // }
 
-      switch ( c->get_operator( i )._bits[0] )
-      {
-      default:
-        std::cerr << "[e] unsupported operation " << kitty::to_hex( c->get_operator( i ) ) << "\n";
-        assert( false );
-        break;
-      case 0x8:
-        signals.emplace_back( ntk.create_and( c1, c2 ) );
-        break;
-      case 0x4:
-        signals.emplace_back( ntk.create_and( !c1, c2 ) );
-        break;
-      case 0x2:
-        signals.emplace_back( ntk.create_and( c1, !c2 ) );
-        break;
-      case 0xe:
-        signals.emplace_back( !ntk.create_and( !c1, !c2 ) );
-        break;
-      case 0x6:
-        signals.emplace_back( ntk.create_xor( c1, c2 ) );
-        break;
-      }
-    }
+    // for ( auto i = 0; i < c->get_nr_steps(); ++i )
+    // {
+    //   auto const c1 = signals[c->get_step( i )[0]];
+    //   auto const c2 = signals[c->get_step( i )[1]];
 
-    fn( c->is_output_inverted( 0 ) ? !signals.back() : signals.back() );
+    //   switch ( c->get_operator( i )._bits[0] )
+    //   {
+    //   default:
+    //     std::cerr << "[e] unsupported operation " << kitty::to_hex( c->get_operator( i ) ) << "\n";
+    //     assert( false );
+    //     break;
+    //   case 0x8:
+    //     signals.emplace_back( ntk.create_and( c1, c2 ) );
+    //     break;
+    //   case 0x4:
+    //     signals.emplace_back( ntk.create_and( !c1, c2 ) );
+    //     break;
+    //   case 0x2:
+    //     signals.emplace_back( ntk.create_and( c1, !c2 ) );
+    //     break;
+    //   case 0xe:
+    //     signals.emplace_back( !ntk.create_and( !c1, !c2 ) );
+    //     break;
+    //   case 0x6:
+    //     signals.emplace_back( ntk.create_xor( c1, c2 ) );
+    //     break;
+    //   }
+    // }
+
+    // fn( c->is_output_inverted( 0 ) ? !signals.back() : signals.back() );
+  }
+
+  void set_num_candidates( uint32_t num_candidates )
+  {
+    _num_candidates = num_candidates;
   }
 
   void set_bounds( std::optional<uint32_t> const& lower_bound, std::optional<uint32_t> const& upper_bound )
@@ -430,6 +488,7 @@ public:
 
 private:
   bool _allow_xor = false;
+  uint32_t _num_candidates{1u};
   exact_resynthesis_params _ps;
 
   std::vector<std::pair<signal, kitty::dynamic_truth_table>> existing_functions;
