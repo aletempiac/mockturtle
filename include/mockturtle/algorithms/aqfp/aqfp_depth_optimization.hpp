@@ -166,8 +166,8 @@ public:
       ntk = res;
     }
     
-    // run_critical_depth_reduction( ntk );
-    run_critical_depth_reduction_dup( ntk );
+    run_critical_depth_reduction( ntk );
+    // run_critical_depth_reduction_dup( ntk );
 
     /* splitter trees reconstruction params */
     buffer_insertion_params buf_ps;

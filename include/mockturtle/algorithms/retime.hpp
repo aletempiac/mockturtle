@@ -63,8 +63,6 @@ struct retime_params
   /*! \brief Frontier based retiming. */
   bool frontier_retiming{ false };
 
-  uint32_t splitter_capacity{ 3 };
-
   /*! \brief Be verbose */
   bool verbose { false };
 };
@@ -811,8 +809,6 @@ private:
             }
           }
 
-          assert( _ntk.fanout_size( _ntk.get_node( latch_out ) ) < 5 );
-
           _ntk.set_visited( _ntk.get_node( latch ), _ntk.trav_id() );
         }
       }
@@ -1077,7 +1073,7 @@ private:
   retime_stats& _st;
 
   node_map<uint32_t, Ntk> _flow_path;
-  uint32_t sink_node{UINT32_MAX};
+  uint32_t const sink_node{UINT32_MAX};
 };
 
 } /* namespace detail */

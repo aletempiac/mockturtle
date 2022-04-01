@@ -303,4 +303,44 @@ NtkDest cleanup_dangling_generic( NtkSource const& ntk )
   return res;
 }
 
+/*! \brief Cleans up dangling nodes on mapped network type.
+ *
+ * This method reconstructs a network and omits all dangling nodes.  The
+ * network types of the source and destination network are the same.
+ *
+ */
+template<class NtkSource, class NtkDest = NtkSource>
+NtkDest cleanup_dangling_mapped( NtkSource const& ntk )
+{
+  using signal = typename NtkDest::signal;
+
+  /* create a new network copy */
+  node_map<signal, NtkSource> old2new( ntk );
+  NtkDest res = detail::create_copy_generic<NtkSource, NtkDest>( ntk, old2new );
+
+  topo_view topo{ ntk };
+  topo.foreach_gate( [&]( auto const& n ) {
+    /* copy gate */
+    std::vector<signal> children;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      children.push_back( old2new[f] );
+    } );
+
+    const auto f = res.create_node( children, ntk.node_function( n ) );
+    old2new[n] = f;
+
+    if constexpr ( has_add_binding_v<NtkDest> && has_add_binding_v<NtkSource> )
+    {
+      res.add_binding( res.get_node( f ), ntk.get_binding_index( n ) );
+    }
+  } );
+
+  ntk.foreach_po( [&]( auto const& f ) {
+    res.create_po( old2new[ntk.get_node( f )] );
+  } );
+
+  return res;
+}
+
 } // namespace mockturtle

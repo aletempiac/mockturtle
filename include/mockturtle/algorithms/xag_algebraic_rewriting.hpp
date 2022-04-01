@@ -70,7 +70,12 @@ struct xag_algebraic_depth_rewriting_params
      * Like `aggressive`, but only applies rewriting to nodes on critical paths
      * and without `overhead`.
      */
-    selective
+    selective,
+    /*! \brief Balancing rewriting strategy.
+     *
+     * Applies balancing using associativity rules for all the nodes.
+     */
+    balancing
   } strategy = dfs;
 
   /*! \brief Overhead factor in aggressive rewriting strategy.
@@ -111,6 +116,9 @@ public:
       break;
     case xag_algebraic_depth_rewriting_params::aggressive:
       run_aggressive();
+      break;
+    case xag_algebraic_depth_rewriting_params::balancing:
+      run_balancing();
       break;
     }
   }
@@ -216,6 +224,15 @@ private:
       if ( counter > ntk.size() )
         break;
     }
+  }
+
+  void run_balancing()
+  {
+    topo_view topo{ ntk };
+    topo.foreach_node( [this]( auto n ) {
+      reduce_depth_and_associativity( n );
+      reduce_depth_xor_associativity( n );
+    } );
   }
 
 private:
