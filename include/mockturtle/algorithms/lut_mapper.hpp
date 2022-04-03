@@ -47,8 +47,6 @@
 #include "cut_enumeration/lut_delay_cut.hpp"
 #include "cut_enumeration/mf_cut.hpp"
 #include "detail/mffc_utils.hpp"
-// #include "collapse_mapped.hpp"
-
 
 namespace mockturtle
 {
@@ -63,13 +61,13 @@ struct lut_map_params
   lut_map_params()
   {
     cut_enumeration_ps.cut_limit = 249;
-    cut_enumeration_ps.minimize_truth_table = true;
+    cut_enumeration_ps.minimize_truth_table = false;
   }
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut limit is 49. By default,
-   * truth table minimization is performed.
+   * The default cut limit is 249. By default,
+   * truth table minimization is not performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
 
@@ -134,9 +132,6 @@ namespace detail
 
 struct node_lut
 {
-  /* best cut index for both phases */
-  uint32_t best_cut; /* TODO: remove */
-
   /* arrival time at node output */
   uint32_t arrival;
   /* required time at node output */
@@ -468,7 +463,6 @@ private:
     node_data.flows = best_area_flow / node_data.est_refs;
     node_data.edge_flows = best_edge_flow / node_data.est_refs;
     node_data.arrival = best_arrival;
-    node_data.best_cut = best_cut;
 
     if ( best_cut != 0 )
     {
