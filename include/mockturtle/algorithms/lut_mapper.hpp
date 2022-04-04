@@ -67,8 +67,9 @@ struct lut_map_params
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut limit is 249. By default,
-   * truth table minimization is not performed.
+   * The default cut limit is 8. The maximum value
+   * is 248. By default, truth table minimization
+   * is not performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
 
@@ -133,8 +134,8 @@ namespace detail
 struct cut_enumeration_lut_cut
 {
   uint32_t delay{0};
-  float flow{0};
-  float cost{0};
+  float area_flow{0};
+  float edge_flow{0};
 };
 
 enum lut_cut_sort_type
@@ -210,19 +211,33 @@ public:
       return true;
     if ( c1.size() > c2.size() )
       return false;
-    return c1->data.flow < c2->data.flow - eps;
+    return c1->data.area_flow < c2->data.area_flow - eps;
   }
 
   static bool sort_area_flow( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{0.005f};
-    if ( c1->data.flow < c2->data.flow - eps )
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
-    if ( c1->data.flow > c2->data.flow + eps )
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return c1->data.delay < c2->data.delay;
+  }
+
+  static bool sort_area( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{0.005f};
     if ( c1->data.delay < c2->data.delay )
       return true;
     if ( c1->data.delay > c2->data.delay )
+      return false;
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
+      return true;
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
     return c1.size() < c2.size();
   }
@@ -238,6 +253,7 @@ public:
    * before inserting it into the set.
    *
    * \param cut Cut to insert.
+   * \param sort Cut prioritization function.
    */
   void insert( CutType const& cut, lut_cut_sort_type sort = lut_cut_sort_type::NONE )
   {
@@ -254,6 +270,80 @@ public:
     else if ( sort == lut_cut_sort_type::AREA_FLOW )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area_flow( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+    else /* NONE */
+    {
+       ipos == _pend;
+    }
+
+    /* too many cuts, we need to remove one */
+    if ( _pend == _pcuts.end() )
+    {
+      /* cut to be inserted is worse than all the others, return */
+      if ( ipos == _pend )
+      {
+        return;
+      }
+      else
+      {
+        /* remove last cut */
+        --_pend;
+        --_pcend;
+      }
+    }
+
+    /* copy cut */
+    auto& icut = *_pend;
+    icut->set_leaves( cut.begin(), cut.end() );
+    icut->data() = cut.data();
+
+    if ( ipos != _pend )
+    {
+      auto it = _pend;
+      while ( it > ipos )
+      {
+        std::swap( *it, *( it - 1 ) );
+        --it;
+      }
+    }
+
+    /* update iterators */
+    _pcend++;
+    _pend++;
+  }
+
+  /*! \brief Inserts a cut into a set without checking dominance.
+   *
+   * This method will insert a cut into a set and maintain an order.  This
+   * method doesn't remove the cuts that are dominated by `cut`.
+   *
+   * If `cut` is dominated by any of the cuts in the set, it will still be
+   * inserted.  The caller is responsible to check whether `cut` is dominated
+   * before inserting it into the set.
+   *
+   * \param cut Cut to insert.
+   * \param sort Cut prioritization function.
+   */
+  void simple_insert( CutType const& cut, lut_cut_sort_type sort = lut_cut_sort_type::NONE )
+  {
+    /* insert cut in a sorted way */
+    typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
+
+    if ( sort == lut_cut_sort_type::DELAY )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA_FLOW )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area_flow( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
     }
     else /* NONE */
     {
@@ -508,6 +598,25 @@ public:
     return _truth_tables.insert( tt );
   }
 
+  void compute_cut_data( cut_t& cut, node const& n )
+  {
+    uint32_t delay{0};
+    float area_flow = cut.size() < 2 ? 0.0f : 1.0f;
+    float edge_flow = cut.size();
+
+    for ( auto leaf : cut )
+    {
+      const auto& best_leaf_cut = _cuts[leaf][0];
+      delay = std::max( delay, best_leaf_cut->data.delay );
+      area_flow += best_leaf_cut->data.area_flow;
+      edge_flow += best_leaf_cut->data.edge_flow;
+    }
+
+    cut->data.delay = 1 + delay;
+    cut->data.area_flow = area_flow / _ntk.fanout_size( n );
+    cut->data.edge_flow = edge_flow / _ntk.fanout_size( n );
+  }
+
 private:
   void add_zero_cut( uint32_t index )
   {
@@ -527,22 +636,6 @@ private:
     {
       cut->func_id = 2;
     }
-  }
-
-  void compute_cut_data( cut_t& cut, node const& n )
-  {
-    uint32_t delay{0};
-    float flow = cut->data.cost = cut.size() < 2 ? 0.0f : 1.0f;
-
-    for ( auto leaf : cut )
-    {
-      const auto& best_leaf_cut = _cuts[leaf][0];
-      delay = std::max( delay, best_leaf_cut->data.delay );
-      flow += best_leaf_cut->data.flow;
-    }
-
-    cut->data.delay = 1 + delay;
-    cut->data.flow = flow / _ntk.fanout_size( n );
   }
 
   uint32_t compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
@@ -777,6 +870,7 @@ class lut_map_impl
 {
 public:
   using network_cuts_t = lut_network_cuts<Ntk, StoreFunction>;
+  using cut_set_t = typename network_cuts_t::cut_set_t;
   using cut_t = typename network_cuts_t::cut_t;
 
 public:
@@ -802,7 +896,7 @@ public:
     init_nodes();
 
     /* compute cuts */
-    cuts.compute_cuts();
+    cuts.compute_cuts( ps.skip_delay_round ? lut_cut_sort_type::AREA_FLOW : lut_cut_sort_type::DELAY );
 
     /* compute mapping for depth */
     if ( !ps.skip_delay_round )
@@ -1030,6 +1124,31 @@ private:
 
     auto& node_data = node_match[index];
 
+    /* update cuts */
+    if ( iteration != 0 )
+    {
+      cut_set_t& cut_set_n = cuts.cuts( index );
+
+      /* get the previous best cut */
+      cut_t best = cut_set_n.best();
+      cuts.compute_cut_data( best, n );
+
+      /* clear cuts */
+      cut_set_n.clear();
+
+      /* recompute cuts */
+      if constexpr( AREA )
+      {
+        cuts.compute_cuts( n, lut_cut_sort_type::AREA_FLOW );
+        cut_set_n.simple_insert( best, lut_cut_sort_type::AREA_FLOW );
+      }
+      else
+      {
+        cuts.compute_cuts( n, lut_cut_sort_type::DELAY );
+        cut_set_n.simple_insert( best, lut_cut_sort_type::DELAY );
+      }
+    }
+
     /* foreach cut */
     for ( auto& cut : cuts.cuts( index ) )
     {
@@ -1111,6 +1230,23 @@ private:
     if ( node_data.map_refs )
     {
       cut_deref( cuts.cuts( index )[0] );
+    }
+
+    /* update cuts */
+    if ( iteration != 0 )
+    {
+      cut_set_t& cut_set_n = cuts.cuts( index );
+
+      /* get the previous best cut */
+      cut_t best = cut_set_n.best();
+      cuts.compute_cut_data( best, n );
+
+      /* clear cuts */
+      cut_set_n.clear();
+
+      /* recompute cuts */
+      cuts.compute_cuts( n, lut_cut_sort_type::AREA );
+      cut_set_n.simple_insert( best, lut_cut_sort_type::AREA );
     }
 
     /* foreach cut */
