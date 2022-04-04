@@ -105,8 +105,6 @@ struct lut_map_stats
   /*! \brief Edge result. */
   uint32_t edges{ 0 };
 
-  /*! \brief Runtime for covering. */
-  stopwatch<>::duration time_mapping{ 0 };
   /*! \brief Total runtime. */
   stopwatch<>::duration time_total{ 0 };
 
@@ -122,9 +120,8 @@ struct lut_map_stats
     {
       std::cout << stat;
     }
-    std::cout << fmt::format( "[i] Area = {:8d}; Delay = {:8d}; Edge = {:8d};\n", area, delay, edges );
-    std::cout << fmt::format( "[i] Mapping runtime = {:>5.2f} secs\n", to_seconds( time_mapping ) );
-    std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
+    std::cout << fmt::format( "[i] Cut enumeration runtime = {:>5.2f} secs\n", to_seconds( cut_enumeration_st.time_total ) );
+    std::cout << fmt::format( "[i] Total runtime           = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
 
@@ -416,6 +413,8 @@ public:
   /*! \brief Computes the cuts of one node in the network */
   void compute_cuts( node const& n, lut_cut_sort_type sort )
   {
+    stopwatch( _st.time_total );
+
     const auto index = _ntk.node_to_index( n );
 
     if ( _ps.very_verbose )
@@ -791,7 +790,7 @@ public:
 
   void run()
   {
-    stopwatch t( st.time_mapping );
+    stopwatch t( st.time_total );
 
     /* compute and save topological order */
     top_order.reserve( ntk.size() );
@@ -1481,7 +1480,6 @@ void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = null
   detail::lut_map_impl<Ntk, StoreFunction> p( ntk, ps, st );
   p.run();
 
-  st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
   if ( ps.verbose )
   {
     st.report();
