@@ -141,7 +141,7 @@ struct cut_enumeration_lut_cut
 enum lut_cut_sort_type
 {
   DELAY,
-  AREA_FLOW,
+  DELAY2,
   AREA,
   NONE
 };
@@ -211,24 +211,14 @@ public:
       return true;
     if ( c1.size() > c2.size() )
       return false;
-    return c1->data.area_flow < c2->data.area_flow - eps;
-  }
-
-  static bool sort_area_flow( CutType const& c1, CutType const& c2 )
-  {
-    constexpr auto eps{0.005f};
     if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
     if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
-    if ( c1.size() < c2.size() )
-      return true;
-    if ( c1.size() > c2.size() )
-      return false;
-    return c1->data.delay < c2->data.delay;
+    return c1->data.edge_flow < c2->data.edge_flow - eps;
   }
 
-  static bool sort_area( CutType const& c1, CutType const& c2 )
+  static bool sort_delay2( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{0.005f};
     if ( c1->data.delay < c2->data.delay )
@@ -239,7 +229,29 @@ public:
       return true;
     if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
+    if ( c1->data.edge_flow < c2->data.edge_flow - eps )
+      return true;
+    if ( c1->data.edge_flow > c2->data.edge_flow + eps )
+      return false;
     return c1.size() < c2.size();
+  }
+
+  static bool sort_area( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{0.005f};
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
+      return true;
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
+      return false;
+    if ( c1->data.edge_flow < c2->data.edge_flow - eps )
+      return true;
+    if ( c1->data.edge_flow > c2->data.edge_flow + eps )
+      return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return c1->data.delay < c2->data.delay;
   }
 
   /*! \brief Inserts a cut into a set.
@@ -267,9 +279,9 @@ public:
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
     }
-    else if ( sort == lut_cut_sort_type::AREA_FLOW )
+    else if ( sort == lut_cut_sort_type::DELAY2 )
     {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area_flow( *a, *b ); } );
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
     }
     else if ( sort == lut_cut_sort_type::AREA )
     {
@@ -337,9 +349,9 @@ public:
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
     }
-    else if ( sort == lut_cut_sort_type::AREA_FLOW )
+    else if ( sort == lut_cut_sort_type::DELAY2 )
     {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area_flow( *a, *b ); } );
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
     }
     else if ( sort == lut_cut_sort_type::AREA )
     {
@@ -896,26 +908,32 @@ public:
     init_nodes();
 
     /* compute cuts */
-    cuts.compute_cuts( ps.skip_delay_round ? lut_cut_sort_type::AREA_FLOW : lut_cut_sort_type::DELAY );
+    cuts.compute_cuts( ps.skip_delay_round ? lut_cut_sort_type::AREA : lut_cut_sort_type::DELAY );
+
+    uint32_t i = 0;
 
     /* compute mapping for depth */
     if ( !ps.skip_delay_round )
     {
-      compute_mapping<false>();
+      compute_mapping<false, false>();
+      compute_mapping<false, true>();
     }
 
     /* compute mapping using global area flow */
-    while ( iteration < ps.area_flow_rounds + 1 )
+    while ( i < ps.area_flow_rounds )
     {
       compute_required_time();
-      compute_mapping<true>();
+      compute_mapping<true, false>();
+      ++i;
     }
 
     /* compute mapping using exact area */
-    while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
+    i = 0;
+    while ( i < ps.ela_rounds )
     {
       compute_required_time();
       compute_mapping_exact();
+      ++i;
     }
 
     /* generate the output network */
@@ -941,7 +959,7 @@ private:
     } );
   }
 
-  template<bool DO_AREA>
+  template<bool DO_AREA, bool DELAY2>
   void compute_mapping()
   {
     for ( auto const& n : top_order )
@@ -951,7 +969,7 @@ private:
         continue;
       }
 
-      compute_best_cut<DO_AREA>( n );
+      compute_best_cut<DO_AREA, DELAY2>( n );
     }
 
     uint32_t area_old = area;
@@ -965,6 +983,10 @@ private:
       if constexpr ( DO_AREA )
       {
         stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
+      }
+      else if ( DELAY2 )
+      {
+        stats << fmt::format( "[i] Delay2   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
       }
       else
       {
@@ -1111,7 +1133,7 @@ private:
     }
   }
 
-  template<bool DO_AREA>
+  template<bool DO_AREA, bool DELAY2>
   void compute_best_cut( node<Ntk> const& n )
   {
     uint32_t best_arrival = UINT32_MAX;
@@ -1139,13 +1161,18 @@ private:
       /* recompute cuts */
       if constexpr( AREA )
       {
-        cuts.compute_cuts( n, lut_cut_sort_type::AREA_FLOW );
-        cut_set_n.simple_insert( best, lut_cut_sort_type::AREA_FLOW );
+        cuts.compute_cuts( n, lut_cut_sort_type::AREA );
+        cut_set_n.simple_insert( best, lut_cut_sort_type::AREA );
       }
-      else
+      else if ( DELAY2 )
       {
         cuts.compute_cuts( n, lut_cut_sort_type::DELAY );
         cut_set_n.simple_insert( best, lut_cut_sort_type::DELAY );
+      }
+      else
+      {
+        cuts.compute_cuts( n, lut_cut_sort_type::DELAY2 );
+        cut_set_n.simple_insert( best, lut_cut_sort_type::DELAY2 );
       }
     }
 
@@ -1556,26 +1583,11 @@ private:
 
 /*! \brief LUT mapper.
  *
- * This function implements a LUT mapping algorithm. It is controlled by a
- * template argument `CutData` (defaulted to `cut_enumeration_tech_map_cut`).
- * The argument is similar to the `CutData` argument in `cut_enumeration`, which can
- * specialize the cost function to select priority cuts and store additional data.
- * The default argument gives priority firstly to the cut size, then delay, and lastly
- * to area flow. Thus, it is more suited for delay-oriented mapping.
- * The type passed as `CutData` must implement the following four fields:
- *
- * - `uint32_t delay`
- * - `float flow`
- * - `uint8_t match_index`
- * - `bool ignore`
- *
- * See `include/mockturtle/algorithms/cut_enumeration/cut_enumeration_tech_map_cut.hpp`
- * for one example of a CutData type that implements the cost function that is used in
- * the technology mapper.
- * 
- * The function takes the size of the cuts in the template parameter `CutSize`.
- *
- * The function returns a k-LUT network. Each LUT abstacts a gate of the technology library.
+ * This function implements a LUT mapping algorithm.  It is controlled by one
+ * template argument `StoreFunction` (defaulted to `false`) which controls
+ * whether the LUT function is stored in the mapping. In that case
+ * truth tables are computed during cut enumeration, which requires more
+ * runtime.
  *
  * **Required network functions:**
  * - `size`
@@ -1587,14 +1599,18 @@ private:
  * - `foreach_po`
  * - `foreach_node`
  * - `fanout_size`
- *
- * \param ntk Network
- * \param library Technology library
- * \param ps Mapping params
- * \param pst Mapping statistics
+ * - `clear_mapping`
+ * - `add_to_mapping`
+ * - `set_lut_function` (if `StoreFunction` is true)
  * 
- * The implementation of this algorithm was inspired by the
- * mapping command ``map`` in ABC.
+ *
+   \verbatim embed:rst
+
+   .. note::
+
+      The implementation of this algorithm was heavily inspired but the LUT
+      mapping command ``&if`` in ABC.
+   \endverbatim
  */
 template<class Ntk, bool StoreFunction = false>
 void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
