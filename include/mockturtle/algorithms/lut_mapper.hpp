@@ -60,7 +60,8 @@ struct lut_map_params
 {
   lut_map_params()
   {
-    cut_enumeration_ps.cut_limit = 249;
+    cut_enumeration_ps.cut_size = 6u;
+    cut_enumeration_ps.cut_limit = 8;
     cut_enumeration_ps.minimize_truth_table = false;
   }
 
@@ -130,6 +131,627 @@ struct lut_map_stats
 namespace detail
 {
 
+#pragma region cut enumeration
+/* cut data */
+struct cut_enumeration_lut_cut
+{
+  uint32_t delay{0};
+  float flow{0};
+  float cost{0};
+};
+
+enum lut_cut_sort_type
+{
+  DELAY,
+  AREA_FLOW,
+  AREA,
+  NONE
+};
+
+template<typename CutType, int MaxCuts>
+class lut_cut_set
+{
+public:
+  /*! \brief Standard constructor.
+   */
+  lut_cut_set()
+  {
+    clear();
+  }
+
+  /*! \brief Clears a cut set.
+   */
+  void clear()
+  {
+    _pcend = _pend = _pcuts.begin();
+    auto pit = _pcuts.begin();
+    for ( auto& c : _cuts )
+    {
+      *pit++ = &c;
+    }
+  }
+
+  /*! \brief Adds a cut to the end of the set.
+   *
+   * This function should only be called to create a set of cuts which is known
+   * to be sorted and irredundant (i.e., no cut in the set dominates another
+   * cut).
+   *
+   * \param begin Begin iterator to leaf indexes
+   * \param end End iterator (exclusive) to leaf indexes
+   * \return Reference to the added cut
+   */
+  template<typename Iterator>
+  CutType& add_cut( Iterator begin, Iterator end )
+  {
+    assert( _pend != _pcuts.end() );
+
+    auto& cut = **_pend++;
+    cut.set_leaves( begin, end );
+
+    ++_pcend;
+    return cut;
+  }
+
+  /*! \brief Checks whether cut is dominates by any cut in the set.
+   *
+   * \param cut Cut outside of the set
+   */
+  bool is_dominated( CutType const& cut ) const
+  {
+    return std::find_if( _pcuts.begin(), _pcend, [&cut]( auto const* other ) { return other->dominates( cut ); } ) != _pcend;
+  }
+
+  static bool sort_delay( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{0.005f};
+    if ( c1->data.delay < c2->data.delay )
+      return true;
+    if ( c1->data.delay > c2->data.delay )
+      return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return c1->data.flow < c2->data.flow - eps;
+  }
+
+  static bool sort_area_flow( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{0.005f};
+    if ( c1->data.flow < c2->data.flow - eps )
+      return true;
+    if ( c1->data.flow > c2->data.flow + eps )
+      return false;
+    if ( c1->data.delay < c2->data.delay )
+      return true;
+    if ( c1->data.delay > c2->data.delay )
+      return false;
+    return c1.size() < c2.size();
+  }
+
+  /*! \brief Inserts a cut into a set.
+   *
+   * This method will insert a cut into a set and maintain an order.  Before the
+   * cut is inserted into the correct position, it will remove all cuts that are
+   * dominated by `cut`.
+   *
+   * If `cut` is dominated by any of the cuts in the set, it will still be
+   * inserted.  The caller is responsible to check whether `cut` is dominated
+   * before inserting it into the set.
+   *
+   * \param cut Cut to insert.
+   */
+  void insert( CutType const& cut, lut_cut_sort_type sort = lut_cut_sort_type::NONE )
+  {
+    /* remove elements that are dominated by new cut */
+    _pcend = _pend = std::stable_partition( _pcuts.begin(), _pend, [&cut]( auto const* other ) { return !cut.dominates( *other ); } );
+
+    /* insert cut in a sorted way */
+    typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
+
+    if ( sort == lut_cut_sort_type::DELAY )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA_FLOW )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area_flow( *a, *b ); } );
+    }
+    else /* NONE */
+    {
+       ipos == _pend;
+    }
+
+    /* too many cuts, we need to remove one */
+    if ( _pend == _pcuts.end() )
+    {
+      /* cut to be inserted is worse than all the others, return */
+      if ( ipos == _pend )
+      {
+        return;
+      }
+      else
+      {
+        /* remove last cut */
+        --_pend;
+        --_pcend;
+      }
+    }
+
+    /* copy cut */
+    auto& icut = *_pend;
+    icut->set_leaves( cut.begin(), cut.end() );
+    icut->data() = cut.data();
+
+    if ( ipos != _pend )
+    {
+      auto it = _pend;
+      while ( it > ipos )
+      {
+        std::swap( *it, *( it - 1 ) );
+        --it;
+      }
+    }
+
+    /* update iterators */
+    _pcend++;
+    _pend++;
+  }
+
+  /*! \brief Begin iterator (constant).
+   *
+   * The iterator will point to a cut pointer.
+   */
+  auto begin() const { return _pcuts.begin(); }
+
+  /*! \brief End iterator (constant). */
+  auto end() const { return _pcend; }
+
+  /*! \brief Begin iterator (mutable).
+   *
+   * The iterator will point to a cut pointer.
+   */
+  auto begin() { return _pcuts.begin(); }
+
+  /*! \brief End iterator (mutable). */
+  auto end() { return _pend; }
+
+  /*! \brief Number of cuts in the set. */
+  auto size() const { return _pcend - _pcuts.begin(); }
+
+  /*! \brief Returns reference to cut at index.
+   *
+   * This function does not return the cut pointer but dereferences it and
+   * returns a reference.  The function does not check whether index is in the
+   * valid range.
+   *
+   * \param index Index
+   */
+  auto const& operator[]( uint32_t index ) const { return *_pcuts[index]; }
+
+  /*! \brief Returns the best cut, i.e., the first cut.
+   */
+  auto const& best() const { return *_pcuts[0]; }
+
+  /*! \brief Updates the best cut.
+   *
+   * This method will set the cut at index `index` to be the best cut.  All
+   * cuts before `index` will be moved one position higher.
+   *
+   * \param index Index of new best cut
+   */
+  void update_best( uint32_t index )
+  {
+    auto* best = _pcuts[index];
+    for ( auto i = index; i > 0; --i )
+    {
+      _pcuts[i] = _pcuts[i - 1];
+    }
+    _pcuts[0] = best;
+  }
+
+  /*! \brief Resize the cut set, if it is too large.
+   *
+   * This method will resize the cut set to `size` only if the cut set has more
+   * than `size` elements.  Otherwise, the size will remain the same.
+   */
+  void limit( uint32_t size )
+  {
+    if ( std::distance( _pcuts.begin(), _pend ) > static_cast<long>( size ) )
+    {
+      _pcend = _pend = _pcuts.begin() + size;
+    }
+  }
+
+  /*! \brief Prints a cut set. */
+  friend std::ostream& operator<<( std::ostream& os, lut_cut_set const& set )
+  {
+    for ( auto const& c : set )
+    {
+      os << *c << "\n";
+    }
+    return os;
+  }
+
+private:
+  std::array<CutType, MaxCuts> _cuts;
+  std::array<CutType*, MaxCuts> _pcuts;
+  typename std::array<CutType*, MaxCuts>::const_iterator _pcend{_pcuts.begin()};
+  typename std::array<CutType*, MaxCuts>::iterator _pend{_pcuts.begin()};
+};
+
+template<typename Ntk, bool ComputeTruth>
+struct lut_network_cuts
+{
+public:
+  static constexpr uint32_t max_cut_num = 250;
+  using cut_t = cut_type<ComputeTruth, cut_enumeration_lut_cut>;
+  using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
+  static constexpr bool compute_truth = ComputeTruth;
+  using node = typename Ntk::node;
+
+public:
+  explicit lut_network_cuts( Ntk const& ntk, cut_enumeration_params const& ps, cut_enumeration_stats& st )
+      : _ntk( ntk ), _ps( ps ), _st( st ), _cuts( _ntk.size() )
+  {
+    assert( _ps.cut_limit < max_cut_num && "cut_limit exceeds the compile-time limit for the maximum number of cuts" );
+
+    kitty::dynamic_truth_table zero( 0u ), proj( 1u );
+    kitty::create_nth_var( proj, 0u );
+
+    _truth_tables.insert( zero );
+    _truth_tables.insert( proj );
+  }
+
+public:
+  /*! \brief Computes the cuts for each node in the network */
+  void compute_cuts( lut_cut_sort_type sort = lut_cut_sort_type::DELAY )
+  {
+    _ntk.foreach_node( [this, &sort]( auto n ) {
+      compute_cuts( n, sort );
+    } );
+  }
+
+  /*! \brief Computes the cuts of one node in the network */
+  void compute_cuts( node const& n, lut_cut_sort_type sort )
+  {
+    const auto index = _ntk.node_to_index( n );
+
+    if ( _ps.very_verbose )
+    {
+      std::cout << fmt::format( "[i] compute cut for node at index {}\n", index );
+    }
+
+    if ( _ntk.is_constant( n ) )
+    {
+      add_zero_cut( index );
+    }
+    else if ( _ntk.is_pi( n ) )
+    {
+      add_unit_cut( index );
+    }
+    else
+    {
+      if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+      {
+        merge_cuts2( index, sort );
+      }
+      else
+      {
+        merge_cuts( index, sort );
+      }
+    }
+  }
+
+  /*! \brief Returns the cut set of a node */
+  cut_set_t& cuts( uint32_t node_index ) { return _cuts[node_index]; }
+
+  /*! \brief Returns the cut set of a node */
+  cut_set_t const& cuts( uint32_t node_index ) const { return _cuts[node_index]; }
+
+  /*! \brief Returns the truth table of a cut */
+  template<bool enabled = ComputeTruth, typename = std::enable_if_t<std::is_same_v<Ntk, Ntk> && enabled>>
+  auto truth_table( cut_t const& cut ) const
+  {
+    return _truth_tables[cut->func_id];
+  }
+
+  /*! \brief Returns the total number of tuples that were tried to be merged */
+  auto total_tuples() const
+  {
+    return _total_tuples;
+  }
+
+  /*! \brief Returns the total number of cuts in the database. */
+  auto total_cuts() const
+  {
+    return _total_cuts;
+  }
+
+  /*! \brief Returns the number of nodes for which cuts are computed */
+  auto nodes_size() const
+  {
+    return _cuts.size();
+  }
+
+  /* compute positions of leave indices in cut `sub` (subset) with respect to
+   * leaves in cut `sup` (super set).
+   *
+   * Example:
+   *   compute_truth_table_support( {1, 3, 6}, {0, 1, 2, 3, 6, 7} ) = {1, 3, 4}
+   */
+  std::vector<uint8_t> compute_truth_table_support( cut_t const& sub, cut_t const& sup ) const
+  {
+    std::vector<uint8_t> support;
+    support.reserve( sub.size() );
+
+    auto itp = sup.begin();
+    for ( auto i : sub )
+    {
+      itp = std::find( itp, sup.end(), i );
+      support.push_back( static_cast<uint8_t>( std::distance( sup.begin(), itp ) ) );
+    }
+
+    return support;
+  }
+
+  /*! \brief Inserts a truth table into the truth table cache.
+   *
+   * This message can be used when manually adding or modifying cuts from the
+   * cut sets.
+   *
+   * \param tt Truth table to add
+   * \return Literal id from the truth table store
+   */
+  uint32_t insert_truth_table( kitty::dynamic_truth_table const& tt )
+  {
+    return _truth_tables.insert( tt );
+  }
+
+private:
+  void add_zero_cut( uint32_t index )
+  {
+    auto& cut = _cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
+
+    if constexpr ( ComputeTruth )
+    {
+      cut->func_id = 0;
+    }
+  }
+
+  void add_unit_cut( uint32_t index )
+  {
+    auto& cut = _cuts[index].add_cut( &index, &index + 1 );
+
+    if constexpr ( ComputeTruth )
+    {
+      cut->func_id = 2;
+    }
+  }
+
+  void compute_cut_data( cut_t& cut, node const& n )
+  {
+    uint32_t delay{0};
+    float flow = cut->data.cost = cut.size() < 2 ? 0.0f : 1.0f;
+
+    for ( auto leaf : cut )
+    {
+      const auto& best_leaf_cut = _cuts[leaf][0];
+      delay = std::max( delay, best_leaf_cut->data.delay );
+      flow += best_leaf_cut->data.flow;
+    }
+
+    cut->data.delay = 1 + delay;
+    cut->data.flow = flow / _ntk.fanout_size( n );
+  }
+
+  uint32_t compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
+  {
+    stopwatch t( _st.time_truth_table );
+
+    std::vector<kitty::dynamic_truth_table> tt( vcuts.size() );
+    auto i = 0;
+    for ( auto const& cut : vcuts )
+    {
+      tt[i] = kitty::extend_to( _truth_tables[( *cut )->func_id], res.size() );
+      const auto supp = compute_truth_table_support( *cut, res );
+      kitty::expand_inplace( tt[i], supp );
+      ++i;
+    }
+
+    auto tt_res = _ntk.compute( _ntk.index_to_node( index ), tt.begin(), tt.end() );
+
+    if ( _ps.minimize_truth_table )
+    {
+      const auto support = kitty::min_base_inplace( tt_res );
+      if ( support.size() != res.size() )
+      {
+        auto tt_res_shrink = shrink_to( tt_res, static_cast<unsigned>( support.size() ) );
+        std::vector<uint32_t> leaves_before( res.begin(), res.end() );
+        std::vector<uint32_t> leaves_after( support.size() );
+
+        auto it_support = support.begin();
+        auto it_leaves = leaves_after.begin();
+        while ( it_support != support.end() )
+        {
+          *it_leaves++ = leaves_before[*it_support++];
+        }
+        res.set_leaves( leaves_after.begin(), leaves_after.end() );
+        return _truth_tables.insert( tt_res_shrink );
+      }
+    }
+
+    return _truth_tables.insert( tt_res );
+  }
+
+  void merge_cuts2( uint32_t index, lut_cut_sort_type sort )
+  {
+    const auto fanin = 2;
+
+    uint32_t pairs{1};
+    _ntk.foreach_fanin( _ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+      lcuts[i] = &_cuts[_ntk.node_to_index( _ntk.get_node( child ) )];
+      pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+    } );
+    lcuts[2] = &_cuts[index];
+    auto& rcuts = *lcuts[fanin];
+    rcuts.clear();
+
+    cut_t new_cut;
+
+    std::vector<cut_t const*> vcuts( fanin );
+
+    _total_tuples += pairs;
+    for ( auto const& c1 : *lcuts[0] )
+    {
+      for ( auto const& c2 : *lcuts[1] )
+      {
+        if ( !c1->merge( *c2, new_cut, _ps.cut_size ) )
+        {
+          continue;
+        }
+
+        if ( rcuts.is_dominated( new_cut ) )
+        {
+          continue;
+        }
+
+        if constexpr ( ComputeTruth )
+        {
+          vcuts[0] = c1;
+          vcuts[1] = c2;
+          new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        }
+
+        compute_cut_data( new_cut, _ntk.index_to_node( index ) );
+
+        rcuts.insert( new_cut, sort );
+      }
+    }
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( _ps.cut_limit - 1 );
+
+    _total_cuts += rcuts.size();
+
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+  }
+
+  void merge_cuts( uint32_t index, lut_cut_sort_type sort )
+  {
+    uint32_t pairs{1};
+    std::vector<uint32_t> cut_sizes;
+    _ntk.foreach_fanin( _ntk.index_to_node( index ), [this, &pairs, &cut_sizes]( auto child, auto i ) {
+      lcuts[i] = &_cuts[_ntk.node_to_index( _ntk.get_node( child ) )];
+      cut_sizes.push_back( static_cast<uint32_t>( lcuts[i]->size() ) );
+      pairs *= cut_sizes.back();
+    } );
+
+    const auto fanin = cut_sizes.size();
+    lcuts[fanin] = &_cuts[index];
+
+    auto& rcuts = *lcuts[fanin];
+
+    if ( fanin > 1 && fanin <= _ps.fanin_limit )
+    {
+      rcuts.clear();
+
+      cut_t new_cut, tmp_cut;
+
+      std::vector<cut_t const*> vcuts( fanin );
+
+      _total_tuples += pairs;
+      foreach_mixed_radix_tuple( cut_sizes.begin(), cut_sizes.end(), [&]( auto begin, auto end ) {
+        auto it = vcuts.begin();
+        auto i = 0u;
+        while ( begin != end )
+        {
+          *it++ = &( ( *lcuts[i++] )[*begin++] );
+        }
+
+        if ( !vcuts[0]->merge( *vcuts[1], new_cut, _ps.cut_size ) )
+        {
+          return true; /* continue */
+        }
+
+        for ( i = 2; i < fanin; ++i )
+        {
+          tmp_cut = new_cut;
+          if ( !vcuts[i]->merge( tmp_cut, new_cut, _ps.cut_size ) )
+          {
+            return true; /* continue */
+          }
+        }
+
+        if ( rcuts.is_dominated( new_cut ) )
+        {
+          return true; /* continue */
+        }
+
+        if constexpr ( ComputeTruth )
+        {
+          new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        }
+
+        comput_cut_data( new_cut, index );
+
+        rcuts.insert( new_cut, sort );
+
+        return true;
+      } );
+
+      /* limit the maximum number of cuts */
+      rcuts.limit( _ps.cut_limit - 1 );
+    } else if ( fanin == 1 ) {
+      rcuts.clear();
+
+      for ( auto const& cut : *lcuts[0] ) {
+        cut_t new_cut = *cut;
+
+        if constexpr ( ComputeTruth )
+        {
+          new_cut->func_id = compute_truth_table( index, {cut}, new_cut );
+        }
+
+        compute_cut_data( new_cut, _ntk.index_to_node( index ) );
+
+        rcuts.insert( new_cut, sort );
+      }
+
+      /* limit the maximum number of cuts */
+      rcuts.limit( _ps.cut_limit - 1 );
+    }
+
+    _total_cuts += static_cast<uint32_t>( rcuts.size() );
+
+    add_unit_cut( index );
+  }
+
+private:
+  Ntk const& _ntk;
+  cut_enumeration_params const& _ps;
+  cut_enumeration_stats& _st;
+
+  /* compressed representation of cuts */
+  std::vector<cut_set_t> _cuts;
+
+  /* node cut computation container */
+  std::array<cut_set_t*, Ntk::max_fanin_size + 1> lcuts;
+
+  /* cut truth tables */
+  truth_table_cache<kitty::dynamic_truth_table> _truth_tables;
+
+  /* statistics */
+  uint32_t _total_tuples{};
+  std::size_t _total_cuts{};
+};
+#pragma endregion
+
+#pragma region LUT mapper
 struct node_lut
 {
   /* arrival time at node output */
@@ -151,11 +773,11 @@ struct node_lut
   float edge_flows;
 };
 
-template<class Ntk, unsigned CutSize, bool StoreFunction, typename CutData>
+template<class Ntk, bool StoreFunction>
 class lut_map_impl
 {
 public:
-  using network_cuts_t = fast_network_cuts<Ntk, CutSize, StoreFunction, CutData>;
+  using network_cuts_t = lut_network_cuts<Ntk, StoreFunction>;
   using cut_t = typename network_cuts_t::cut_t;
 
 public:
@@ -164,7 +786,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
-        cuts( fast_cut_enumeration<Ntk, CutSize, StoreFunction, CutData>( ntk, ps.cut_enumeration_ps, &st.cut_enumeration_st ) )
+        cuts( ntk, ps.cut_enumeration_ps, st.cut_enumeration_st )
   {}
 
   void run()
@@ -179,6 +801,9 @@ public:
 
     /* init the data structure */
     init_nodes();
+
+    /* compute cuts */
+    cuts.compute_cuts();
 
     /* compute mapping for depth */
     if ( !ps.skip_delay_round )
@@ -790,6 +1415,7 @@ private:
   std::vector<node_lut> node_match;
   network_cuts_t cuts;
 };
+#pragma endregion
 
 } /* namespace detail */
 
@@ -835,7 +1461,7 @@ private:
  * The implementation of this algorithm was inspired by the
  * mapping command ``map`` in ABC.
  */
-template<class Ntk, unsigned CutSize = 4u, bool StoreFunction = false, typename CutData = cut_enumeration_lut_delay_cut>
+template<class Ntk, bool StoreFunction = false>
 void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -852,7 +1478,7 @@ void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = null
   static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
 
   lut_map_stats st;
-  detail::lut_map_impl<Ntk, CutSize, StoreFunction, CutData> p( ntk, ps, st );
+  detail::lut_map_impl<Ntk, StoreFunction> p( ntk, ps, st );
   p.run();
 
   st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
