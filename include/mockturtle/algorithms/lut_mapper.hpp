@@ -68,7 +68,7 @@ struct lut_map_params
   /*! \brief Parameters for cut enumeration
    *
    * The default cut limit is 8. The maximum value
-   * is 248. By default, truth table minimization
+   * is 249. By default, truth table minimization
    * is not performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
@@ -87,6 +87,9 @@ struct lut_map_params
 
   /*! \brief Use edge count reduction. */
   bool edge_optimization{ true };
+
+  /*! \brief Try to expand the cuts. */
+  bool cut_expansion{ true };
 
   /*! \brief Be verbose. */
   bool verbose{ false };
@@ -346,6 +349,20 @@ public:
     simple_insert( cut, sort );
   }
 
+  /*! \brief Replaces a cut of the set.
+   *
+   * This method replaces the cut at position `index` in the set by `cut`
+   * and maintains the cuts order. The function does not check whether
+   * index is in the valid range.
+   *
+   * \param index Index of the cut to replace.
+   * \param cut Cut to insert.
+   */
+  void replace( uint32_t index, CutType const& cut )
+  {
+    *_pcuts[index] = cut;
+  }
+
   /*! \brief Begin iterator (constant).
    *
    * The iterator will point to a cut pointer.
@@ -498,6 +515,12 @@ public:
       compute_mapping<true, false>( lut_cut_sort_type::AREA );
     }
 
+    if ( ps.cut_expansion )
+    {
+      compute_required_time();
+      expand_cuts<false>();
+    }
+
     uint32_t i = 0;
 
     /* compute mapping using global area flow */
@@ -505,6 +528,12 @@ public:
     {
       compute_required_time();
       compute_mapping<true, false>( lut_cut_sort_type::AREA );
+
+      if ( ps.cut_expansion )
+      {
+        compute_required_time();
+        expand_cuts<false>();
+      }
       ++i;
     }
 
@@ -514,6 +543,12 @@ public:
     {
       compute_required_time();
       compute_mapping<true, true>( lut_cut_sort_type::AREA );
+
+      if ( ps.cut_expansion )
+      {
+        compute_required_time();
+        expand_cuts<true>();
+      }
       ++i;
     }
     /* generate the output network */
@@ -523,7 +558,7 @@ public:
 private:
   void init_nodes()
   {
-    ntk.foreach_node( [this]( auto const& n, auto ) {
+    ntk.foreach_node( [this]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
 
@@ -548,6 +583,7 @@ private:
   template<bool DO_AREA, bool ELA>
   void compute_mapping( lut_cut_sort_type const sort )
   {
+    cuts_total = 0;
     for ( auto const& n : top_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
@@ -565,7 +601,6 @@ private:
       }
     }
 
-    uint32_t area_old = area;
     set_mapping_refs<ELA>();
 
     /* round stats */
@@ -575,22 +610,45 @@ private:
 
       if ( sort == lut_cut_sort_type::AREA && ELA )
       {
-        stats << fmt::format( "[i] Area     : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
+        stats << fmt::format( "[i] Area     : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       else if ( sort == lut_cut_sort_type::AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       else if ( sort == lut_cut_sort_type::DELAY2 )
       {
-        stats << fmt::format( "[i] Delay2   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
+        stats << fmt::format( "[i] Delay2   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}\n", delay, area, edges );
+        stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       st.round_stats.push_back( stats.str() );
     }
+  }
+
+  template<bool ELA>
+  void expand_cuts()
+  {
+    /* cut expansion is not compatible with truth table computation */
+    if constexpr ( StoreFunction )
+      return;
+
+    for ( auto const& n : top_order )
+    {
+      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+      {
+        continue;
+      }
+
+      expand_cuts_node( n );
+    }
+
+    set_mapping_refs<ELA>();
+
+    std::string stats = fmt::format( "[i] Reduce   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
+    st.round_stats.push_back( stats );
   }
 
   template<bool ELA>
@@ -745,10 +803,15 @@ private:
     /* clear cuts */
     rcuts.clear();
 
+    /* save the old best cut */
+    if ( iteration != 0 )
+    {
+      rcuts.simple_insert( best, sort );
+    }
+
     cut_t new_cut;
     std::vector<cut_t const*> vcuts( fanin );
 
-    // _total_tuples += pairs;
     for ( auto const& c1 : *lcuts[0] )
     {
       for ( auto const& c2 : *lcuts[1] )
@@ -785,16 +848,10 @@ private:
       }
     }
 
+    cuts_total += rcuts.size();
+
     /* limit the maximum number of cuts */
-    rcuts.limit( ps.cut_enumeration_ps.cut_limit - 1 );
-
-    // _total_cuts += rcuts.size();
-
-    /* save the old best cut */
-    if ( iteration != 0 )
-    {
-      rcuts.simple_insert( best, sort );
-    }
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
 
     if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
     {
@@ -853,7 +910,6 @@ private:
 
       std::vector<cut_t const*> vcuts( fanin );
 
-      // _total_tuples += pairs;
       foreach_mixed_radix_tuple( cut_sizes.begin(), cut_sizes.end(), [&]( auto begin, auto end ) {
         auto it = vcuts.begin();
         auto i = 0u;
@@ -903,7 +959,7 @@ private:
       } );
 
       /* limit the maximum number of cuts */
-      rcuts.limit( ps.cut_enumeration_ps.cut_limit - 1 );
+      rcuts.limit( ps.cut_enumeration_ps.cut_limit );
     }
     else if ( fanin == 1 )
     {
@@ -929,10 +985,10 @@ private:
       }
 
       /* limit the maximum number of cuts */
-      rcuts.limit( ps.cut_enumeration_ps.cut_limit - 1 );
+      rcuts.limit( ps.cut_enumeration_ps.cut_limit );
     }
 
-    // _total_cuts += rcuts.size();
+    cuts_total += rcuts.size();
 
     /* save the old best cut */
     if ( iteration != 0 )
@@ -949,6 +1005,197 @@ private:
         cut_ref( cuts[index][0] );
       }
     }
+  }
+
+  void expand_cuts_node( node const& n )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    cut_t best_cut = cuts[index][0];
+
+    if ( node_data.map_refs == 0 )
+      return;
+
+    /* update delay */
+    uint32_t delay_update = 0;
+    for ( auto const leaf : best_cut )
+    {
+      delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + 1 );
+    }
+    best_cut->data.delay = delay_update;
+
+    auto const area_before = cut_deref( best_cut );
+
+    uint32_t cost_before = 0;
+
+    std::vector<uint32_t> leaves;
+
+    /* mark volume */
+    ntk.incr_trav_id();
+    for ( auto const leaf : best_cut )
+    {
+      ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
+      leaves.push_back( leaf );
+
+      /* MFFC leaves */
+      if ( node_match[leaf].map_refs == 0 )
+        ++cost_before;
+    }
+    mark_cut_volume_rec( n );
+
+    /* improve cut */
+    while ( improve_cut( leaves ) );
+
+    /* measure improvement */
+    uint32_t cost_after = 0;
+    for ( auto const leaf : leaves )
+    {
+      /* MFFC leaves */
+      if ( node_match[leaf].map_refs == 0 )
+        ++cost_after;
+    }
+
+    assert( cost_after <= cost_before );
+
+    /* create the new cut */
+    cut_t new_cut;
+    new_cut.set_leaves( leaves.begin(), leaves.end() );
+    new_cut->data = best_cut->data;
+
+    uint32_t delay_after = 0;
+    for ( auto const leaf : leaves )
+    {
+      delay_after = std::max( delay_after, cuts[leaf][0]->data.delay + 1 );
+    }
+    new_cut->data.delay = delay_after;
+
+    auto const area_after = cut_ref( new_cut );
+
+    /* new cut is better */
+    if ( area_after <= area_before && new_cut->data.delay <= node_data.required )
+    {
+      cuts[index].replace( 0, new_cut );
+    }
+    else
+    {
+      /* restore */
+      cut_deref( new_cut );
+      cut_ref( best_cut );
+    }
+  }
+
+  bool improve_cut( std::vector<uint32_t>& leaves )
+  {
+    if ( improve_cut_expand0( leaves ) )
+      return true;
+
+    if ( leaves.size() < ps.cut_enumeration_ps.cut_size && improve_cut_expand1( leaves ) )
+      return true;
+
+    assert( leaves.size() <= ps.cut_enumeration_ps.cut_size );
+    return false;
+  }
+
+  bool improve_cut_expand0( std::vector<uint32_t>& leaves )
+  {
+    for ( auto it = leaves.begin(); it != leaves.end(); ++it )
+    {
+      if ( ntk.is_ci( *it ) )
+        continue;
+      
+      /* test if expansion would increase the number of leaves */
+      int marked = 0;
+      ntk.foreach_fanin( ntk.index_to_node( *it ), [&]( auto const& f ) {
+        if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+          ++marked;
+      } );
+
+      if ( marked > 1 )
+        continue;
+
+      /* check that the cost does not increase */
+      marked = 0;
+      if ( node_match[*it].map_refs == 0 )
+        --marked;
+
+      ntk.foreach_fanin( ntk.index_to_node( *it ), [&]( auto const& f ) {
+        if ( ntk.is_constant( ntk.get_node( f ) ) )
+          return;
+        auto const index = ntk.node_to_index( ntk.get_node( f ) );
+        if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() && node_match[index].map_refs == 0 )
+          ++marked;
+      } );
+
+      /* not referenced leaves don't increase from the transformation */
+      if ( marked <= 0 )
+      {
+        /* update leaves */
+        uint32_t n = *it;
+        leaves.erase( it );
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          auto const index = ntk.node_to_index( ntk.get_node( f ) );
+          if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+          {
+            leaves.push_back( index );
+            ntk.set_visited( ntk.get_node( f ), ntk.trav_id() );
+          }
+        } );
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool improve_cut_expand1( std::vector<uint32_t>& leaves )
+  {
+    for ( auto it = leaves.begin(); it != leaves.end(); ++it )
+    {
+      if ( ntk.is_ci( *it ) )
+        continue;
+      
+      /* test if expansion would increase the number of leaves by more than 1*/
+      int marked = 0;
+      ntk.foreach_fanin( ntk.index_to_node( *it ), [&]( auto const& f ) {
+        if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+          ++marked;
+      } );
+
+      if ( marked > 2 )
+        continue;
+
+      /* check that the cost reduces */
+      marked = 0;
+      if ( node_match[*it].map_refs == 0 )
+        --marked;
+
+      ntk.foreach_fanin( ntk.index_to_node( *it ), [&]( auto const& f ) {
+        if ( ntk.is_constant( ntk.get_node( f ) ) )
+          return;
+        auto const index = ntk.node_to_index( ntk.get_node( f ) );
+        if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() && node_match[index].map_refs == 0 )
+          ++marked;
+      } );
+
+      /* not referenced leaves should be reduced by the transformation */
+      if ( marked < 0 )
+      {
+        /* update leaves */
+        uint32_t n = *it;
+        leaves.erase( it );
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          auto const index = ntk.node_to_index( ntk.get_node( f ) );
+          if ( !ntk.is_constant( ntk.get_node( f ) ) && ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+          {
+            leaves.push_back( index );
+            ntk.set_visited( ntk.get_node( f ), ntk.trav_id() );
+          }
+        } );
+        return true;
+      }
+    }
+
+    return false;
   }
 
   uint32_t cut_ref( cut_t const& cut )
@@ -1062,6 +1309,18 @@ private:
     st.area = area;
     st.delay = delay;
     st.edges = edges;
+  }
+
+  void mark_cut_volume_rec( node const& n )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    ntk.set_visited( n, ntk.trav_id() );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      mark_cut_volume_rec( ntk.get_node( f ) );
+    } );
   }
 
   /* compute positions of leave indices in cut `sub` (subset) with respect to
@@ -1209,6 +1468,7 @@ private:
   uint32_t delay{ 0 };            /* current delay of the mapping */
   uint32_t area{ 0 };             /* current area of the mapping */
   uint32_t edges{ 0 };            /* current edges of the mapping */
+  uint32_t cuts_total{ 0 };             /* current computed cuts */
   const float epsilon{ 0.005f };  /* epsilon */
 
   std::vector<node> top_order;
