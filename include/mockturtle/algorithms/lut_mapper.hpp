@@ -1,5 +1,5 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2021  EPFL
+ * Copyright (C) 2018-2022  EPFL
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -25,7 +25,7 @@
 
 /*!
   \file lut_mapper.hpp
-  \brief Mapper
+  \brief LUT mapper
 
   \author Alessandro Tempia Calvino
 */
@@ -38,15 +38,12 @@
 #include <fmt/format.h>
 
 #include "../networks/klut.hpp"
-#include "../utils/node_map.hpp"
+#include "../utils/cuts.hpp"
 #include "../utils/stopwatch.hpp"
-#include "../utils/tech_library.hpp"
-#include "../views/topo_view.hpp"
+#include "../utils/truth_table_cache.hpp"
 #include "../views/mapping_view.hpp"
+#include "../views/topo_view.hpp"
 #include "cut_enumeration.hpp"
-#include "cut_enumeration/lut_delay_cut.hpp"
-#include "cut_enumeration/mf_cut.hpp"
-#include "detail/mffc_utils.hpp"
 
 namespace mockturtle
 {
@@ -1351,7 +1348,6 @@ private:
     {
       /* TODO: add area const function */
       uint32_t delay{0};
-
       for ( auto leaf : cut )
       {
         const auto& best_leaf_cut = cuts[leaf][0];
