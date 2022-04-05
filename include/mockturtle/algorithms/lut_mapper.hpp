@@ -121,7 +121,6 @@ struct lut_map_stats
     {
       std::cout << stat;
     }
-    std::cout << fmt::format( "[i] Cut enumeration runtime = {:>5.2f} secs\n", to_seconds( cut_enumeration_st.time_total ) );
     std::cout << fmt::format( "[i] Total runtime           = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
