@@ -58,7 +58,7 @@ struct lut_map_params
   lut_map_params()
   {
     cut_enumeration_ps.cut_size = 6u;
-    cut_enumeration_ps.cut_limit = 8;
+    cut_enumeration_ps.cut_limit = 8u;
     cut_enumeration_ps.minimize_truth_table = false;
   }
 
@@ -73,8 +73,8 @@ struct lut_map_params
   /*! \brief Required depth for depth relaxation. */
   uint32_t required_delay{ 0u };
 
-  /*! \brief Skip depth round for size optimization. */
-  bool skip_delay_round{ false };
+  /*! \brief Do area-oriented mapping. */
+  bool area_oriented_mapping{ false };
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
@@ -474,11 +474,14 @@ public:
   {
     assert( ps.cut_enumeration_ps.cut_limit < max_cut_num && "cut_limit exceeds the compile-time limit for the maximum number of cuts" );
 
-    kitty::dynamic_truth_table zero( 0u ), proj( 1u );
-    kitty::create_nth_var( proj, 0u );
+    if constexpr ( StoreFunction )
+    {
+      kitty::dynamic_truth_table zero( 0u ), proj( 1u );
+      kitty::create_nth_var( proj, 0u );
 
-    truth_tables.insert( zero );
-    truth_tables.insert( proj );
+      truth_tables.insert( zero );
+      truth_tables.insert( proj );
+    }
   }
 
   void run()
@@ -496,19 +499,20 @@ public:
     init_cuts();
 
     /* compute mapping for depth */
-    if ( !ps.skip_delay_round )
+    if ( !ps.area_oriented_mapping )
     {
-      compute_mapping<false, false>( lut_cut_sort_type::DELAY );
       compute_required_time();
-      compute_mapping<false, false>( lut_cut_sort_type::DELAY2 );
+      compute_mapping<false, false>( lut_cut_sort_type::DELAY, true );
       compute_required_time();
-      compute_mapping<true, false>( lut_cut_sort_type::AREA );
+      compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true );
+      compute_required_time();
+      compute_mapping<true, false>( lut_cut_sort_type::AREA, true );
       compute_required_time();
     }
     else
     {
       compute_required_time();
-      compute_mapping<true, false>( lut_cut_sort_type::AREA );
+      compute_mapping<true, false>( lut_cut_sort_type::AREA, false );
     }
 
     if ( ps.cut_expansion )
@@ -523,7 +527,7 @@ public:
     while ( i < ps.area_flow_rounds )
     {
       compute_required_time();
-      compute_mapping<true, false>( lut_cut_sort_type::AREA );
+      compute_mapping<true, false>( lut_cut_sort_type::AREA, false );
 
       if ( ps.cut_expansion )
       {
@@ -538,7 +542,7 @@ public:
     while ( i < ps.ela_rounds )
     {
       compute_required_time();
-      compute_mapping<true, true>( lut_cut_sort_type::AREA );
+      compute_mapping<true, true>( lut_cut_sort_type::AREA, false );
 
       if ( ps.cut_expansion )
       {
@@ -577,7 +581,7 @@ private:
   }
 
   template<bool DO_AREA, bool ELA>
-  void compute_mapping( lut_cut_sort_type const sort )
+  void compute_mapping( lut_cut_sort_type const sort, bool preprocess )
   {
     cuts_total = 0;
     for ( auto const& n : top_order )
@@ -589,15 +593,20 @@ private:
 
       if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
       {
-        compute_best_cut2<DO_AREA, ELA>( n, sort );
+        compute_best_cut2<DO_AREA, ELA>( n, sort, preprocess );
       }
       else
       {
-        compute_best_cut<DO_AREA, ELA>( n, sort );
+        compute_best_cut<DO_AREA, ELA>( n, sort, preprocess );
       }
     }
 
     set_mapping_refs<ELA>();
+
+    if constexpr ( DO_AREA )
+    {
+      ++area_iteration;
+    }
 
     /* round stats */
     if ( ps.verbose )
@@ -705,9 +714,12 @@ private:
     }
 
     /* blend estimated references */
-    for ( auto i = 0u; i < ntk.size(); ++i )
+    if constexpr ( !ELA )
     {
-      node_match[i].est_refs = coef * node_match[i].est_refs + ( 1.0f - coef ) * std::max( 1.0f, static_cast<float>( node_match[i].map_refs ) );
+      for ( auto i = 0u; i < ntk.size(); ++i )
+      {
+        node_match[i].est_refs = coef * node_match[i].est_refs + ( 1.0f - coef ) * std::max( 1.0f, static_cast<float>( node_match[i].map_refs ) );
+      }
     }
 
     ++iteration;
@@ -720,8 +732,8 @@ private:
       node_match[i].required = UINT32_MAX;
     }
 
-    /* return in case of `skip_delay_round` */
-    if ( iteration == 0 )
+    /* return in case of area_oriented_mapping */
+    if ( iteration == 0 || ps.area_oriented_mapping )
       return;
 
     uint32_t required = delay;
@@ -731,7 +743,7 @@ private:
       /* Global target time constraint */
       if ( ps.required_delay < delay )
       {
-        if ( !ps.skip_delay_round && iteration == 1 )
+        if ( !ps.area_oriented_mapping && iteration == 1 )
           std::cerr << fmt::format( "[i] MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_delay ) << std::endl;
       }
       else
@@ -765,11 +777,11 @@ private:
   }
 
   template<bool DO_AREA, bool ELA>
-  void compute_best_cut2( node const& n, lut_cut_sort_type const sort )
+  void compute_best_cut2( node const& n, lut_cut_sort_type const sort, bool preprocess )
   {
-    cut_t best;
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
+    cut_t best_cut;
 
     /* compute cuts */
     const auto fanin = 2;
@@ -781,28 +793,28 @@ private:
     lcuts[2] = &cuts[index];
     auto& rcuts = *lcuts[fanin];
 
-    /* save last best cut and recompute the data */
+    /* recompute the data of the best cut */
     if ( iteration != 0 )
     {
-      best = rcuts[0];
-      compute_cut_data<ELA>( best, n );
+      best_cut = rcuts[0];
+      compute_cut_data<ELA>( best_cut, n );
     }
 
     if constexpr ( ELA )
     {
       if ( node_data.map_refs )
       {
-        cut_deref( best );
+        cut_deref( best_cut );
       }
     }
 
     /* clear cuts */
     rcuts.clear();
 
-    /* save the old best cut */
-    if ( iteration != 0 )
+    /* insert the previous best cut */
+    if ( iteration != 0 && !preprocess )
     {
-      rcuts.simple_insert( best, sort );
+      rcuts.simple_insert( best_cut, sort );
     }
 
     cut_t new_cut;
@@ -834,7 +846,7 @@ private:
         /* check required time */
         if constexpr ( DO_AREA )
         {
-          if ( new_cut->data.delay <= node_data.required )
+          if ( preprocess || new_cut->data.delay <= node_data.required )
             rcuts.insert( new_cut, sort );
         }
         else
@@ -849,6 +861,11 @@ private:
     /* limit the maximum number of cuts */
     rcuts.limit( ps.cut_enumeration_ps.cut_limit );
 
+    /* replace the new best cut with previous one */
+    if ( preprocess && rcuts[0]->data.delay > node_data.required )
+     rcuts.replace( 0, best_cut );
+
+    /* add trivial cut */
     if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
     {
       add_unit_cut( index );
@@ -858,17 +875,17 @@ private:
     {
       if ( node_data.map_refs )
       {
-        cut_ref( cuts[index][0] );
+        cut_ref( rcuts[0] ); /* TODO test best */
       }
     }
   }
 
   template<bool DO_AREA, bool ELA>
-  void compute_best_cut( node const& n, lut_cut_sort_type const sort )
+  void compute_best_cut( node const& n, lut_cut_sort_type const sort, bool preprocess )
   {
-    cut_t best;
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
+    cut_t best_cut;
 
     /* compute cuts */
     uint32_t pairs{1};
@@ -880,21 +897,27 @@ private:
     } );
     const auto fanin = cut_sizes.size();
     lcuts[fanin] = &cuts[index];
-     auto& rcuts = *lcuts[fanin];
+    auto& rcuts = *lcuts[fanin];
 
-    /* save last best cut and recompute the data */
+    /* recompute the data of the best cut */
     if ( iteration != 0 )
     {
-      best = rcuts[0];
-      compute_cut_data<ELA>( best, n );
+      best_cut = rcuts[0];
+      compute_cut_data<ELA>( best_cut, n );
     }
 
     if constexpr ( ELA )
     {
       if ( node_data.map_refs )
       {
-        cut_deref( best );
+        cut_deref( best_cut );
       }
+    }
+
+    /* insert the previous best cut */
+    if ( iteration != 0 && !preprocess )
+    {
+      rcuts.simple_insert( best_cut, sort );
     }
 
     /* clear cuts */
@@ -943,7 +966,7 @@ private:
         /* check required time */
         if constexpr ( DO_AREA )
         {
-          if ( new_cut->data.delay <= node_data.required )
+          if ( preprocess || new_cut->data.delay <= node_data.required )
             rcuts.insert( new_cut, sort );
         }
         else
@@ -971,7 +994,7 @@ private:
 
         if constexpr ( DO_AREA )
         {
-          if ( new_cut->data.delay <= node_data.required )
+          if ( preprocess || new_cut->data.delay <= node_data.required )
             rcuts.insert( new_cut, sort );
         }
         else
@@ -986,11 +1009,9 @@ private:
 
     cuts_total += rcuts.size();
 
-    /* save the old best cut */
-    if ( iteration != 0 )
-    {
-      rcuts.simple_insert( best, sort );
-    }
+    /* replace the new best cut with previous one */
+    if ( preprocess && rcuts[0]->data.delay > node_data.required )
+     rcuts.replace( 0, best_cut );
 
     add_unit_cut( index );
 
@@ -998,7 +1019,7 @@ private:
     {
       if ( node_data.map_refs )
       {
-        cut_ref( cuts[index][0] );
+        cut_ref( rcuts[0] );
       }
     }
   }
@@ -1248,7 +1269,7 @@ private:
       /* Recursive referencing if leaf was not referenced */
       if ( node_match[leaf].map_refs++ == 0u )
       {
-        count += cut_ref( cuts[leaf][0] );
+        count += cut_edge_ref( cuts[leaf][0] );
       }
     }
     return count;
@@ -1268,7 +1289,7 @@ private:
       /* Recursive referencing if leaf was not referenced */
       if ( --node_match[leaf].map_refs == 0u )
       {
-        count += cut_deref( cuts[leaf][0] );
+        count += cut_edge_deref( cuts[leaf][0] );
       }
     }
     return count;
@@ -1460,6 +1481,7 @@ private:
   lut_map_stats& st;
 
   uint32_t iteration{ 0 };        /* current mapping iteration */
+  uint32_t area_iteration{ 0 };   /* current area iteration */
   uint32_t delay{ 0 };            /* current delay of the mapping */
   uint32_t area{ 0 };             /* current area of the mapping */
   uint32_t edges{ 0 };            /* current edges of the mapping */
