@@ -46,6 +46,7 @@
 #include "aqfp_assumptions.hpp"
 #include "aqfp_network_convertion.hpp"
 #include "buffer_insertion.hpp"
+#include "buffer_verification.hpp"
 
 namespace mockturtle
 {
@@ -2348,8 +2349,8 @@ public:
   using signal = typename aqfp_network::signal;
 
 public:
-  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps, uint32_t& num_buffers )
-      : _ntk( ntk ), _ps( ps ), _num_buffers( num_buffers )
+  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps, uint32_t& num_buffers, double& runtime )
+      : _ntk( ntk ), _ps( ps ), _num_buffers( num_buffers ), _runtime( runtime )
   {
   }
 
@@ -2365,14 +2366,31 @@ public:
 
     /* compute the node level on the new network */
     node_map<uint32_t, aqfp_network> levels( clean_ntk );
-    _ntk.foreach_gate( [&]( auto const& n ) {
-      levels[old2new[n]] = ntk_level.level( n );
-    } );
+
+    if ( _ps.assume.branch_pis )
+    {
+      /* gates are in a fixed position */
+      _ntk.foreach_gate( [&]( auto const& n ) {
+        levels[old2new[n]] = ntk_level.level( n );
+      } );
+    }
+    else
+    {
+      /* gates are not in a fixed position */
+      /* gates are scheduled ALAP */
+
+      /* if not balance POs, POs are scheduled ASAP */
+      auto const levels_guess = schedule_buffered_network( _ntk, _ps.assume );
+      _ntk.foreach_gate( [&]( auto const& n ) {
+        levels[old2new[n]] = levels_guess[n];
+      } );
+    }
 
     /* recompute splitter trees and return the new buffered network */
     buffered_aqfp_network res;
     buffer_insertion buf_inst( clean_ntk, levels, _ps );
     _num_buffers = buf_inst.run( res );
+    _runtime = buf_inst.get_runtime();
     return res;
   }
 
@@ -2419,6 +2437,7 @@ private:
   buffered_aqfp_network const& _ntk;
   buffer_insertion_params const& _ps;
   uint32_t& _num_buffers;
+  double& _runtime;
 };
 
 } /* namespace detail */
@@ -2429,14 +2448,18 @@ private:
  *
  * \param ntk Buffered AQFP network
  */
-buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {}, uint32_t* pnum_buffers = nullptr )
+buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {}, uint32_t* pnum_buffers = nullptr, double* pruntime = nullptr )
 {
   uint32_t num_buffers;
-  detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps, num_buffers );
+  double runtime;
+  detail::aqfp_reconstruct_splitter_trees_impl p( ntk, ps, num_buffers, runtime );
   auto res = p.run();
 
   if ( pnum_buffers )
     *pnum_buffers = num_buffers;
+
+  if ( pruntime )
+    *pruntime = runtime;
 
   return res;
 }

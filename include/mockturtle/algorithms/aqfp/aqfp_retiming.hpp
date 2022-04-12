@@ -61,8 +61,11 @@ struct aqfp_retiming_params
   /*! \brief Enable splitter retiming. */
   bool retime_splitters{ true };
 
+  /*! \brief Order of retiming is backward first. */
+  bool backwards_first{ true };
+
   /*! \brief Adds an additional try for retiming */
-  bool additional_try{ true };
+  uint32_t additional_try_iterations{ 1 };
 
   /*! \brief Random assignement. */
   bool use_random{ true };
@@ -88,12 +91,16 @@ struct aqfp_retiming_stats
   /*! \brief Number of buffers/splitters after the algorithm. */
   uint32_t buffers_post{ 0 };
 
+  /*! \brief Total iterations. */
+  uint32_t rounds_total{ 0 };
+
   /*! \brief Total runtime. */
   stopwatch<>::duration time_total{ 0 };
 
   void report() const
   {
     std::cout << fmt::format( "[i] Initial B/S   = {:7d}\t Final B/S   = {:7d}\n", buffers_pre, buffers_post );
+    std::cout << fmt::format( "[i] Total rounds  = {:7d}\n", rounds_total );
     std::cout << fmt::format( "[i] Total runtime = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
@@ -124,91 +131,100 @@ public:
     retime_params rps;
     std::default_random_engine::result_type seed = _ps.seed;
 
-    init_stats();
+    _st.buffers_pre = get_stats( _ntk );
 
     Ntk ntk = _ntk;
-    bool additional_try = _ps.additional_try;
-    rps.iterations = 1;
+    uint32_t additional_try = _ps.additional_try_iterations;
 
-    /* backward_retiming */
-    rps.forward_only = false;
-    rps.backward_only = true;
-    uint32_t i = _ps.iterations;
+    if ( _ps.aqfp_assumptions_ps.splitter_capacity != 2 )
+      rps.iterations = 1;
 
-    if ( !_ps.forward_only )
-    {
-      while ( i-- > 0 )
-      {
-        auto net = to_generic( ntk, seed, false );
-        auto num_latches_before = net.num_latches();
-
-        retime( net, rps );
-
-        if ( net.num_latches() >= num_latches_before )
-        {
-          if ( additional_try )
-            additional_try = false;
-          else
-            break;
-        }
-        else if ( additional_try )
-        {
-          additional_try = true;
-        }
-
-        ntk = to_buffered( net );
-      }
-    }
-
-    /* forward retiming */
-    rps.forward_only = true;
-    rps.backward_only = false;
-    i = _ps.iterations;
-    additional_try = _ps.additional_try;
-
-    if ( !_ps.backward_only )
-    {
-      while ( i-- > 0  )
-      {
-        auto net = to_generic( ntk, seed, true );
-        auto num_latches_before = net.num_latches();
-
-        retime( net, rps );
-
-        if ( net.num_latches() >= num_latches_before )
-        {
-          if ( additional_try )
-            additional_try = false;
-          else
-            break;
-        }
-        else if ( additional_try )
-        {
-          additional_try = true;
-        }
-
-        ntk = to_buffered( net );
-      }
-    }
-
-    /* splitter trees reconstruction params */
     buffer_insertion_params buf_ps;
     buf_ps.assume = _ps.aqfp_assumptions_ps;
     buf_ps.scheduling = buffer_insertion_params::provided;
     buf_ps.optimization_effort = buffer_insertion_params::none;
-    return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
+
+    /* retiming first direction pass */
+    rps.forward_only = !_ps.backwards_first;
+    rps.backward_only = _ps.backwards_first;
+    uint32_t i = _ps.iterations;
+
+    if ( ( _ps.backwards_first && !_ps.forward_only ) || ( !_ps.backwards_first && !_ps.backward_only ) )
+    {
+      while ( i-- > 0 )
+      {
+        auto net = to_generic( ntk, seed, !_ps.backwards_first );
+        auto num_latches_before = net.num_latches();
+
+        retime( net, rps );
+
+        if ( net.num_latches() >= num_latches_before )
+        {
+          if ( additional_try-- == 0 )
+            break;
+        }
+        else if ( additional_try )
+        {
+          additional_try = _ps.additional_try_iterations;
+        }
+
+        ntk = to_buffered( net );
+        ++_st.rounds_total;
+        // break;
+      }
+    }
+
+    /* retiming second direction pass */
+    rps.forward_only = _ps.backwards_first;
+    rps.backward_only = !_ps.backwards_first;
+    i = _ps.iterations;
+    additional_try = _ps.additional_try_iterations;
+
+    if ( ( !_ps.backwards_first && !_ps.forward_only ) || ( _ps.backwards_first && !_ps.backward_only ) )
+    {
+      while ( i-- > 0  )
+      {
+        auto net = to_generic( ntk, seed, _ps.backwards_first );
+        auto num_latches_before = net.num_latches();
+
+        retime( net, rps );
+
+        if ( net.num_latches() >= num_latches_before )
+        {
+          if ( additional_try-- == 0 )
+            break;
+        }
+        else if ( additional_try )
+        {
+          additional_try = _ps.additional_try_iterations;
+        }
+        ntk = to_buffered( net );
+        ++_st.rounds_total;
+        // break;
+      }
+    }
+
+    if ( _ps.aqfp_assumptions_ps.balance_pis )
+    {
+      return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
+    }
+    else
+    {
+      _st.buffers_post = get_stats( ntk );
+      return ntk;
+    }
   }
 
 private:
-  void init_stats()
+  uint32_t get_stats( Ntk& ntk )
   {
     uint32_t bs_count = 0;
-    _ntk.foreach_node( [&]( auto const& n ) {
-      if ( _ntk.is_buf( n ) )
+    ntk.foreach_node( [&]( auto const& n ) {
+      if ( ntk.is_buf( n ) )
         ++bs_count;
     } );
 
-    _st.buffers_pre = bs_count;
+    return bs_count;
   }
 
   generic_network to_generic( Ntk& ntk, std::default_random_engine::result_type& seed, bool forward )
@@ -226,10 +242,10 @@ private:
     } );
 
     /* suppose network is in topological order */
-    if ( _ps.retime_splitters )
+    if ( _ps.retime_splitters && _ps.aqfp_assumptions_ps.splitter_capacity != 2 )
     {
       if ( _ps.use_random )
-        select_retimeable_elements_random( ntk, seed );
+        select_retimeable_elements_random( ntk, seed, forward );
       else
         select_retimeable_elements_simulate( ntk, seed, forward );
     }
@@ -306,8 +322,8 @@ private:
       else
       {
         /* buffer */
-        assert( children.size() == 1 );
-        assert( ntk.fanout_size( n ) <= _ps.aqfp_assumptions_ps.splitter_capacity );
+        // assert( children.size() == 1 );
+        // assert( ntk.fanout_size( n ) <= _ps.aqfp_assumptions_ps.splitter_capacity );
 
         /* not balanced PIs */
         if ( !_ps.aqfp_assumptions_ps.balance_pis && ( res.is_pi( res.get_node( children[0] ) ) || res.is_constant( res.get_node( children[0] ) ) ) )
@@ -327,7 +343,7 @@ private:
     return res;
   }
 
-  void select_retimeable_elements_random( Ntk& ntk, std::default_random_engine::result_type& seed )
+  void select_retimeable_elements_random( Ntk& ntk, std::default_random_engine::result_type& seed, bool forward )
   {
     fanout_view fntk{ ntk };
 
@@ -343,7 +359,20 @@ private:
       {
         if ( ntk.fanout_size( n ) == 1 )
         {
-          ntk.set_visited( n, ntk.trav_id() );
+          if  ( forward )
+          {
+            fntk.foreach_fanout( n, [&]( auto const& f ) {
+              if ( !ntk.is_buf( f ) || ntk.fanout_size( f ) != 1 )
+                ntk.set_visited( n, ntk.trav_id() );
+            } );
+          }
+          else
+          {
+            ntk.foreach_fanin( n, [&]( auto const& f ) {
+              if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() || !ntk.is_buf( ntk.get_node( f ) ) || ntk.fanout_size( ntk.get_node( f ) ) != 1 )
+                ntk.set_visited( n, ntk.trav_id() );
+            } );
+          }
         }
         else if ( ntk.visited( n ) != ntk.trav_id() ||  ntk.value( n ) > 0 )
         {
@@ -406,7 +435,7 @@ private:
     ntk.incr_trav_id();
     ntk.foreach_node( [&] ( auto const& n ) {
       if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
-        return true;
+        return;
 
       if ( ntk.is_buf( n ) )
       {
@@ -428,7 +457,7 @@ private:
           } );
         }
       }
-      return true;
+      return;
     } );
 
     /* simulate nodes for compatibility classes */
@@ -442,9 +471,11 @@ private:
     /* create and sort compatibility classes */
     auto classes = create_classes( choice_ntk );
 
+    std::cout << "classes: " << classes.size() << "\n";
+
     if ( classes.size() == 1 )
     {
-      select_retimeable_elements_random( ntk, seed );
+      select_retimeable_elements_random( ntk, seed, forward );
       return;
     }
 
@@ -634,6 +665,63 @@ private:
       if ( ntk.is_buf( n ) && ntk.fanout_size( n ) == 1 )
         ntk.set_visited( n, ntk.trav_id() );
     } );
+  }
+
+  Ntk create_supersplitters()
+  {
+    Ntk res;
+    node_map<signal, Ntk> old2new( _ntk );
+
+    old2new[_ntk.get_constant( false )] = res.get_constant( false );
+    if ( _ntk.get_node( _ntk.get_constant( true ) ) != _ntk.get_node( _ntk.get_constant( false ) ) )
+    {
+      old2new[_ntk.get_constant( true )] = res.get_constant( true );
+    }
+    _ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[n] = res.create_pi();
+    } );
+
+    _ntk.foreach_node( [&]( auto const& n ) {
+      if ( _ntk.is_pi( n ) || _ntk.is_constant( n ) )
+        return;
+
+      std::vector<signal> children;
+
+      _ntk.foreach_fanin( n, [&]( auto const& f ) {
+        children.push_back( old2new[f] ^ _ntk.is_complemented( f ) );
+      } );
+      
+      signal f;
+      if ( _ntk.is_buf( n ) )
+      {
+        uint32_t supersplitter = res.value( res.get_node( children[0] ) );
+        if ( !supersplitter )
+        {
+          bool is_complemented = res.is_complemented( children[0] );
+          f = res.create_buf( children[0] ^ is_complemented );
+          res.set_value( res.get_node( children[0] ), res.node_to_index( res.get_node( f ) ) );
+          f = f ^ is_complemented;
+        }
+        else
+        {
+          f = res.make_signal( res.index_to_node( supersplitter ) ) ^ res.is_complemented( children[0] );
+        }
+      }
+      else
+      {
+        f = res.clone_node( _ntk, n, children );
+      }
+      old2new[n] = f;
+    } );
+
+    _ntk.foreach_po( [&]( auto const& f ) {
+      if ( _ntk.is_complemented( f ) )
+        res.create_po( res.create_not( old2new[f] ) );
+      else
+        res.create_po( old2new[f] );
+    } );
+
+    return res;
   }
 
 private:

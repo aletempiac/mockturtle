@@ -717,8 +717,8 @@ public:
       }
     }
 
-    // if ( !_ps.assume.balance_pis && min_level != 0 )
-    //   --min_level;
+    if ( !_ps.assume.branch_pis && min_level != 0 )
+      --min_level;
 
     /* decrease all levels by min_level */
     _ntk.foreach_node( [&]( auto const& n ) {
