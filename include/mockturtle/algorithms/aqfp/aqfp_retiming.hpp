@@ -204,15 +204,7 @@ public:
       }
     }
 
-    if ( _ps.aqfp_assumptions_ps.balance_pis )
-    {
-      return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
-    }
-    else
-    {
-      _st.buffers_post = get_stats( ntk );
-      return ntk;
-    }
+    return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
   }
 
 private:
