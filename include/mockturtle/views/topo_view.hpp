@@ -37,6 +37,8 @@
 #include <cassert>
 #include <optional>
 #include <vector>
+#include <random>
+#include <algorithm>
 
 #include "../networks/detail/foreach.hpp"
 #include "../traits.hpp"
@@ -44,6 +46,12 @@
 
 namespace mockturtle
 {
+
+struct topo_view_params
+{
+  bool deterministic_randomization{false};
+  std::default_random_engine::result_type seed{1};
+};
 
 /*! \brief Ensures topological order for of all nodes reachable from the outputs.
  *
@@ -105,7 +113,7 @@ public:
    *
    * Constructs topological view on another network.
    */
-  topo_view( Ntk const& ntk ) : immutable_view<Ntk>( ntk )
+  topo_view( Ntk const& ntk, topo_view_params const& ps = {} ) : immutable_view<Ntk>( ntk ), ps( ps )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -128,6 +136,7 @@ public:
    */
   topo_view( Ntk const& ntk, typename Ntk::signal const& start_signal )
       : immutable_view<Ntk>( ntk ),
+        ps( ps ),
         start_signal( start_signal )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -178,6 +187,15 @@ public:
                              fn );
   }
 
+  /*! \brief Implementation of `foreach_node` in reverse topological order. */
+  template<typename Fn>
+  void foreach_node_reverse( Fn&& fn ) const
+  {
+    detail::foreach_element( topo_order.rbegin(),
+                             topo_order.rend(),
+                             fn );
+  }
+
   /*! \brief Reimplementation of `foreach_gate`. */
   template<typename Fn>
   void foreach_gate( Fn&& fn ) const
@@ -217,6 +235,8 @@ public:
     this->incr_trav_id();
     this->incr_trav_id();
     topo_order.reserve( this->size() );
+
+    seed = ps.seed;
 
     /* constants and PIs */
     const auto c0 = this->get_node( this->get_constant( false ) );
@@ -269,9 +289,23 @@ private:
     this->set_visited( n, this->trav_id() - 1 );
 
     /* mark children */
-    this->foreach_fanin( n, [this]( signal const& f ) {
-      create_topo_rec( this->get_node( f ) );
-    } );
+    if ( !ps.deterministic_randomization )
+    {
+      this->foreach_fanin( n, [this]( signal const& f ) {
+        create_topo_rec( this->get_node( f ) );
+      } );
+    }
+    else
+    {
+      std::vector<node> fanins;
+      this->foreach_fanin( n, [this, &fanins]( signal const& f ) {
+        fanins.push_back( this->get_node( f ) );
+      } );
+      std::shuffle( fanins.begin(), fanins.end(), std::default_random_engine( seed++ ) );
+
+      for ( node const& g : fanins )
+        create_topo_rec( g );
+    }
 
     /* mark node n permanently */
     this->set_visited( n, this->trav_id() );
@@ -281,21 +315,26 @@ private:
   }
 
 private:
+  topo_view_params ps;
   std::vector<node> topo_order;
   std::optional<signal> start_signal;
+  std::default_random_engine::result_type seed{1};
 };
 
 template<typename Ntk>
 class topo_view<Ntk, true> : public Ntk
 {
 public:
-  topo_view( Ntk const& ntk ) : Ntk( ntk )
+  topo_view( Ntk const& ntk, topo_view_params const& ps = {} ) : Ntk( ntk )
   {
   }
 };
 
 template<class T>
 topo_view(T const&) -> topo_view<T>;
+
+template<class T>
+topo_view(T const&, topo_view_params const&) -> topo_view<T>;
 
 template<class T>
 topo_view(T const&, typename T::signal const&) -> topo_view<T>;
