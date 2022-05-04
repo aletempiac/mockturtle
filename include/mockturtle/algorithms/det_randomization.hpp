@@ -32,13 +32,9 @@
 
 #pragma once
 
-#include <iostream>
-#include <type_traits>
 #include <vector>
 #include <random>
 #include <algorithm>
-
-#include <kitty/operations.hpp>
 
 #include "../traits.hpp"
 #include "../utils/node_map.hpp"
