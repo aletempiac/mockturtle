@@ -49,6 +49,9 @@ int main()
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
+    if ( benchmark != "adder" )
+      continue;
+
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
     if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
@@ -57,12 +60,17 @@ int main()
     }
 
     lut_map_params ps;
-    ps.edge_optimization = false;
-    ps.skip_delay_round = false;
-    ps.required_delay = 0;
+    ps.cut_enumeration_ps.cut_size = 6u;
+    ps.cut_enumeration_ps.cut_limit = 25u;
+    ps.area_oriented_mapping = true;
+    ps.cut_expansion = true;
+    ps.use_smt_solver = true;
+    ps.verbose = true;
+    ps.smt_cut_limit = 24;
+    ps.ela_rounds = 0;
     lut_map_stats st;
     mapping_view<aig_network, false> mapped_aig{aig};
-    lut_map<decltype( mapped_aig )>( mapped_aig, ps, &st );
+    lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st );
     const auto klut = *collapse_mapped_network<klut_network>( mapped_aig );
 
     depth_view<klut_network> klut_d{ klut };
@@ -72,7 +80,10 @@ int main()
       edges += klut.fanin_size( n );
     } );
 
-    exp( benchmark, klut.num_gates(), klut_d.depth(), edges, to_seconds( st.time_total ), true );
+    // auto const cec = benchmark == "hyp" ? true : abc_cec( klut, benchmark );
+    auto const cec = true;
+
+    exp( benchmark, klut.num_gates(), klut_d.depth(), edges, to_seconds( st.time_total ), cec );
   }
 
   exp.save();
