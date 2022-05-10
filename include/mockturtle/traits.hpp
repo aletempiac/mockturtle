@@ -31,6 +31,7 @@
   \author Mathias Soeken
   \author Max Austin
   \author Siang-Yun (Sonia) Lee
+  \author Alessandro Tempia Calvino
 */
 
 #pragma once
@@ -1609,6 +1610,21 @@ struct has_foreach_fanout<Ntk, std::void_t<decltype( std::declval<Ntk>().foreach
 
 template<class Ntk>
 inline constexpr bool has_foreach_fanout_v = has_foreach_fanout<Ntk>::value;
+#pragma endregion
+
+#pragma region has_foreach_choice
+template<class Ntk, class = void>
+struct has_foreach_choice : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_foreach_choice<Ntk, std::void_t<decltype( std::declval<Ntk>().foreach_choice( std::declval<node<Ntk>>(), std::declval<void( node<Ntk>, uint32_t )>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_foreach_choice_v = has_foreach_choice<Ntk>::value;
 #pragma endregion
 
 #pragma region has_compute
