@@ -55,14 +55,14 @@ struct choice_view_params
  * `decr_fanout_size`, `fanout_size`.
  *
  * This class manages equivalent nodes keeping them saved as alternatives in
- * the network. Each node belongs to an equivalence class in which a node,
- * by default the one with the lowest index, is the class representative.
- * Equivalence classes are saved as linked list. The `_choice_repr` vector,
- * associate to each node the next node in the linked list, the one closer
- * to the representative. The representatives "points" itself. The `_choice_phase`
- * vector is used to save the polarity of each node in the class with respect to
- * the representative. The representative uses its field to point to the tail of
- * the list.
+ * the network. Each node belongs to an equivalence class in which a node
+ * is the class representative, by default the one with the lowest index.
+ * Equivalence classes are saved as linked lists. The `_choice_repr` vector
+ * associates each node to the next one in the linked list (the one closer
+ * to the representative). The representative is the tail and "points" at itself.
+ * The `_choice_phase` vector is used to save the polarity of each node in the
+ * class with respect to the representative. The representative uses its field
+ * to point to the head of the list.
  * 
  * This view is not compatible with `fanout_view`.
  *

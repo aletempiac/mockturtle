@@ -90,6 +90,14 @@ algorithm.  Several views are implemented in mockturtle.
 .. doxygenclass:: mockturtle::names_view
    :members:
 
+`choice_view`: Implements choices in the network
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Header:** ``mockturtle/views/choice_view.hpp``
+
+.. doxygenclass:: mockturtle::choice_view
+   :members:
+
 `cnf_view`: Creates a CNF while creating a network
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
