@@ -650,6 +650,8 @@ struct exact_library_params
 
   /* classify in NP instead of NPN */
   bool np_classification{ true };
+  /* classify in NP instead of NPN */
+  bool use_dont_cares{ false };
   /* verbose */
   bool verbose{ false };
 };
@@ -772,6 +774,9 @@ private:
         _super_lib.insert( { not_entry, supergates_neg } );
     }
 
+    if ( _ps.use_dont_cares )
+      compute_dont_cares_classes();
+
     if ( _ps.verbose )
     {
       std::cout << "Classified in " << _super_lib.size() << " entries" << std::endl;
@@ -857,6 +862,89 @@ private:
     } );
 
     return area;
+  }
+
+  void compute_dont_cares_classes()
+  {
+    /* save the size for each NPN class */
+    std::unordered_map<kitty::static_truth_table<NInputs>, uint32_t, tt_hash> class_sizes;
+    for ( auto const& entry : _super_lib )
+    {
+      const unsigned numgates = static_cast<unsigned>( std::get<1>( entry ).front().area );
+      class_sizes.insert( {std::get<0>( entry ), numgates} );
+    }
+
+    /* find don't care links */
+    for ( auto entry_i = class_sizes.begin(); entry_i != class_sizes.end(); ++entry_i )
+    {
+      auto const& tt_i = std::get<0>( *entry_i );
+      print_binary( tt_i );
+
+      /* use a map to link the dont cares to the new size, NPN class, negations, and permutation vector */
+      using dc_transf_t = std::tuple<uint32_t, kitty::static_truth_table<NInputs>, uint32_t, std::vector<uint8_t>>;
+      std::unordered_map<kitty::static_truth_table<NInputs>, dc_transf_t, tt_hash> dc_sets;
+
+      for ( auto entry_j = class_sizes.begin(); entry_j != class_sizes.end(); ++entry_j )
+      {
+        auto const& tt_j = std::get<0>( *entry_j );
+        uint32_t size = std::get<1>( *entry_j );
+
+         /* evaluate DC only for size improvement */
+        if ( size >= std::get<1>( *entry_i ) )
+          continue;
+        
+        exact_npn_enumeration( tt_j, [&]( auto const& tt, uint32_t phase,  std::vector<uint8_t> const& perm ) {
+          /* extract the DC set */
+          const auto dc = tt_i ^ tt;
+
+          /* limit the explosion of DC combinations to evaluate */
+          if ( kitty::count_ones( dc ) > 2 )
+            return;
+
+          /* check existance */
+          if ( auto const& p = dc_sets.find( dc ); p != dc_sets.end() )
+          {
+            if ( size < std::get<0>( std::get<1>( *p ) ) )
+              dc_sets[dc] = std::make_tuple( size, tt_j, phase, perm );
+
+            return;
+          }
+
+          /* check dominance */
+          auto it = dc_sets.begin();
+          while ( it != dc_sets.end() )
+          {
+            auto const& dc_set_tt = std::get<0>( *it );
+            auto const& and_tt = dc_set_tt & dc;
+
+            if ( dc_set_tt == and_tt && std::get<0>( std::get<1>( *it ) ) <= size )
+            {
+              return;
+            }
+            else if ( dc == and_tt && size <= std::get<0>( std::get<1>( *it ) ) )
+            {
+              it = dc_sets.erase( it );
+            }
+            else
+            {
+              ++it;
+            }
+          }
+
+          /* insert in the dc_sets */
+          dc_sets[dc] = std::make_tuple( size, tt_j, phase, perm );
+        } );
+      }
+
+      uint32_t max_gain = 0;
+      float avg_gain = 0;
+      for ( auto const& dc : dc_sets )
+      {
+        max_gain = std::max( max_gain, std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) ) );
+        avg_gain += std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) );
+      }
+      std::cout << fmt::format( "\t {:>5d}\t {:>5d}\t {:>5.3f}\n", dc_sets.size(), max_gain, avg_gain / dc_sets.size() );
+    }
   }
 
 private:
