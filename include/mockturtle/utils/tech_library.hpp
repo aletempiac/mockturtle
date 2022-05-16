@@ -680,13 +680,18 @@ class exact_library
   using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
+  using dc_t = std::tuple<supergates_list_t const*, uint32_t, std::array<uint8_t, NInputs>>;
+  using dc_lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<dc_t>, tt_hash>;
+
+  /* TODO: try to replace std::vector<dc_t> with an ordered map or a BDD */
 
 public:
   explicit exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
       : _database(),
         _rewriting_fn( rewriting_fn ),
         _ps( ps ),
-        _super_lib()
+        _super_lib(),
+        _dc_lib()
   {
     generate_library();
   }
@@ -874,6 +879,9 @@ private:
       class_sizes.insert( {std::get<0>( entry ), numgates} );
     }
 
+    uint32_t conflict_found = 0;
+    uint32_t total_exploration = 0;
+
     /* find don't care links */
     for ( auto entry_i = class_sizes.begin(); entry_i != class_sizes.end(); ++entry_i )
     {
@@ -898,15 +906,18 @@ private:
           const auto dc = tt_i ^ tt;
 
           /* limit the explosion of DC combinations to evaluate */
-          if ( kitty::count_ones( dc ) > 2 )
-            return;
+          // if ( kitty::count_ones( dc ) > 2 )
+          //   return;
 
-          /* check existance */
+          ++total_exploration;
+
+          /* check existance: filters ~12% of conflicts */
           if ( auto const& p = dc_sets.find( dc ); p != dc_sets.end() )
           {
             if ( size < std::get<0>( std::get<1>( *p ) ) )
               dc_sets[dc] = std::make_tuple( size, tt_j, phase, perm );
 
+            ++conflict_found;
             return;
           }
 
@@ -944,7 +955,44 @@ private:
         avg_gain += std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) );
       }
       std::cout << fmt::format( "\t {:>5d}\t {:>5d}\t {:>5.3f}\n", dc_sets.size(), max_gain, avg_gain / dc_sets.size() );
+
+      /* add entries to the main data structure */
+      std::vector<dc_t> dc_transformations;
+      dc_transformations.reserve( dc_sets.size() );
+
+      std::array<uint8_t, NInputs> permutation;
+
+      /* insert in a sorted way based on gain */
+      /* TODO: optimize to reduce the number of cycles */
+      for ( auto i = 0u; i < std::get<1>( *entry_i ); ++i )
+      {
+        for ( auto const& dc : dc_sets )
+        {
+          auto const& transf = std::get<1>( dc );
+
+          if ( std::get<0>( transf ) != i )
+          {
+            continue;
+          }
+
+          supergates_list_t const* sg = &_super_lib[std::get<1>( transf )];
+          auto const& perm = std::get<3>( transf );
+
+          assert( perm.size() == NInputs );
+
+          for ( auto j = 0u; j < NInputs; ++j )
+          {
+            permutation[j] = perm[j];
+          }
+
+          dc_transformations.emplace_back( std::make_tuple( sg, std::get<2>( transf ), permutation ) );
+        }
+      }
+
+      _dc_lib.insert( {tt_i, dc_transformations} );
     }
+
+    std::cout << fmt::format( "{} \t{}\n", conflict_found, total_exploration );
   }
 
 private:
@@ -952,6 +1000,7 @@ private:
   RewritingFn const& _rewriting_fn;
   exact_library_params const _ps;
   lib_t _super_lib;
+  dc_lib_t _dc_lib;
 }; /* class exact_library */
 
 } // namespace mockturtle
