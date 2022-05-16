@@ -680,7 +680,8 @@ class exact_library
   using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
   using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
-  using dc_t = std::tuple<supergates_list_t const*, uint32_t, std::array<uint8_t, NInputs>>;
+  using dc_transformation_t = std::tuple<supergates_list_t const*, uint32_t, std::array<uint8_t, NInputs>>;
+  using dc_t = std::pair<kitty::static_truth_table<NInputs>, dc_transformation_t>;
   using dc_lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, std::vector<dc_t>, tt_hash>;
 
   /* TODO: try to replace std::vector<dc_t> with an ordered map or a BDD */
@@ -707,6 +708,48 @@ public:
     if ( match != _super_lib.end() )
       return &match->second;
     return nullptr;
+  }
+
+  /*! \brief Get the structures matching the function with DC.
+   *
+   * Returns a list of graph structures that match the function
+   * represented by the truth table and its dont care set.
+   * This functions also updates the phase and permutation vector
+   * of the original NPN class to the new one obtained using
+   * don't cares.
+   */
+  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt, kitty::static_truth_table<NInputs> const& dc, uint32_t& phase, std::vector<uint8_t>& perm )
+  {
+    auto match = _super_lib.find( tt );
+    if ( match == _super_lib.end() )
+      return nullptr;
+    
+    /* lookup for don't care optimization */
+    for ( auto const& entry : _dc_lib[tt] )
+    {
+      auto const& dc_entry_tt = std::get<0>( entry );
+
+      /* check for containment */
+      if ( ( dc & dc_entry_tt ) == dc_entry_tt )
+      {
+        auto const& dc_entry = std::get<1>( entry );
+
+        /* update phase and perm */
+        uint32_t dc_entry_phase = std::get<1>( dc_entry );
+        auto const& dc_entry_perm = std::get<2>( dc_entry );
+        std::vector<uint8_t> temp_perm( perm.size() );
+        for ( auto i = 0u; i < NInputs; ++i )
+        {
+          temp_perm[dc_entry_perm[i]] = perm[i];
+        }
+        std::copy( temp_perm.begin(), temp_perm.end(), perm.begin() );
+        phase ^= dc_entry_phase;
+        return std::get<0>( dc_entry );
+      }
+    }
+
+    /* no dont care optimization found */
+    return &match->second;
   }
 
   /*! \brief Returns the NPN database of structures. */
@@ -886,7 +929,7 @@ private:
     for ( auto entry_i = class_sizes.begin(); entry_i != class_sizes.end(); ++entry_i )
     {
       auto const& tt_i = std::get<0>( *entry_i );
-      print_binary( tt_i );
+      print_hex( tt_i );
 
       /* use a map to link the dont cares to the new size, NPN class, negations, and permutation vector */
       using dc_transf_t = std::tuple<uint32_t, kitty::static_truth_table<NInputs>, uint32_t, std::vector<uint8_t>>;
@@ -906,8 +949,8 @@ private:
           const auto dc = tt_i ^ tt;
 
           /* limit the explosion of DC combinations to evaluate */
-          // if ( kitty::count_ones( dc ) > 2 )
-          //   return;
+          if ( kitty::count_ones( dc ) > 1 )
+            return;
 
           ++total_exploration;
 
@@ -985,7 +1028,7 @@ private:
             permutation[j] = perm[j];
           }
 
-          dc_transformations.emplace_back( std::make_tuple( sg, std::get<2>( transf ), permutation ) );
+          dc_transformations.emplace_back( std::make_pair( std::get<0>( dc ), std::make_tuple( sg, std::get<2>( transf ), permutation ) ) );
         }
       }
 
