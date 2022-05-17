@@ -1038,4 +1038,41 @@ TT create_from_npn_config( const std::tuple<TT, uint32_t, std::vector<uint8_t>>&
   return res;
 }
 
+template<typename TT>
+TT create_from_npn_config2( const std::tuple<TT, uint32_t, std::vector<uint8_t>>& config )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  const auto& from = std::get<0>( config );
+  const auto& phase = std::get<1>( config );
+  auto perm = std::get<2>( config );
+  const auto num_vars = from.num_vars();
+
+  /* is output complemented? */
+  auto res = ( ( phase >> num_vars ) & 1 ) ? ~from : from;
+
+  /* input complementations */
+  for ( auto i = 0u; i < num_vars; ++i )
+  {
+    if ( ( phase >> i ) & 1 )
+    {
+      flip_inplace( res, i );
+    }
+  }
+
+  /* input permutations */
+  for ( auto i = 0u; i < num_vars; ++i )
+  {
+    if ( perm[i] == i )
+    {
+      continue;
+    }
+
+    swap_inplace( res, perm[i], perm[perm[i]] );
+    std::swap( perm[i], perm[perm[i]] );
+  }
+
+  return res;
+}
+
 } /* namespace kitty */

@@ -55,6 +55,8 @@ inline void collect_nodes_recur( Ntk const& ntk, typename Ntk::node const& n, st
   ntk.paint( n );
 
   ntk.foreach_fanin( n, [&]( signal const& fi ){
+    if ( ntk.is_constant( ntk.get_node( fi ) ) )
+      return;
     collect_nodes_recur( ntk, ntk.get_node( fi ), nodes );
   });
   nodes.push_back( n );

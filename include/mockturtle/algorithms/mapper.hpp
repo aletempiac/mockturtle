@@ -50,6 +50,7 @@
 #include "cut_enumeration/tech_map_cut.hpp"
 #include "detail/mffc_utils.hpp"
 #include "detail/switching_activity.hpp"
+#include "dont_cares.hpp"
 
 namespace mockturtle
 {
@@ -91,6 +92,9 @@ struct map_params
 
   /*! \brief Number of patterns for switching activity computation. */
   uint32_t switching_activity_patterns{ 2048u };
+
+  /*! \brief Use don't cares for optimization. */
+  bool use_dont_cares{ false };
 
   /*! \brief Exploit logic sharing in exact area optimization of graph mapping. */
   bool enable_logic_sharing{ false };
@@ -1852,16 +1856,40 @@ private:
         /* match the cut using canonization and get the gates */
         const auto tt = cuts.truth_table( *cut );
         const auto fe = kitty::shrink_to<NInputs>( tt );
-        const auto config = kitty::exact_npn_canonization( fe );
-        auto const supergates_npn = library.get_supergates( std::get<0>( config ) );
-        auto const supergates_npn_neg = library.get_supergates( ~std::get<0>( config ) );
+
+        auto [tt_npn, neg, perm] = kitty::exact_npn_canonization( fe );
+        auto perm_neg = perm;
+        auto neg_neg = neg;
+
+        kitty::static_truth_table<NInputs> dc_npn;
+
+        if ( ps.use_dont_cares )
+        {
+          std::vector<node<Ntk>> pivots( NInputs, 0u );
+          auto k = 0u;
+          for ( auto const& l : *cut )
+          {
+            pivots[k++] = ( ntk.index_to_node( l ) );
+          }
+          auto dc_set = satisfiability_dont_cares( ntk, pivots, 8u );
+          const auto dc = kitty::extend_to<NInputs>( dc_set );
+
+          dc_npn = create_from_npn_config2( std::make_tuple( dc, neg & ~( 1 << NInputs ), perm ) );
+        }
+
+        auto const supergates_npn = ( ps.use_dont_cares ) ? library.get_supergates( tt_npn, dc_npn, neg, perm ) : library.get_supergates( tt_npn );
+        auto const supergates_npn_neg = ( ps.use_dont_cares ) ? library.get_supergates( ~tt_npn, dc_npn, neg_neg, perm_neg ) : library.get_supergates( ~tt_npn );
 
         if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
-          auto neg = std::get<1>( config );
-          auto perm = std::get<2>( config );
           uint8_t phase = ( neg >> NInputs ) & 1;
           cut_match_t<NtkDest, NInputs> match;
+
+          if ( ps.use_dont_cares && supergates_npn == nullptr )
+          {
+            perm = perm_neg;
+            neg = neg_neg; 
+          }
 
           match.supergates[phase] = supergates_npn;
           match.supergates[phase ^ 1] = supergates_npn_neg;

@@ -694,6 +694,7 @@ public:
         _super_lib(),
         _dc_lib()
   {
+    _super_lib.reserve( 222 );
     generate_library();
   }
 
@@ -718,14 +719,18 @@ public:
    * of the original NPN class to the new one obtained using
    * don't cares.
    */
-  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt, kitty::static_truth_table<NInputs> const& dc, uint32_t& phase, std::vector<uint8_t>& perm )
+  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt, kitty::static_truth_table<NInputs> const& dc, uint32_t& phase, std::vector<uint8_t>& perm ) const
   {
     auto match = _super_lib.find( tt );
     if ( match == _super_lib.end() )
       return nullptr;
     
     /* lookup for don't care optimization */
-    for ( auto const& entry : _dc_lib[tt] )
+    auto match_dc = _dc_lib.find( tt );
+    if ( dc._bits == 0 || match_dc == _dc_lib.end() )
+      return &match->second;
+
+    for ( auto const& entry : match_dc->second )
     {
       auto const& dc_entry_tt = std::get<0>( entry );
 
@@ -738,12 +743,15 @@ public:
         uint32_t dc_entry_phase = std::get<1>( dc_entry );
         auto const& dc_entry_perm = std::get<2>( dc_entry );
         std::vector<uint8_t> temp_perm( perm.size() );
+        uint32_t temp_phase = ( ( phase >> NInputs ) & 1 ) << NInputs;
+        // phase ^= dc_entry_phase;
         for ( auto i = 0u; i < NInputs; ++i )
         {
           temp_perm[dc_entry_perm[i]] = perm[i];
+          temp_phase |= ( ( phase >> i ) & 1 ) << dc_entry_perm[i];
         }
         std::copy( temp_perm.begin(), temp_perm.end(), perm.begin() );
-        phase ^= dc_entry_phase;
+        phase = temp_phase ^ dc_entry_phase;
         return std::get<0>( dc_entry );
       }
     }
@@ -929,6 +937,11 @@ private:
     for ( auto entry_i = class_sizes.begin(); entry_i != class_sizes.end(); ++entry_i )
     {
       auto const& tt_i = std::get<0>( *entry_i );
+      auto const current_size = std::get<1>( *entry_i );
+
+      // if ( tt_i._bits != 855u )
+      //   continue;
+
       print_hex( tt_i );
 
       /* use a map to link the dont cares to the new size, NPN class, negations, and permutation vector */
@@ -941,7 +954,7 @@ private:
         uint32_t size = std::get<1>( *entry_j );
 
          /* evaluate DC only for size improvement */
-        if ( size >= std::get<1>( *entry_i ) )
+        if ( size >= current_size )
           continue;
         
         exact_npn_enumeration( tt_j, [&]( auto const& tt, uint32_t phase,  std::vector<uint8_t> const& perm ) {
@@ -1032,10 +1045,24 @@ private:
         }
       }
 
-      _dc_lib.insert( {tt_i, dc_transformations} );
+      if ( !dc_transformations.empty() )
+        _dc_lib.insert( {tt_i, dc_transformations} );
     }
 
     std::cout << fmt::format( "{} \t{}\n", conflict_found, total_exploration );
+
+    /* report DC lib */
+    for ( auto const& entry : _dc_lib )
+    {
+      kitty::print_hex( entry.first );
+      std::cout << ": ";
+      for ( auto const& dc_entry : entry.second )
+      {
+        kitty::print_hex( dc_entry.first );
+        std::cout << " ";
+      }
+      std::cout << "\n";
+    }
   }
 
 private:
