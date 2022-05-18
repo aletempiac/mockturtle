@@ -650,7 +650,7 @@ struct exact_library_params
 
   /* classify in NP instead of NPN */
   bool np_classification{ true };
-  /* classify in NP instead of NPN */
+  /* Use don't care matching */
   bool use_dont_cares{ false };
   /* verbose */
   bool verbose{ false };
@@ -938,8 +938,6 @@ private:
       auto const& tt_i = std::get<0>( *entry_i );
       auto const current_size = std::get<1>( *entry_i );
 
-      print_hex( tt_i );
-
       /* use a map to link the dont cares to the new size, NPN class, negations, and permutation vector */
       using dc_transf_t = std::tuple<uint32_t, kitty::static_truth_table<NInputs>, uint32_t, std::vector<uint8_t>>;
       std::unordered_map<kitty::static_truth_table<NInputs>, dc_transf_t, tt_hash> dc_sets;
@@ -1006,14 +1004,14 @@ private:
         } );
       }
 
-      uint32_t max_gain = 0;
-      float avg_gain = 0;
-      for ( auto const& dc : dc_sets )
-      {
-        max_gain = std::max( max_gain, std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) ) );
-        avg_gain += std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) );
-      }
-      std::cout << fmt::format( "\t {:>5d}\t {:>5d}\t {:>5.3f}\n", dc_sets.size(), max_gain, avg_gain / dc_sets.size() );
+      // uint32_t max_gain = 0;
+      // float avg_gain = 0;
+      // for ( auto const& dc : dc_sets )
+      // {
+      //   max_gain = std::max( max_gain, std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) ) );
+      //   avg_gain += std::get<1>( *entry_i ) - std::get<0>( std::get<1>( dc ) );
+      // }
+      // std::cout << fmt::format( "\t {:>5d}\t {:>5d}\t {:>5.3f}\n", dc_sets.size(), max_gain, avg_gain / dc_sets.size() );
 
       /* add entries to the main data structure */
       std::vector<dc_t> dc_transformations;
@@ -1052,20 +1050,20 @@ private:
         _dc_lib.insert( {tt_i, dc_transformations} );
     }
 
-    std::cout << fmt::format( "{} \t{}\n", conflict_found, total_exploration );
+    // std::cout << fmt::format( "{} \t{}\n", conflict_found, total_exploration );
 
     /* report DC lib */
-    for ( auto const& entry : _dc_lib )
-    {
-      kitty::print_hex( entry.first );
-      std::cout << ": ";
-      for ( auto const& dc_entry : entry.second )
-      {
-        kitty::print_hex( dc_entry.first );
-        std::cout << " ";
-      }
-      std::cout << "\n";
-    }
+    // for ( auto const& entry : _dc_lib )
+    // {
+    //   kitty::print_hex( entry.first );
+    //   std::cout << ": ";
+    //   for ( auto const& dc_entry : entry.second )
+    //   {
+    //     kitty::print_hex( dc_entry.first );
+    //     std::cout << " ";
+    //   }
+    //   std::cout << "\n";
+    // }
   }
 
 private:
