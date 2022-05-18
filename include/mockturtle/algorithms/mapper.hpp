@@ -120,6 +120,8 @@ struct map_stats
   /*! \brief Power result. */
   double power{ 0 };
 
+  /*! \brief Runtime for dont cares. */
+  stopwatch<>::duration time_dont_cares{ 0 };
   /*! \brief Runtime for covering. */
   stopwatch<>::duration time_mapping{ 0 };
   /*! \brief Total runtime. */
@@ -145,6 +147,7 @@ struct map_stats
       std::cout << fmt::format( " Power = {:>5.2f};\n", power );
     else
       std::cout << "\n";
+    std::cout << fmt::format( "[i] DC runtime      = {:>5.2f} secs\n", to_seconds( time_dont_cares ) );
     std::cout << fmt::format( "[i] Mapping runtime = {:>5.2f} secs\n", to_seconds( time_mapping ) );
     std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
@@ -1865,6 +1868,7 @@ private:
 
         if ( ps.use_dont_cares )
         {
+          stopwatch t( st.time_dont_cares );
           std::vector<node<Ntk>> pivots( NInputs, 0u );
           auto k = 0u;
           for ( auto const& l : *cut )
@@ -1874,7 +1878,7 @@ private:
           auto dc_set = satisfiability_dont_cares( ntk, pivots, 16u );
           const auto dc = kitty::extend_to<NInputs>( dc_set );
 
-          dc_npn = create_from_npn_config2( std::make_tuple( dc, neg & ~( 1 << NInputs ), perm ) );
+          dc_npn = apply_npn_transformation( dc, neg & ~( 1 << NInputs ), perm );
         }
 
         auto const supergates_npn = ( ps.use_dont_cares ) ? library.get_supergates( tt_npn, dc_npn, neg, perm ) : library.get_supergates( tt_npn );

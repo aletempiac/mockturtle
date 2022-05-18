@@ -36,6 +36,7 @@
 #include <mockturtle/networks/mig.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/depth_view.hpp>
+#include <mockturtle/views/fanout_view.hpp>
 
 #include <experiments.hpp>
 
@@ -48,7 +49,7 @@ int main()
       "mapper_dc", "benchmark", "size", "size_mig", "size_mig_dc", "depth", "depth_mig", "depth_mig_dc", "runtime1", "runtime2", "equivalent1", "equivalent2" );
 
   /* library to map to MIGs */
-  mig_npn_resynthesis resyn{false};
+  mig_npn_resynthesis resyn{true};
   exact_library_params eps;
   eps.use_dont_cares = true;
   exact_library<mig_network, mig_npn_resynthesis> exact_lib( resyn, eps );
@@ -81,7 +82,8 @@ int main()
     map_stats st2;
     ps.use_dont_cares = true;
     ps.verbose = true;
-    mig_network res2 = map( mig, exact_lib, ps, &st2 );
+    fanout_view f_mig{mig};
+    mig_network res2 = map( f_mig, exact_lib, ps, &st2 );
 
     const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
     const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );

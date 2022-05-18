@@ -71,7 +71,7 @@ int main()
     auto [tt_npn, neg, perm] = exact_npn_canonization( tt );
 
     /* permute the DC */
-    auto dc_npn = create_from_npn_config2( std::make_tuple( dc, neg & ~( 1 << NInputs ), perm ) );
+    auto dc_npn = apply_npn_transformation( dc, neg & ~( 1 << NInputs ), perm );
 
     auto dc_test = create_from_npn_config( std::make_tuple( dc_npn, neg & ~( 1 << NInputs ), perm ) );
     std::cout << "DC_test: "; print_hex( dc_test ); std::cout << "\n";
