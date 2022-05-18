@@ -42,12 +42,16 @@
 #include "../utils/stopwatch.hpp"
 #include "../utils/tech_library.hpp"
 #include "../views/binding_view.hpp"
+#include "../views/color_view.hpp"
 #include "../views/depth_view.hpp"
 #include "../views/topo_view.hpp"
+#include "../views/window_view.hpp"
 #include "cleanup.hpp"
 #include "cut_enumeration.hpp"
 #include "cut_enumeration/exact_map_cut.hpp"
 #include "cut_enumeration/tech_map_cut.hpp"
+#include "reconv_cut.hpp"
+#include "simulation.hpp"
 #include "detail/mffc_utils.hpp"
 #include "detail/switching_activity.hpp"
 #include "dont_cares.hpp"
@@ -1875,7 +1879,7 @@ private:
           {
             pivots[k++] = ( ntk.index_to_node( l ) );
           }
-          auto dc_set = satisfiability_dont_cares( ntk, pivots, 16u );
+          auto dc_set = satisfiability_dont_cares( ntk, pivots, 8u );
           const auto dc = kitty::extend_to<NInputs>( dc_set );
 
           dc_npn = apply_npn_transformation( dc, neg & ~( 1 << NInputs ), perm );
@@ -3024,6 +3028,28 @@ private:
       ++ctr;
     }
     return count;
+  }
+
+  void compute_dont_care_window( node<Ntk> const& n, uint64_t max_tfi_inputs = 16u )
+  {
+    reconvergence_driven_cut_parameters ps;
+    ps.max_leaves = max_tfi_inputs;
+    reconvergence_driven_cut_statistics st;
+
+    detail::reconvergence_driven_cut_impl<Ntk, false, false> cuts( ntk, ps, st );
+    auto const extended_leaves = cuts.run( { n } ).first;
+
+    fanout_view<Ntk> fanout_ntk{ntk};
+    fanout_ntk.clear_visited();
+    color_view<Ntk> color_ntk{fanout_ntk};
+
+    std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, { n } )};
+    window_view window_ntk{color_ntk, extended_leaves, { n }, gates};
+
+    /* check containment of cuts leaves in the window (extended leaves) */
+
+    /* if contained, compute the SDC else standard boolean matching */
+    /* TODO: expand the window so that all the cuts are contained (use the volume?) */
   }
 
   template<bool DO_AREA>

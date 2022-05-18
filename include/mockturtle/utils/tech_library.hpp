@@ -34,7 +34,9 @@
 
 #include <cassert>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+#include <algorithm>
 
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
@@ -619,7 +621,7 @@ private:
 template<typename Ntk, unsigned NInputs>
 struct exact_supergate
 {
-  signal<Ntk> const root;
+  signal<Ntk> root;
 
   /* number of inputs of the supergate */
   uint8_t n_inputs{ 0 };
@@ -649,7 +651,7 @@ struct exact_library_params
   float delay_inverter{ 0.0f };
 
   /* classify in NP instead of NPN */
-  bool np_classification{ true };
+  bool np_classification{ false };
   /* Use don't care matching */
   bool use_dont_cares{ false };
   /* verbose */
@@ -824,9 +826,19 @@ private:
       kitty::dynamic_truth_table function = kitty::extend_to( entry, NInputs );
       _rewriting_fn( _database, function, pis.begin(), pis.end(), add_supergate );
       if ( supergates_pos.size() > 0 )
+      {
+        std::sort( supergates_pos.begin(), supergates_pos.end(), [&]( auto const& a, auto const& b ) {
+         return a.area < b.area;
+        } );
         _super_lib.insert( { entry, supergates_pos } );
+      }
       if ( _ps.np_classification && supergates_neg.size() > 0 )
+      {
+        std::sort( supergates_neg.begin(), supergates_neg.end(), [&]( auto const& a, auto const& b ) {
+          return a.area < b.area;
+        } );
         _super_lib.insert( { not_entry, supergates_neg } );
+      }
     }
 
     if ( _ps.use_dont_cares )
