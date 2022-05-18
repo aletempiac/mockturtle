@@ -1871,7 +1871,7 @@ private:
           {
             pivots[k++] = ( ntk.index_to_node( l ) );
           }
-          auto dc_set = satisfiability_dont_cares( ntk, pivots, 8u );
+          auto dc_set = satisfiability_dont_cares( ntk, pivots, 16u );
           const auto dc = kitty::extend_to<NInputs>( dc_set );
 
           dc_npn = create_from_npn_config2( std::make_tuple( dc, neg & ~( 1 << NInputs ), perm ) );
@@ -1882,14 +1882,15 @@ private:
 
         if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
-          uint8_t phase = ( neg >> NInputs ) & 1;
           cut_match_t<NtkDest, NInputs> match;
 
           if ( ps.use_dont_cares && supergates_npn == nullptr )
           {
             perm = perm_neg;
-            neg = neg_neg; 
+            neg = neg_neg;
           }
+
+          uint8_t phase = ( neg >> NInputs ) & 1;
 
           match.supergates[phase] = supergates_npn;
           match.supergates[phase ^ 1] = supergates_npn_neg;

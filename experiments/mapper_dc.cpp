@@ -53,9 +53,9 @@ int main()
   eps.use_dont_cares = true;
   exact_library<mig_network, mig_npn_resynthesis> exact_lib( resyn, eps );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
-    if ( benchmark != "c880" )
+    if ( benchmark == "hyp" )
       continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
@@ -70,8 +70,9 @@ int main()
 
     map_params ps;
     ps.skip_delay_round = true;
-    ps.use_dont_cares = true;
+    ps.use_dont_cares = false;
     ps.cut_enumeration_ps.minimize_truth_table = true;
+    ps.cut_enumeration_ps.cut_limit = 8u;
     ps.required_time = std::numeric_limits<double>::max();
     map_stats st1;
 

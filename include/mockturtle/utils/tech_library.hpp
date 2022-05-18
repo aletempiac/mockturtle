@@ -743,15 +743,14 @@ public:
         uint32_t dc_entry_phase = std::get<1>( dc_entry );
         auto const& dc_entry_perm = std::get<2>( dc_entry );
         std::vector<uint8_t> temp_perm( perm.size() );
-        uint32_t temp_phase = ( ( phase >> NInputs ) & 1 ) << NInputs;
-        // phase ^= dc_entry_phase;
+        uint32_t temp_phase = dc_entry_phase & ( 1 << NInputs );
         for ( auto i = 0u; i < NInputs; ++i )
         {
           temp_perm[dc_entry_perm[i]] = perm[i];
-          temp_phase |= ( ( phase >> i ) & 1 ) << dc_entry_perm[i];
+          temp_phase |= ( ( dc_entry_phase >> i ) & 1 ) << perm[i];
         }
+        phase ^= temp_phase;
         std::copy( temp_perm.begin(), temp_perm.end(), perm.begin() );
-        phase = temp_phase ^ dc_entry_phase;
         return std::get<0>( dc_entry );
       }
     }
@@ -939,9 +938,6 @@ private:
       auto const& tt_i = std::get<0>( *entry_i );
       auto const current_size = std::get<1>( *entry_i );
 
-      // if ( tt_i._bits != 855u )
-      //   continue;
-
       print_hex( tt_i );
 
       /* use a map to link the dont cares to the new size, NPN class, negations, and permutation vector */
@@ -962,8 +958,8 @@ private:
           const auto dc = tt_i ^ tt;
 
           /* limit the explosion of DC combinations to evaluate */
-          if ( kitty::count_ones( dc ) > 1 )
-            return;
+          // if ( kitty::count_ones( dc ) > 3 )
+          //   return;
 
           ++total_exploration;
 
@@ -998,8 +994,15 @@ private:
             }
           }
 
+          /* permute phase */
+          uint32_t phase_perm = phase & ( 1 << NInputs );
+          for ( auto i = 0u; i < NInputs; ++i )
+          {
+            phase_perm |= ( ( phase >> perm[i] ) & 1 ) << i;
+          }
+
           /* insert in the dc_sets */
-          dc_sets[dc] = std::make_tuple( size, tt_j, phase, perm );
+          dc_sets[dc] = std::make_tuple( size, tt_j, phase_perm, perm );
         } );
       }
 

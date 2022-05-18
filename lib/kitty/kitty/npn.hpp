@@ -1045,7 +1045,12 @@ TT create_from_npn_config2( const std::tuple<TT, uint32_t, std::vector<uint8_t>>
 
   const auto& from = std::get<0>( config );
   const auto& phase = std::get<1>( config );
-  auto perm = std::get<2>( config );
+  const auto& perm_v = std::get<2>( config );
+
+  std::vector<uint8_t> perm( perm_v.size() );
+  for ( auto i = 0; i < perm_v.size(); ++i )
+    perm[perm_v[i]] = i;
+
   const auto num_vars = from.num_vars();
 
   /* is output complemented? */
@@ -1068,8 +1073,14 @@ TT create_from_npn_config2( const std::tuple<TT, uint32_t, std::vector<uint8_t>>
       continue;
     }
 
-    swap_inplace( res, perm[i], perm[perm[i]] );
-    std::swap( perm[i], perm[perm[i]] );
+    int k = i;
+    while ( perm[k] != i )
+    {
+      ++k;
+    }
+
+    swap_inplace( res, i, k );
+    std::swap( perm[i], perm[k] );
   }
 
   return res;
