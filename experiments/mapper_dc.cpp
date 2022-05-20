@@ -73,7 +73,7 @@ int main()
     ps.skip_delay_round = true;
     ps.use_dont_cares = false;
     ps.cut_enumeration_ps.minimize_truth_table = true;
-    ps.cut_enumeration_ps.cut_limit = 8u;
+    // ps.cut_enumeration_ps.cut_limit = 25u;
     ps.required_time = std::numeric_limits<double>::max();
     map_stats st1;
 
@@ -82,8 +82,7 @@ int main()
     map_stats st2;
     ps.use_dont_cares = true;
     ps.verbose = true;
-    fanout_view f_mig{mig};
-    mig_network res2 = map( f_mig, exact_lib, ps, &st2 );
+    mig_network res2 = map( mig, exact_lib, ps, &st2 );
 
     const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
     const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );

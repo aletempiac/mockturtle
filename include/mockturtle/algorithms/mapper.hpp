@@ -1756,7 +1756,10 @@ public:
     } );
 
     /* match cuts with gates */
-    compute_matches();
+    if ( ps.use_dont_cares )
+      compute_matches_dc();
+    else
+      compute_matches();
 
     /* init the data structure */
     init_nodes();
@@ -1865,34 +1868,147 @@ private:
         const auto fe = kitty::shrink_to<NInputs>( tt );
 
         auto [tt_npn, neg, perm] = kitty::exact_npn_canonization( fe );
-        auto perm_neg = perm;
-        auto neg_neg = neg;
 
-        kitty::static_truth_table<NInputs> dc_npn;
-
-        if ( ps.use_dont_cares )
-        {
-          stopwatch t( st.time_dont_cares );
-          std::vector<node<Ntk>> pivots( NInputs, 0u );
-          auto k = 0u;
-          for ( auto const& l : *cut )
-          {
-            pivots[k++] = ( ntk.index_to_node( l ) );
-          }
-          auto dc_set = satisfiability_dont_cares( ntk, pivots, 8u );
-          const auto dc = kitty::extend_to<NInputs>( dc_set );
-
-          dc_npn = apply_npn_transformation( dc, neg & ~( 1 << NInputs ), perm );
-        }
-
-        auto const supergates_npn = ( ps.use_dont_cares ) ? library.get_supergates( tt_npn, dc_npn, neg, perm ) : library.get_supergates( tt_npn );
-        auto const supergates_npn_neg = ( ps.use_dont_cares ) ? library.get_supergates( ~tt_npn, dc_npn, neg_neg, perm_neg ) : library.get_supergates( ~tt_npn );
+        auto const supergates_npn = library.get_supergates( tt_npn );
+        auto const supergates_npn_neg = library.get_supergates( ~tt_npn );
 
         if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
           cut_match_t<NtkDest, NInputs> match;
 
-          if ( ps.use_dont_cares && supergates_npn == nullptr )
+          uint8_t phase = ( neg >> NInputs ) & 1;
+
+          match.supergates[phase] = supergates_npn;
+          match.supergates[phase ^ 1] = supergates_npn_neg;
+
+          /* store permutations and negations */
+          match.negation = 0;
+          for ( auto j = 0u; j < perm.size() && j < NInputs; ++j )
+          {
+            match.permutation[perm[j]] = j;
+            match.negation |= ( ( neg >> perm[j] ) & 1 ) << j;
+          }
+          node_matches.push_back( match );
+          ( *cut )->data.match_index = i++;
+        }
+        else
+        {
+          /* Ignore not matched cuts */
+          ( *cut )->data.ignore = true;
+        }
+      }
+
+      matches[index] = node_matches;
+    } );
+  }
+
+  void compute_matches_dc()
+  {
+    reconvergence_driven_cut_parameters ps;
+    ps.max_leaves = 12u;
+    reconvergence_driven_cut_statistics st;
+    detail::reconvergence_driven_cut_impl<Ntk, false, false> reconv_cuts( ntk, ps, st );
+
+    fanout_view<Ntk> fanout_ntk{ntk};
+    color_view<Ntk> color_ntk{fanout_ntk};
+
+    /* match gates */
+    ntk.foreach_gate( [&]( auto const& n ) {
+      const auto index = ntk.node_to_index( n );
+
+      std::vector<cut_match_t<NtkDest, NInputs>> node_matches;
+
+      fanout_ntk.clear_visited();
+
+      auto const extended_leaves = reconv_cuts.run( { n } ).first;
+
+      std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, {n} )};
+      window_view window_ntk{color_ntk, extended_leaves, {n}, gates};
+
+      // std::cout << gates.size() << "\n";
+
+      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
+      const auto tts = simulate_nodes<kitty::dynamic_truth_table>( window_ntk, sim );
+
+      auto i = 0u;
+      for ( auto& cut : cuts.cuts( index ) )
+      {
+        /* ignore unit cut */
+        if ( cut->size() == 1 && *cut->begin() == index )
+        {
+          ( *cut )->data.ignore = true;
+          continue;
+        }
+
+        if ( cut->size() > NInputs )
+        {
+          /* Ignore cuts too big to be mapped using the library */
+          ( *cut )->data.ignore = true;
+          continue;
+        }
+
+        /* match the cut using canonization and get the gates */
+        const auto tt = cuts.truth_table( *cut );
+        const auto fe = kitty::shrink_to<NInputs>( tt );
+
+        auto [tt_npn, neg, perm] = kitty::exact_npn_canonization( fe );
+        auto perm_neg = perm;
+        auto neg_neg = neg;
+
+        // stopwatch t( st.time_dont_cares );
+        /* dont cares computation */
+        kitty::dynamic_truth_table care( static_cast<uint32_t>( cut->size() ) );
+
+        bool containment = true;
+        for ( auto const& l : *cut )
+        {
+          if ( color_ntk.color( ntk.index_to_node( l ) ) != color_ntk.current_color() )
+          {
+            containment = false;
+            break;
+          }
+        }
+
+        if ( containment )
+        {
+          /* compute care set */
+          for ( auto i = 0u; i < ( 1u << window_ntk.num_pis() ); ++i )
+          {
+            uint32_t entry{0u};
+            auto j = 0u;
+            for ( auto const& l : *cut )
+            {
+              entry |= kitty::get_bit( tts[l], i ) << j;
+              ++j;
+            }
+            kitty::set_bit( care, entry );
+          }
+        }
+        else
+        {
+          /* completely specified */
+          care = ~care;
+        }
+
+        // std::vector<node<Ntk>> pivots( NInputs, 0u );
+        // auto k = 0u;
+        // for ( auto const& l : *cut )
+        // {
+        //   pivots[k++] = ( ntk.index_to_node( l ) );
+        // }
+        // auto dc_set = satisfiability_dont_cares( fanout_ntk, pivots, 8u );
+        const auto dc = kitty::extend_to<NInputs>( ~care );
+
+        auto const dc_npn = apply_npn_transformation( dc, neg & ~( 1 << NInputs ), perm );
+
+        auto const supergates_npn = library.get_supergates( tt_npn, dc_npn, neg, perm );
+        auto const supergates_npn_neg = library.get_supergates( ~tt_npn, dc_npn, neg_neg, perm_neg );
+
+        if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
+        {
+          cut_match_t<NtkDest, NInputs> match;
+
+          if ( supergates_npn == nullptr )
           {
             perm = perm_neg;
             neg = neg_neg;
@@ -3032,19 +3148,6 @@ private:
 
   void compute_dont_care_window( node<Ntk> const& n, uint64_t max_tfi_inputs = 16u )
   {
-    reconvergence_driven_cut_parameters ps;
-    ps.max_leaves = max_tfi_inputs;
-    reconvergence_driven_cut_statistics st;
-
-    detail::reconvergence_driven_cut_impl<Ntk, false, false> cuts( ntk, ps, st );
-    auto const extended_leaves = cuts.run( { n } ).first;
-
-    fanout_view<Ntk> fanout_ntk{ntk};
-    fanout_ntk.clear_visited();
-    color_view<Ntk> color_ntk{fanout_ntk};
-
-    std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, { n } )};
-    window_view window_ntk{color_ntk, extended_leaves, { n }, gates};
 
     /* check containment of cuts leaves in the window (extended leaves) */
 
