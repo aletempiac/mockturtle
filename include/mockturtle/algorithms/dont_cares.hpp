@@ -77,8 +77,7 @@ kitty::dynamic_truth_table satisfiability_dont_cares( Ntk const& ntk, std::vecto
   auto const extended_leaves = cuts.run( leaves ).first;
 
   fanout_view<Ntk> fanout_ntk{ntk};
-  fanout_ntk.clear_visited();
-  color_view<Ntk> color_ntk{fanout_ntk};
+    color_view<Ntk> color_ntk{fanout_ntk};
 
   std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, leaves )};
   window_view window_ntk{color_ntk, extended_leaves, leaves, gates};
@@ -88,6 +87,40 @@ kitty::dynamic_truth_table satisfiability_dont_cares( Ntk const& ntk, std::vecto
 
   /* first create care and then invert */
   kitty::dynamic_truth_table care( static_cast<uint32_t>( leaves.size() ) );
+  for ( auto i = 0u; i < ( 1u << window_ntk.num_pis() ); ++i )
+  {
+    uint32_t entry{0u};
+    for ( auto j = 0u; j < leaves.size(); ++j )
+    {
+      entry |= kitty::get_bit( tts[leaves[j]], i ) << j;
+    }
+    kitty::set_bit( care, entry );
+  }
+  return ~care;
+}
+
+template<class Ntk, unsigned NumVars>
+kitty::static_truth_table<NumVars> satisfiability_dont_cares( Ntk const& ntk, std::vector<node<Ntk>> const& leaves, uint64_t max_tfi_inputs = 16u )
+{
+  reconvergence_driven_cut_parameters ps;
+  ps.max_leaves = max_tfi_inputs;
+  reconvergence_driven_cut_statistics st;
+
+  detail::reconvergence_driven_cut_impl<Ntk, false, false> cuts( ntk, ps, st ) ;
+  auto const extended_leaves = cuts.run( leaves ).first;
+
+  fanout_view<Ntk> fanout_ntk{ntk};
+  // fanout_ntk.clear_visited();
+  color_view<Ntk> color_ntk{fanout_ntk};
+
+  std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, leaves )};
+  window_view window_ntk{color_ntk, extended_leaves, leaves, gates};
+
+  default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
+  const auto tts = simulate_nodes<kitty::dynamic_truth_table>( window_ntk, sim );
+
+  /* first create care and then invert */
+  kitty::static_truth_table<NumVars> care;
   for ( auto i = 0u; i < ( 1u << window_ntk.num_pis() ); ++i )
   {
     uint32_t entry{0u};
