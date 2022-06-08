@@ -77,7 +77,7 @@ kitty::dynamic_truth_table satisfiability_dont_cares( Ntk const& ntk, std::vecto
   auto const extended_leaves = cuts.run( leaves ).first;
 
   fanout_view<Ntk> fanout_ntk{ntk};
-    color_view<Ntk> color_ntk{fanout_ntk};
+  color_view<Ntk> color_ntk{fanout_ntk};
 
   std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, leaves )};
   window_view window_ntk{color_ntk, extended_leaves, leaves, gates};
@@ -110,7 +110,6 @@ kitty::static_truth_table<NumVars> satisfiability_dont_cares( Ntk const& ntk, st
   auto const extended_leaves = cuts.run( leaves ).first;
 
   fanout_view<Ntk> fanout_ntk{ntk};
-  // fanout_ntk.clear_visited();
   color_view<Ntk> color_ntk{fanout_ntk};
 
   std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, leaves )};

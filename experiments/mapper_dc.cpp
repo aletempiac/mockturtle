@@ -29,11 +29,14 @@
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
 #include <mockturtle/algorithms/mapper.hpp>
+#include <mockturtle/algorithms/functional_reduction.hpp>
 #include <mockturtle/algorithms/node_resynthesis.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/node_resynthesis/mig_npn.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/mig.hpp>
+#include <mockturtle/networks/xag.hpp>
+#include <mockturtle/networks/aig.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/depth_view.hpp>
 #include <mockturtle/views/fanout_view.hpp>
@@ -48,15 +51,17 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float, float, bool, bool> exp(
       "mapper_dc", "benchmark", "size", "size_mig", "size_mig_dc", "depth", "depth_mig", "depth_mig_dc", "runtime1", "runtime2", "equivalent1", "equivalent2" );
 
-  /* library to map to MIGs */
+  /* library to map to migs */
+  // xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> resyn;
   mig_npn_resynthesis resyn{true};
   exact_library_params eps;
+  eps.np_classification = true;
   eps.use_dont_cares = true;
-  exact_library<mig_network, mig_npn_resynthesis> exact_lib( resyn, eps );
+  exact_library<mig_network, decltype( resyn )> exact_lib( resyn, eps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
-    if ( benchmark == "hyp" )
+    if ( benchmark == "leon2" || benchmark == "leon3_opt" || benchmark == "leon3" || benchmark == "leon3mp" )
       continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
@@ -66,6 +71,9 @@ int main()
       continue;
     }
 
+    functional_reduction( mig );
+    mig = cleanup_dangling( mig );
+
     const uint32_t size_before = mig.num_gates();
     const uint32_t depth_before = depth_view( mig ).depth();
 
@@ -73,19 +81,48 @@ int main()
     ps.skip_delay_round = true;
     ps.use_dont_cares = false;
     ps.cut_enumeration_ps.minimize_truth_table = true;
-    // ps.cut_enumeration_ps.cut_limit = 25u;
+    ps.cut_enumeration_ps.cut_limit = 8u;
+    ps.enable_logic_sharing = true;
+    ps.logic_sharing_cut_limit = 1;
     ps.required_time = std::numeric_limits<double>::max();
     map_stats st1;
 
-    mig_network res1 = map( mig, exact_lib, ps, &st1 );
+    mig_network res1 = cleanup_dangling( mig );
+    mig_network res2 = cleanup_dangling( mig );
+
+    auto i = 10;
+    while ( i-- > 0 )
+    {
+      const uint32_t size_before_map = res1.size();
+      mig_network res1_map = map( res1, exact_lib, ps, &st1 );
+
+      if ( res1_map.size() >= size_before_map )
+        break;
+
+      res1 = res1_map;
+    }
 
     map_stats st2;
     ps.use_dont_cares = true;
-    ps.verbose = true;
-    mig_network res2 = map( mig, exact_lib, ps, &st2 );
+    ps.window_size = 12u;
+    ps.verbose = false;
 
-    const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
+    i = 10;
+    while ( i-- > 0 )
+    {
+      const uint32_t size_before_map = res2.size();
+      mig_network res2_map = map( res2, exact_lib, ps, &st2 );
+
+      if ( res2_map.size() >= size_before_map )
+        break;
+
+      res2 = res2_map;
+    }
+
+    // const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
     const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
+    const auto cec1 = true;
+    // const auto cec2 = true;
 
     const uint32_t depth_mig1 = depth_view( res1 ).depth();
     const uint32_t depth_mig2 = depth_view( res2 ).depth();
