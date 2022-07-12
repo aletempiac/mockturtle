@@ -72,3 +72,5 @@ Resynthesis functions
 .. doxygenclass:: mockturtle::akers_resynthesis
 
 .. doxygenclass:: mockturtle::bidecomposition_resynthesis
+
+.. doxygenclass:: mockturtle::sop_factoring
