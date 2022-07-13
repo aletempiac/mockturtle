@@ -41,6 +41,7 @@
 #include <kitty/operators.hpp>
 #include <kitty/isop.hpp>
 
+#include "../../utils/sop_utils.hpp"
 #include "../../utils/stopwatch.hpp"
 
 namespace mockturtle
@@ -114,15 +115,6 @@ public:
     signal f = gen_factor_rec( dest, {begin, end}, sop, 2 * function.num_vars() );
 
     fn( negated ? !f : f );
-
-    // auto [and_terms, num_and_gates] = create_function( dest, function, inputs );
-    // const auto num_gates = num_and_gates + ( and_terms.empty() ? 0u : static_cast<uint32_t>( and_terms.size() ) - 1u );
-    // const auto cand = balanced_tree( dest, and_terms, false );
-
-    // if ( cand.level < best_level || ( cand.level == best_level && num_gates < best_cost ) )
-    // {
-    //   callback( cand, num_gates );
-    // }
   }
 
   template<typename LeavesIterator, typename Fn>
@@ -154,15 +146,6 @@ public:
     signal f = gen_factor_rec( dest, {begin, end}, sop, 2 * function.num_vars() );
 
     fn( negated ? !f : f );
-
-    // auto [and_terms, num_and_gates] = create_function( dest, function, inputs );
-    // const auto num_gates = num_and_gates + ( and_terms.empty() ? 0u : static_cast<uint32_t>( and_terms.size() ) - 1u );
-    // const auto cand = balanced_tree( dest, and_terms, false );
-
-    // if ( cand.level < best_level || ( cand.level == best_level && num_gates < best_cost ) )
-    // {
-    //   callback( cand, num_gates );
-    // }
   }
 
 private:
@@ -201,12 +184,12 @@ private:
   std::vector<kitty::cube> get_isop_dc( kitty::dynamic_truth_table const& function, kitty::dynamic_truth_table const& dc, bool& negated ) const
   {
     std::vector<kitty::cube> cubes;
-    kitty::detail::isop_rec( function, function | dc, function.num_vars(), cubes );
+    kitty::detail::isop_rec( function & ~dc, function | dc, function.num_vars(), cubes );
 
     if ( _ps.try_both_polarities )
     {
       std::vector<kitty::cube> n_cubes;
-      kitty::detail::isop_rec( ~function, ~function | dc, function.num_vars(), n_cubes );
+      kitty::detail::isop_rec( ~function & ~dc, ~function | dc, function.num_vars(), n_cubes );
 
       if ( n_cubes.size() < cubes.size() )
       {
@@ -232,27 +215,6 @@ private:
     return cubes;
   }
 
-  sop_t cubes_to_sop( std::vector<kitty::cube> const& cubes, uint32_t const num_vars ) const
-  {
-    sop_t sop( cubes.size() );
-
-    auto it = sop.begin();
-    /* represent literals instead of variables ex. a a' b b' */
-    /* bit 63 is reserved, up to 31 varibles are supported */
-    for ( auto const& c : cubes )
-    {
-      uint64_t& product = *it++;
-      for ( auto i = 0; i < num_vars; ++i )
-      {
-        if ( c.get_mask( i ) )
-          product |= static_cast<uint64_t>( 1 ) << ( 2*i + static_cast<unsigned>( c.get_bit( i ) ) );
-      }
-    }
-
-    /* TODO: separating positive and negative literals instead of interleaving has better construction performance */
-    return sop;
-  }
-
 #pragma region SOP factoring
   signal gen_factor_rec( Ntk& ntk, std::vector<signal> const& children, sop_t& sop, uint32_t const num_lit ) const
   {
@@ -261,14 +223,14 @@ private:
     assert( sop.size() );
 
     /* compute the divisor */
-    if ( !quick_divisor( sop, divisor, num_lit ) )
+    if ( !sop_good_divisor( sop, divisor, num_lit ) )
     {
       /* generate trivial sop circuit */
       return gen_andor_circuit_rec( ntk, children, sop.begin(), sop.end(), num_lit );
     }
 
     /* divide the SOP by the divisor */
-    divide( sop, divisor, quotient, reminder );
+    sop_divide( sop, divisor, quotient, reminder );
 
     assert( quotient.size() > 0 );
 
@@ -277,12 +239,12 @@ private:
       return lit_factor_rec( ntk, children, sop, quotient[0], num_lit );
     }
 
-    make_cube_free( quotient );
+    sop_make_cube_free( quotient );
 
     /* divide the SOP by the quotient */
-    divide( sop, quotient, divisor, reminder );
+    sop_divide( sop, quotient, divisor, reminder );
 
-    if ( is_cube_free( divisor ) )
+    if ( sop_is_cube_free( divisor ) )
     {
       signal div_s = gen_factor_rec( ntk, children, divisor, num_lit );
       signal quot_s = gen_factor_rec( ntk, children, quotient, num_lit );
@@ -314,12 +276,12 @@ private:
     sop_t divisor, quotient, reminder;
 
     /* extract the best literal */
-    best_literal( sop, divisor, c_sop, num_lit );
+    detail::sop_best_literal( sop, divisor, c_sop, num_lit );
 
     /* divide SOP by the literal */
-    divide_by_cube( sop, divisor, quotient, reminder );
+    sop_divide_by_cube( sop, divisor, quotient, reminder );
 
-    /* factor the divisor: cube */
+    /* create the divisor: cube */
     signal div_s = gen_and_circuit_rec( ntk, children, divisor[0], 0, num_lit );
 
     /* factor the quotient */
@@ -337,285 +299,6 @@ private:
     
     return dq_and;
   }
-
-  bool quick_divisor( sop_t const& sop, sop_t& res, uint32_t const num_lit ) const
-  {
-    if ( sop.size() <= 1 )
-      return false;
-
-    /* each literal appears no more than once */
-    if ( literals_occurrences( sop, num_lit ) < 0 )
-      return false;
-
-    /* one level 0-kernel */
-    res = sop;
-    one_level_zero_kernel_rec( res, num_lit );
-
-    assert( res.size() );
-    return true;
-  }
-
-  void divide( sop_t& divident, sop_t const& divisor, sop_t& quotient, sop_t& reminder ) const
-  {
-    /* divisor contains a single cube */
-    if ( divisor.size() == 1 )
-    {
-      divide_by_cube( divident, divisor, quotient, reminder );
-      return;
-    }
-
-    quotient.clear();
-    reminder.clear();
-
-    /* perform division */
-    for ( auto i = 0; i < divident.size(); ++i )
-    {
-      auto const c = divident[i];
-
-      /* cube has been already covered */
-      if ( cube_has_lit( c, 63 ) )
-        continue;
-
-      uint32_t div_i;
-      for ( div_i = 0u; div_i < divisor.size(); ++div_i )
-      {
-        if ( ( c & divisor[div_i] ) == divisor[div_i] )
-          break;
-      }
-
-      /* cube is not divisible -> reminder */
-      if ( div_i >= divisor.size() )
-        continue;
-
-      /* extract quotient */
-      uint64_t c_quotient = c & ~divisor[div_i];
-
-      /* find if c_quotient can be obtained for all the divisors */
-      bool found = true;
-      for ( auto const& div : divisor )
-      {
-        if ( div == divisor[div_i] )
-          continue;
-
-        found = false;
-        for ( auto const& c2 : divident )
-        {
-          /* cube has been already covered */
-          if ( cube_has_lit( c2, 63 ) )
-            continue;
-
-          if ( ( ( c2 & div ) == div ) && ( c_quotient == ( c2 & ~div ) ) )
-          {
-            found = true;
-            break;
-          }
-        }
-
-        if ( !found )
-          break;
-      }
-
-      if ( !found )
-        continue;
-      
-      /* valid divisor, select covered cubes */
-      quotient.push_back( c_quotient );
-
-      divident[i] |= static_cast<uint64_t>( 1 ) << 63;
-      for ( auto const& div : divisor )
-      {
-        if ( div == divisor[div_i] )
-          continue;
-
-        for ( auto& c2 : divident )
-        {
-          /* cube has been already covered */
-          if ( cube_has_lit( c2, 63 ) )
-            continue;
-
-          if ( ( ( c2 & div ) == div ) && ( c_quotient == ( c2 & ~div ) ) )
-          {
-            c2 |= static_cast<uint64_t>( 1 ) << 63;
-            break;
-          }
-        }
-      }
-    }
-
-    /* add remainder */
-    for ( auto& c : divident )
-    {
-      if ( !cube_has_lit( c, 63 ) )
-      {
-        reminder.push_back( c );
-      }
-      else
-      {
-        /* unmark */
-        c &= ~( static_cast<uint64_t>( 1 ) << 63 );
-      }
-    }
-  }
-
-  int64_t literals_occurrences( sop_t const& sop, uint32_t const num_lit ) const
-  {
-    /* find the first literal which occurs more than once */
-    for ( uint64_t lit = 0; lit < num_lit; ++lit )
-    {
-      unsigned occurrences = 0;
-      for ( auto const& cube : sop )
-      {
-        if ( cube_has_lit( cube, lit ) )
-          ++occurrences;
-
-        if ( occurrences > 1 )
-          return lit;
-      }
-    }
-
-    /* each literal appears once */
-    return -1;
-  }
-
-  void one_level_zero_kernel_rec( sop_t& sop, uint32_t const num_lit ) const
-  {
-    /* find least occurring leteral which occurs more than once. TODO: test other metrics */
-    int64_t min_lit = least_occurrent_literal( sop, num_lit );
-
-    if ( min_lit == -1 )
-      return;
-    
-    divide_by_literal( sop, static_cast<uint64_t>( min_lit ) );
-    make_cube_free( sop );
-
-    one_level_zero_kernel_rec( sop, num_lit );
-  }
-
-  int64_t least_occurrent_literal( sop_t const& sop, uint32_t const num_lit ) const
-  {
-    int64_t min_lit = -1;
-    uint32_t min_occurrences = UINT32_MAX;
-
-    /* find the first literal which occurs more than once */
-    for ( uint64_t lit = 0; lit < num_lit; ++lit )
-    {
-      uint32_t occurrences = 0;
-      for ( auto const& cube : sop )
-      {
-        if ( cube_has_lit( cube, lit ) )
-          ++occurrences;
-      }
-
-      if ( occurrences > 1 && occurrences < min_occurrences )
-      {
-        min_lit = static_cast<int64_t>( lit );
-        min_occurrences = occurrences;
-      }
-    }
-
-    return min_lit;
-  }
-
-  int64_t most_occurrent_literal_masked( sop_t const& sop, uint64_t const cube, uint32_t const num_lit ) const
-  {
-    int64_t max_lit = -1;
-    uint32_t max_occurrences = 1;
-
-    for ( uint64_t lit = 0; lit < num_lit; ++lit )
-    {
-      if ( !cube_has_lit( cube, lit ) )
-        continue;
-
-      uint32_t occurrences = 0;
-      for ( auto const& c : sop )
-      {
-        if ( cube_has_lit( c, lit ) )
-          ++occurrences;
-      }
-
-      if ( occurrences > max_occurrences )
-      {
-        max_lit = static_cast<int64_t>( lit );
-        max_occurrences = occurrences;
-      }
-    }
-
-    return max_lit;
-  }
-
-  void best_literal( sop_t const& sop, sop_t& result, uint64_t const cube, uint32_t const num_lit ) const
-  {
-    int64_t max_lit = most_occurrent_literal_masked( sop, cube, num_lit );
-    assert( max_lit >= 0 );
-
-    result.push_back( static_cast<uint64_t>( 1 ) << max_lit );
-  }
-
-  void divide_by_literal( sop_t& sop, uint64_t const lit ) const
-  {
-    uint32_t p = 0;
-    for ( auto i = 0; i < sop.size(); ++i )
-    {
-      if ( cube_has_lit( sop[i], lit ) )
-      {
-        sop[p++] = sop[i] & ( ~( static_cast<uint64_t>( 1 ) << lit ) );
-      }
-    }
-
-    sop.resize( p );
-  }
-
-  void divide_by_cube( sop_t const& divident, sop_t const& divisor, sop_t& quotient, sop_t& reminder ) const
-  {
-    assert( divisor.size() == 1 );
-
-    quotient.clear();
-    reminder.clear();
-
-    uint32_t p = 0;
-    for ( auto const& c : divident )
-    {
-      if ( ( c & divisor[0] ) > 0 )
-      {
-        quotient.push_back( c & ( ~divisor[0] ) );
-      }
-      else
-      {
-        reminder.push_back( c );
-      }
-    }
-  }
-
-  void make_cube_free( sop_t& sop ) const
-  {
-    /* find common cube */
-    uint64_t mask = UINT64_MAX;
-    for ( auto const& c : sop )
-    {
-      mask &= c;
-    }
-
-    if ( mask == 0 )
-      return;
-    
-    /* make cube free */
-    for ( auto& c : sop )
-    {
-      c &= ~mask;
-    }
-  }
-
-  bool is_cube_free( sop_t const& sop ) const
-  {
-    /* find common cube */
-    uint64_t mask = UINT64_MAX;
-    for ( auto const& c : sop )
-    {
-      mask &= c;
-    }
-
-    return mask == 0;
-  }
 #pragma endregion
 
 #pragma region Circuit generation from SOP
@@ -627,7 +310,7 @@ private:
     uint32_t i;
     for ( i = begin; i < end; ++i )
     {
-      if ( cube_has_lit( cube, i ) )
+      if ( detail::cube_has_lit( cube, i ) )
       {
         ++num_lit;
         lit = i;
@@ -649,7 +332,7 @@ private:
     uint32_t count_lit = 0;
     for ( i = begin; i < end; ++i )
     {
-      if ( cube_has_lit( cube, i ) )
+      if ( detail::cube_has_lit( cube, i ) )
       {
         if ( count_lit >= num_lit / 2 )
           break;
@@ -681,77 +364,8 @@ private:
   }
 #pragma endregion
 
-//   std::pair<arrival_time_queue<Ntk>, uint32_t> create_function( Ntk& dest, kitty::dynamic_truth_table const& func, std::vector<arrival_time_pair<Ntk>> const& arrival_times ) const
-//   {
-//     const auto sop = create_sop_form( func );
-
-//     stopwatch<> t_tree( time_tree_balancing );
-//     arrival_time_queue<Ntk> and_terms;
-//     uint32_t num_and_gates{};
-//     for ( auto const& cube : sop )
-//     {
-//       arrival_time_queue<Ntk> product_queue;
-//       for ( auto i = 0u; i < func.num_vars(); ++i )
-//       {
-//         if ( cube.get_mask( i ) )
-//         {
-//           const auto [f, l] = arrival_times[i];
-//           product_queue.push( {cube.get_bit( i ) ? f : dest.create_not( f ), l} );
-//         }
-//       }
-//       if ( !product_queue.empty() )
-//       {
-//         num_and_gates += static_cast<uint32_t>( product_queue.size() ) - 1u;
-//       }
-//       and_terms.push( balanced_tree( dest, product_queue ) );
-//     }
-//     return {and_terms, num_and_gates};
-//   }
-
-//   arrival_time_pair<Ntk> balanced_tree( Ntk& dest, arrival_time_queue<Ntk>& queue, bool _and = true ) const
-//   {
-//     if ( queue.empty() )
-//     {
-//       return {dest.get_constant( true ), 0u};
-//     }
-
-//     while ( queue.size() > 1u )
-//     {
-//       auto [s1, l1] = queue.top();
-//       queue.pop();
-//       auto [s2, l2] = queue.top();
-//       queue.pop();
-//       const auto s = _and ? dest.create_and( s1, s2 ) : dest.create_or( s1, s2 );
-//       const auto l = std::max( l1, l2 ) + 1;
-//       queue.push( {s, l} );
-//     }
-//     return queue.top();
-//   }
-
-//   std::vector<kitty::cube> create_sop_form( kitty::dynamic_truth_table const& func ) const
-//   {
-//     stopwatch<> t( time_sop );
-//     if ( auto it = sop_hash_.find( func ); it != sop_hash_.end() )
-//     {
-//       sop_cache_hits++;
-//       return it->second;
-//     }
-//     else
-//     {
-//       sop_cache_misses++;
-//       return sop_hash_[func] = kitty::isop( func ); // TODO generalize
-//     }
-//   }
 private:
-  static inline bool cube_has_lit( uint64_t cube, uint64_t lit ) { return ( cube & ( static_cast<uint64_t>( 1 ) << lit ) ) > 0; }
-
-private:
-//   mutable std::unordered_map<kitty::dynamic_truth_table, std::vector<kitty::cube>, kitty::hash<kitty::dynamic_truth_table>> sop_hash_;
   sop_factoring_params const& _ps;
-
-public:
-  mutable uint32_t sop_cache_hits{};
-  mutable uint32_t sop_cache_misses{};
 
   mutable stopwatch<>::duration time_factoring{};
 };
