@@ -162,7 +162,7 @@ uint32_t count_literals_rec( std::vector<uint64_t>& sop, uint32_t const num_lit 
  * \param sop Sum-of-products
  * \param num_vars Number of variables
  */
-uint32_t literal_cost( std::vector<kitty::cube> const& sop, uint32_t num_vars )
+uint32_t factored_literal_cost( std::vector<kitty::cube> const& sop, uint32_t num_vars )
 {
   /* trivial cases: constant 0 or 1 */
   if ( sop.size() == 0 || sop.size() == 1 && sop[0]._mask == 0 )
@@ -181,11 +181,11 @@ uint32_t literal_cost( std::vector<kitty::cube> const& sop, uint32_t num_vars )
  * 
  * \param tt truth table
  */
-uint32_t literal_cost( kitty::dynamic_truth_table const& tt )
+uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt )
 {
   std::vector<kitty::cube> cubes = kitty::isop( tt );
 
-  return literal_cost( cubes, tt.num_vars() );
+  return factored_literal_cost( cubes, tt.num_vars() );
 }
 
 /*! \brief Counts number of literals of the factored form of a SOP.
@@ -196,12 +196,12 @@ uint32_t literal_cost( kitty::dynamic_truth_table const& tt )
  * \param tt function as truth table
  * \param dc don't care set
  */
-uint32_t literal_cost( kitty::dynamic_truth_table const& tt, kitty::dynamic_truth_table const& dc )
+uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt, kitty::dynamic_truth_table const& dc )
 {
   std::vector<kitty::cube> cubes;
   kitty::detail::isop_rec( tt & ~dc, tt | dc, tt.num_vars(), cubes );
 
-  return literal_cost( cubes, tt.num_vars() );
+  return factored_literal_cost( cubes, tt.num_vars() );
 }
 
 } // namespace mockturtle
