@@ -54,6 +54,9 @@ if (NOT TARGET percy)
   else()
     target_compile_definitions(percy INTERFACE DISABLE_NAUTY)
   endif()
+
+  add_subdirectory(espresso)
+  target_link_libraries(percy INTERFACE espresso)
 endif()
 
 if (NOT TARGET bill)

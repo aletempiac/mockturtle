@@ -62,16 +62,6 @@ uint32_t count_term_literals( uint64_t const term, uint32_t const num_lit )
   return lit;
 }
 
-uint32_t count_sop_literals( std::vector<uint64_t> const& sop, uint32_t const num_lit )
-{
-  uint32_t lit = 0;
-
-  for ( auto const term : sop )
-    lit += count_term_literals( term, num_lit );
-
-  return lit;
-}
-
 uint32_t lit_factor_count_rec( std::vector<uint64_t> const& sop, uint64_t const c_sop, uint32_t const num_lit )
 {
   using sop_t = std::vector<uint64_t>;
@@ -108,10 +98,10 @@ uint32_t count_literals_rec( std::vector<uint64_t>& sop, uint32_t const num_lit 
   sop_t divisor, quotient, reminder;
 
   /* compute the divisor */
-  if ( !sop_good_divisor( sop, divisor, num_lit ) )
+  if ( !sop_quick_divisor( sop, divisor, num_lit ) )
   {
     /* count_literals of the current SOP */
-    return count_sop_literals( sop, num_lit );
+    return sop_count_literals( sop );
   }
 
   /* divide the SOP by the divisor */
@@ -161,8 +151,9 @@ uint32_t count_literals_rec( std::vector<uint64_t>& sop, uint32_t const num_lit 
  * 
  * \param sop Sum-of-products
  * \param num_vars Number of variables
+ * \param lit_inversion_cost Adds shared inverters cost for negated literals
  */
-uint32_t factored_literal_cost( std::vector<kitty::cube> const& sop, uint32_t num_vars )
+uint32_t factored_literal_cost( std::vector<kitty::cube> const& sop, uint32_t num_vars, bool lit_inversion_cost = false )
 {
   /* trivial cases: constant 0 or 1 */
   if ( sop.size() == 0 || sop.size() == 1 && sop[0]._mask == 0 )
@@ -171,7 +162,51 @@ uint32_t factored_literal_cost( std::vector<kitty::cube> const& sop, uint32_t nu
   using sop_t = std::vector<uint64_t>;
   sop_t lit_sop = cubes_to_sop( sop, num_vars );
 
-  return detail::count_literals_rec( lit_sop, num_vars * 2 );
+  uint32_t lit_inversion_count = 0;
+
+  if ( lit_inversion_cost )
+  {
+    uint64_t cube = 0;
+    for ( auto const& term : lit_sop )
+    {
+      cube |= term;
+    }
+    /* add inverter for each inverted literal */
+    for ( uint32_t i = 0; i < num_vars; ++i )
+    {
+      lit_inversion_count += ( cube >> ( 2 * i ) ) & 1;
+    }
+  }
+
+  return detail::count_literals_rec( lit_sop, num_vars * 2 ) + lit_inversion_count;
+}
+
+uint32_t factored_literal_cost2( std::vector<kitty::cube> const& sop, uint32_t num_vars, bool lit_inversion_cost = false )
+{
+  /* trivial cases: constant 0 or 1 */
+  if ( sop.size() == 0 || sop.size() == 1 && sop[0]._mask == 0 )
+    return 0;
+
+  using sop_t = std::vector<uint64_t>;
+  sop_t lit_sop = cubes_to_sop( sop, num_vars );
+
+  uint32_t lit_inversion_count = 0;
+
+  if ( lit_inversion_cost )
+  {
+    uint64_t cube = 0;
+    for ( auto const& term : lit_sop )
+    {
+      cube |= term;
+    }
+    /* add inverter for each inverted literal */
+    for ( uint32_t i = 0; i < num_vars; ++i )
+    {
+      lit_inversion_count += ( cube >> ( 2 * i ) ) & ( cube >> ( 2 * i  + 1 ) ) & 1; /* TODO: correct */
+    }
+  }
+
+  return detail::count_literals_rec( lit_sop, num_vars * 2 ) + lit_inversion_count;
 }
 
 /*! \brief Counts number of literals of the factored form of a SOP.
@@ -180,12 +215,13 @@ uint32_t factored_literal_cost( std::vector<kitty::cube> const& sop, uint32_t nu
  * returns its number of literals.
  * 
  * \param tt truth table
+ * \param lit_inversion_cost Adds shared inverters cost for negated literals
  */
-uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt )
+uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt, bool lit_inversion_cost = false )
 {
   std::vector<kitty::cube> cubes = kitty::isop( tt );
 
-  return factored_literal_cost( cubes, tt.num_vars() );
+  return factored_literal_cost( cubes, tt.num_vars(), lit_inversion_cost );
 }
 
 /*! \brief Counts number of literals of the factored form of a SOP.
@@ -195,13 +231,14 @@ uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt )
  * 
  * \param tt function as truth table
  * \param dc don't care set
+ * \param lit_inversion_cost Adds shared inverters cost for negated literals
  */
-uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt, kitty::dynamic_truth_table const& dc )
+uint32_t factored_literal_cost( kitty::dynamic_truth_table const& tt, kitty::dynamic_truth_table const& dc, bool lit_inversion_cost = false )
 {
   std::vector<kitty::cube> cubes;
   kitty::detail::isop_rec( tt & ~dc, tt | dc, tt.num_vars(), cubes );
 
-  return factored_literal_cost( cubes, tt.num_vars() );
+  return factored_literal_cost( cubes, tt.num_vars(), lit_inversion_cost );
 }
 
 } // namespace mockturtle

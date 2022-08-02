@@ -52,6 +52,9 @@ struct sop_factoring_params
 {
   /*! \brief Factoring is also tried for the negated TT. */
   bool try_both_polarities{true};
+
+  /*! \brief Factoring considers input and output inverters as additional cost. */
+  bool consider_inverter_cost{false};
 };
 
 /*! \brief Resynthesis function based on SOP factoring.
@@ -111,6 +114,8 @@ public:
     /* create literal form of SOP */
     sop_t sop = cubes_to_sop( cubes, function.num_vars() );
 
+    // minimize_sop( sop, function.num_vars() );
+
     /* derive the factored form */
     signal f = gen_factor_rec( dest, {begin, end}, sop, 2 * function.num_vars() );
 
@@ -157,22 +162,53 @@ private:
     {
       std::vector<kitty::cube> n_cubes = kitty::isop( ~function );
 
-      if ( n_cubes.size() < cubes.size() )
-      {
-        negated = true;
-        return n_cubes; 
-      }
-      else if ( n_cubes.size() == cubes.size() )
+      if ( _ps.consider_inverter_cost )
       {
         uint32_t n_lit = 0;
         uint32_t lit = 0;
-        for ( auto const& c : n_cubes ) { n_lit += c.num_literals(); }
-        for ( auto const& c : cubes ) { lit += c.num_literals(); }
+        kitty::cube n_term;
+        kitty::cube term;
+        for ( auto const& c : n_cubes )
+        {
+          n_term._mask |= c._mask & ( ~c )._bits;
+          n_lit += c.num_literals();
+        }
+        for ( auto const& c : cubes )
+        {
+          term._mask |= c._mask & ( ~c )._bits;
+          lit += c.num_literals();
+        }
 
-        if ( n_lit < lit )
+        /* positive cost: cubes + input negations + output negation */
+        uint32_t positive_cost = cubes.size() + term.num_literals() + 1;
+        /* negative cost: cubes + input negations */
+        uint32_t negative_cost = n_cubes.size() + n_term.num_literals();
+
+        if ( negative_cost < positive_cost )
         {
           negated = true;
-          return n_cubes; 
+          return n_cubes;
+        }
+      }
+      else
+      {
+        if ( n_cubes.size() < cubes.size() )
+        {
+          negated = true;
+          return n_cubes;
+        }
+        else if ( n_cubes.size() == cubes.size() )
+        {
+          uint32_t n_lit = 0;
+          uint32_t lit = 0;
+          for ( auto const& c : n_cubes ) { n_lit += c.num_literals(); }
+          for ( auto const& c : cubes ) { lit += c.num_literals(); }
+
+          if ( n_lit < lit )
+          {
+            negated = true;
+            return n_cubes; 
+          }
         }
       }
     }
@@ -223,7 +259,7 @@ private:
     assert( sop.size() );
 
     /* compute the divisor */
-    if ( !sop_good_divisor( sop, divisor, num_lit ) )
+    if ( !sop_quick_divisor( sop, divisor, num_lit ) )
     {
       /* generate trivial sop circuit */
       return gen_andor_circuit_rec( ntk, children, sop.begin(), sop.end(), num_lit );

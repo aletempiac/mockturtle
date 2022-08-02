@@ -34,6 +34,12 @@
 
 #include <cstdint>
 #include <vector>
+#include <cassert>
+extern "C"
+{
+#include <espresso.h>
+}
+
 
 namespace mockturtle
 {
@@ -44,6 +50,13 @@ namespace detail
 inline bool cube_has_lit( uint64_t const cube, uint64_t const lit )
 {
   return ( cube & ( static_cast<uint64_t>( 1 ) << lit ) ) > 0;
+}
+
+inline uint32_t cube_count_literals( uint64_t cube )
+{
+  uint32_t count;
+  for ( count = 0; cube; ++count ) { cube &= cube - 1u; };
+  return count;
 }
 
 inline int64_t sop_literals_occurrences( std::vector<uint64_t> const& sop, uint32_t const num_lit )
@@ -118,6 +131,24 @@ inline int64_t sop_most_occurrent_literal_masked( std::vector<uint64_t> const& s
   return max_lit;
 }
 
+inline bool sop_maximal_cube_literal( std::vector<uint64_t> const& sop, uint64_t& cube, uint32_t const lit )
+{
+  uint64_t max_cube = UINT64_MAX;
+  uint32_t occurrences = 0;
+
+  for ( auto const& c : sop )
+  {
+    if ( cube_has_lit( c, lit ) )
+    {
+      ++occurrences;
+      max_cube &= c;
+    }
+  }
+
+  cube = max_cube;
+  return occurrences > 1;
+}
+
 inline void sop_best_literal( std::vector<uint64_t> const& sop, std::vector<uint64_t>& result, uint64_t const cube, uint32_t const num_lit )
 {
   int64_t max_lit = sop_most_occurrent_literal_masked( sop, cube, num_lit );
@@ -126,7 +157,123 @@ inline void sop_best_literal( std::vector<uint64_t> const& sop, std::vector<uint
   result.push_back( static_cast<uint64_t>( 1 ) << max_lit );
 }
 
+inline pset_family sop_to_espresso( std::vector<uint64_t> const& sop, uint32_t const num_vars )
+{
+  pset_family cover;
+  pset set;
+
+  assert( cube.size == 2 * num_vars );
+
+  if ( sop.size() == 0 )
+  {
+    /* const 0 */
+    cover = sf_new( 0, cube.size );
+    return cover;
+  }
+  else if ( sop.size() == 1 && sop[0] == 0 )
+  {
+    /* const 1 */
+    cover = sf_new( 1, cube.size );
+    set = GETSET( cover, cover->count++ );
+    set_copy( set, cube.fullset );
+    return cover;
+  }
+
+  cover = sf_new( sop.size(), cube.size );
+  for ( auto const& c : sop )
+  {
+    set = GETSET( cover, cover->count++ );
+    set_copy( set, cube.fullset );
+    for ( int i = 0; i < num_vars; ++i )
+    {
+      if ( ( ( c >> ( 2 * i ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i + 1 );
+      }
+      else if ( ( ( c >> ( 2 * i + 1 ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i );
+      }
+    }
+  }
+
+  return cover;
+}
+
+inline std::vector<uint64_t> espresso_to_sop( pset_family cover )
+{
+  std::vector<uint64_t> sop;
+  pset set;
+
+  uint32_t num_vars = cover->sf_size >> 1;
+
+  for ( int i = 0; i < cover->count; ++i )
+  {
+    uint64_t c = 0;
+    set = GETSET( cover, i );
+    for ( int j = 0; j < num_vars; ++j )
+    {
+      int lit = GETINPUT( set, j );
+
+      if ( lit == ESPRESSO_ZERO )
+      {
+        c |= 1 << ( 2 * j );
+      }
+      else if ( lit == ESPRESSO_ONE )
+      {
+        c |= 1 << ( 2 * j + 1 );
+      }
+    }
+    sop.push_back( c );
+  }
+
+  return sop;
+}
+
+inline pset_family espresso_minimize( pset_family onset, pset_family dcset )
+{
+  pset_family offset;
+  bool dcset_tofree;
+
+  /* create the dcset */
+  dcset_tofree = ( dcset == NULL );
+  if ( dcset == NULL )
+      dcset = sf_new( 1, cube.size );
+
+  dcset->wsize = onset->wsize;
+  dcset->sf_size = onset->sf_size;
+
+  // derive the offset
+  if ( dcset->sf_size == 0 || dcset->count == 0 )
+      offset = complement( cube1list( onset ) );
+  else
+      offset = complement( cube2list( onset, dcset ) ); 
+
+  // perform minimization
+  onset = espresso( onset, dcset, offset );
+
+  // free covers
+  sf_free( offset );
+
+  if ( dcset_tofree )
+    sf_free( dcset );
+
+  return onset;
+}
+
 } // namespace detail
+
+inline uint32_t sop_count_literals( std::vector<uint64_t> const& sop )
+{
+  uint32_t lit_count = 0;
+
+  for ( auto const& c : sop )
+  {
+    lit_count += detail::cube_count_literals( c );
+  }
+
+  return lit_count;
+}
 
 /*! \brief Makes a SOP cube free
 *
@@ -222,6 +369,29 @@ inline void sop_divide_by_cube( std::vector<uint64_t> const& divident, std::vect
     else
     {
       reminder.push_back( c );
+    }
+  }
+}
+
+/*! \brief Algebraic division by a cube
+*
+* This method divides a SOP (divident) by the divisor
+* and stores the resulting quotient.
+* 
+* \param Divident
+* \param Divisor
+* \param Quotient
+*/
+inline void sop_divide_by_cube_no_reminder( std::vector<uint64_t> const& divident, uint64_t const& divisor, std::vector<uint64_t>& quotient )
+{
+  quotient.clear();
+
+  uint32_t p = 0;
+  for ( auto const& c : divident )
+  {
+    if ( ( c & divisor ) > 0 )
+    {
+      quotient.push_back( c & ~divisor );
     }
   }
 }
@@ -338,6 +508,176 @@ inline void sop_divide( std::vector<uint64_t>& divident, std::vector<uint64_t> c
   }
 }
 
+/*! \brief Boolean division
+*
+* This method divides a SOP (divident) by the divisor
+* and stores the resulting quotient and reminder.
+* 
+* \param Divident
+* \param Divisor
+* \param Quotient
+* \param Reminder
+*/
+inline void sop_bool_divide( std::vector<uint64_t>& divident, std::vector<uint64_t> const& divisor, std::vector<uint64_t>& quotient, std::vector<uint64_t>& reminder, uint32_t const num_lit )
+{
+  /* algebraic division */
+  sop_divide( divident, divisor, quotient, reminder );
+
+  /* compute don't care set g*x' + g'*x */
+  define_cube_size( static_cast<int>( num_lit / 2 + 1 ) );
+  pset_family divisor_set = detail::sop_to_espresso( divisor, num_lit / 2 + 1 );
+  pset_family n_divisor_set = complement( cube1list( divisor_set ) );
+  pset_family dcset = sf_new( divisor_set->count + n_divisor_set->count + quotient.size(), cube.size );
+  pset set, set_dc;
+
+  /* add g*x' */
+  for ( int i = 0; i < divisor_set->count; ++i )
+  {
+    set = GETSET( divisor_set, i );
+    set_dc = GETSET( dcset, dcset->count++ );
+    set_copy( set_dc, set );
+    set_remove( set_dc, num_lit + 1 );
+  }
+
+  /* add g'*x */
+  for ( int i = 0; i < n_divisor_set->count; ++i )
+  {
+    set = GETSET( n_divisor_set, i );
+    set_dc = GETSET( dcset, dcset->count++ );
+    set_copy( set_dc, set );
+    set_remove( set_dc, num_lit );
+  }
+
+  /* compute onset: h*x + e */
+  pset_family onset = sf_new( quotient.size() + reminder.size(), cube.size );
+
+  /* add h*x */
+  for ( auto const& c : quotient )
+  {
+    set = GETSET( onset, onset->count++ );
+    set_copy( set, cube.fullset );
+    for ( int i = 0; i < num_lit / 2; ++i )
+    {
+      if ( ( ( c >> ( 2 * i ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i + 1 );
+      }
+      else if ( ( ( c >> ( 2 * i + 1 ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i );
+      }
+    }
+    set_remove( set, num_lit );
+  }
+
+  /* add e */
+  for ( auto const& c : reminder )
+  {
+    set = GETSET( onset, onset->count++ );
+    set_copy( set, cube.fullset );
+    for ( int i = 0; i < num_lit / 2; ++i )
+    {
+      if ( ( ( c >> ( 2 * i ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i + 1 );
+      }
+      else if ( ( ( c >> ( 2 * i + 1 ) ) & 1 ) == 1 )
+      {
+        set_remove( set, 2 * i );
+      }
+    }
+  }
+
+  onset = detail::espresso_minimize( onset, dcset );
+  auto f = detail::espresso_to_sop( onset );
+
+  /* extract quotient and reminder */
+  sop_divide_by_cube( f, {static_cast<uint64_t>( 1 << ( num_lit + 1) )}, quotient, reminder );
+}
+
+/*! \brief Extracts all the kernels
+*
+* This method is used to identify and collect all
+* the kernels.
+*
+* \param sop
+* \param kernels
+* \param j
+* \param num_lit
+*/
+inline void sop_kernels_rec( std::vector<uint64_t> const& sop, std::vector<std::vector<uint64_t>>& kernels, uint32_t const j, uint32_t const num_lit )
+{
+  std::vector<uint64_t> kernel;
+
+  for ( uint32_t i = j; i < num_lit; ++i )
+  {
+    uint64_t c;
+    if ( detail::sop_maximal_cube_literal( sop, c, i ) )
+    {
+      /* cube has been visited already */
+      if ( ( c & ( ( static_cast<uint64_t>( 1 ) << i ) - 1 ) ) > 0u )
+        continue;
+
+      sop_divide_by_cube_no_reminder( sop, c, kernel );
+      sop_kernels_rec( kernel, kernels, i + 1, num_lit );
+    }
+  }
+
+  kernels.push_back( sop );
+}
+
+/*! \brief Extracts the best factorizing kernel
+*
+* This method is used to identify the best kernel
+* according to the factorization value.
+*
+* \param sop
+* \param kernel
+* \param best_kernel
+* \param j
+* \param best_cost
+* \param num_lit
+*/
+inline uint32_t sop_best_kernel_rec( std::vector<uint64_t>& sop, std::vector<uint64_t>& kernel, std::vector<uint64_t>& best_kernel, uint32_t const j, uint32_t& best_cost, uint32_t const num_lit )
+{
+  std::vector<uint64_t> new_kernel;
+  std::vector<uint64_t> quotient;
+  std::vector<uint64_t> reminder;
+
+  /* evaluate kernel */
+  sop_divide( sop, kernel, quotient, reminder );
+  uint32_t division_cost = sop_count_literals( quotient ) + sop_count_literals( reminder );
+  uint32_t best_fact_cost = sop_count_literals( kernel );
+
+  for ( uint32_t i = j; i < num_lit; ++i )
+  {
+    uint64_t c;
+    if ( detail::sop_maximal_cube_literal( kernel, c, i ) )
+    {
+      /* cube has been visited already */
+      if ( ( c & ( ( static_cast<uint64_t>( 1 ) << i ) - 1 ) ) > 0u )
+        continue;
+
+      /* extract the new kernel */
+      sop_divide_by_cube( kernel, {c}, new_kernel, reminder );
+      uint32_t fact_cost_rec = detail::cube_count_literals( c ) + sop_count_literals( reminder );
+      uint32_t fact_cost = sop_best_kernel_rec( sop, new_kernel, best_kernel, i + 1, best_cost, num_lit );
+
+      /* compute the factorization value for kernel */
+      if ( ( fact_cost + fact_cost_rec ) < best_fact_cost )
+        best_fact_cost = fact_cost + fact_cost_rec;
+    }
+  }
+
+  if ( best_kernel.empty() || ( division_cost + best_fact_cost ) < best_cost )
+  {
+    best_kernel = kernel;
+    best_cost = division_cost + best_fact_cost;
+  }
+
+  return best_fact_cost;
+}
+
 /*! \brief Extracts a one level-0 kernel
 *
 * This method is used to identify and return a one
@@ -360,15 +700,15 @@ inline void sop_one_level_zero_kernel_rec( std::vector<uint64_t>& sop, uint32_t 
   sop_one_level_zero_kernel_rec( sop, num_lit );
 }
 
-/*! \brief Finds a good divisor for an SOP
+/*! \brief Finds a quick divisor for a SOP
 *
-* This method is used to identify and return a good
+* This method is used to identify and return a quick
 * divisor for the SOP.
 * 
 * \param sop
 * \param num_lit
 */
-inline bool sop_good_divisor( std::vector<uint64_t> const& sop, std::vector<uint64_t>& res, uint32_t const num_lit )
+inline bool sop_quick_divisor( std::vector<uint64_t> const& sop, std::vector<uint64_t>& res, uint32_t const num_lit )
 {
   if ( sop.size() <= 1 )
     return false;
@@ -382,6 +722,32 @@ inline bool sop_good_divisor( std::vector<uint64_t> const& sop, std::vector<uint
   sop_one_level_zero_kernel_rec( res, num_lit );
 
   assert( res.size() );
+  return true;
+}
+
+/*! \brief Finds a good divisor for a SOP
+*
+* This method is used to identify and return a good
+* divisor for the SOP.
+* 
+* \param sop
+* \param num_lit
+*/
+inline bool sop_good_divisor( std::vector<uint64_t>& sop, std::vector<uint64_t>& res, uint32_t const num_lit )
+{
+  if ( sop.size() <= 1 )
+    return false;
+
+  /* each literal appears no more than once */
+  if ( detail::sop_literals_occurrences( sop, num_lit ) < 0 )
+    return false;
+
+  std::vector<uint64_t> kernel = sop;
+
+  /* compute all the kernels and return the one with the best factorization value */
+  uint32_t best_cost = 0;
+  sop_best_kernel_rec( sop, kernel, res, 0, best_cost, num_lit );
+
   return true;
 }
 
@@ -416,6 +782,20 @@ inline std::vector<uint64_t> cubes_to_sop( std::vector<kitty::cube> const& cubes
   }
 
   return sop;
+}
+
+inline void minimize_sop( std::vector<uint64_t>& sop, uint32_t const num_vars )
+{
+  pset_family cover;
+
+  define_cube_size( static_cast<int>( num_vars ) );
+  cover = detail::sop_to_espresso( sop, num_vars );
+
+  cover = detail::espresso_minimize( cover, NULL );
+
+  sop = detail::espresso_to_sop( cover );
+
+  sf_free( cover );
 }
 
 } //namespace mockturtle
