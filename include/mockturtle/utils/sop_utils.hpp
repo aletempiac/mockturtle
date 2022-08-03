@@ -362,7 +362,7 @@ inline void sop_divide_by_cube( std::vector<uint64_t> const& divident, std::vect
   uint32_t p = 0;
   for ( auto const& c : divident )
   {
-    if ( ( c & divisor[0] ) > 0 )
+    if ( ( c & divisor[0] ) == divisor[0] )
     {
       quotient.push_back( c & ( ~divisor[0] ) );
     }
@@ -389,7 +389,7 @@ inline void sop_divide_by_cube_no_reminder( std::vector<uint64_t> const& dividen
   uint32_t p = 0;
   for ( auto const& c : divident )
   {
-    if ( ( c & divisor ) > 0 )
+    if ( ( c & divisor ) == divisor )
     {
       quotient.push_back( c & ~divisor );
     }
@@ -629,7 +629,7 @@ inline void sop_kernels_rec( std::vector<uint64_t> const& sop, std::vector<std::
 /*! \brief Extracts the best factorizing kernel
 *
 * This method is used to identify the best kernel
-* according to the factorization value.
+* according to the algebraic factorization value.
 *
 * \param sop
 * \param kernel
@@ -662,6 +662,58 @@ inline uint32_t sop_best_kernel_rec( std::vector<uint64_t>& sop, std::vector<uin
       sop_divide_by_cube( kernel, {c}, new_kernel, reminder );
       uint32_t fact_cost_rec = detail::cube_count_literals( c ) + sop_count_literals( reminder );
       uint32_t fact_cost = sop_best_kernel_rec( sop, new_kernel, best_kernel, i + 1, best_cost, num_lit );
+
+      /* compute the factorization value for kernel */
+      if ( ( fact_cost + fact_cost_rec ) < best_fact_cost )
+        best_fact_cost = fact_cost + fact_cost_rec;
+    }
+  }
+
+  if ( best_kernel.empty() || ( division_cost + best_fact_cost ) < best_cost )
+  {
+    best_kernel = kernel;
+    best_cost = division_cost + best_fact_cost;
+  }
+
+  return best_fact_cost;
+}
+
+/*! \brief Extracts the best factorizing kernel
+*
+* This method is used to identify the best kernel
+* according to the Boolean factorization value.
+*
+* \param sop
+* \param kernel
+* \param best_kernel
+* \param j
+* \param best_cost
+* \param num_lit
+*/
+inline uint32_t sop_best_kernel_bool_rec( std::vector<uint64_t>& sop, std::vector<uint64_t>& kernel, std::vector<uint64_t>& best_kernel, uint32_t const j, uint32_t& best_cost, uint32_t const num_lit )
+{
+  std::vector<uint64_t> new_kernel;
+  std::vector<uint64_t> quotient;
+  std::vector<uint64_t> reminder;
+
+  /* evaluate kernel */
+  sop_bool_divide( sop, kernel, quotient, reminder, num_lit );
+  uint32_t division_cost = sop_count_literals( quotient ) + sop_count_literals( reminder );
+  uint32_t best_fact_cost = sop_count_literals( kernel );
+
+  for ( uint32_t i = j; i < num_lit; ++i )
+  {
+    uint64_t c;
+    if ( detail::sop_maximal_cube_literal( kernel, c, i ) )
+    {
+      /* cube has been visited already */
+      if ( ( c & ( ( static_cast<uint64_t>( 1 ) << i ) - 1 ) ) > 0u )
+        continue;
+
+      /* extract the new kernel */
+      sop_divide_by_cube( kernel, {c}, new_kernel, reminder );
+      uint32_t fact_cost_rec = detail::cube_count_literals( c ) + sop_count_literals( reminder );
+      uint32_t fact_cost = sop_best_kernel_bool_rec( sop, new_kernel, best_kernel, i + 1, best_cost, num_lit );
 
       /* compute the factorization value for kernel */
       if ( ( fact_cost + fact_cost_rec ) < best_fact_cost )
