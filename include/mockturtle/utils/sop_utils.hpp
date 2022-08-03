@@ -527,7 +527,7 @@ inline void sop_bool_divide( std::vector<uint64_t>& divident, std::vector<uint64
   define_cube_size( static_cast<int>( num_lit / 2 + 1 ) );
   pset_family divisor_set = detail::sop_to_espresso( divisor, num_lit / 2 + 1 );
   pset_family n_divisor_set = complement( cube1list( divisor_set ) );
-  pset_family dcset = sf_new( divisor_set->count + n_divisor_set->count + quotient.size(), cube.size );
+  pset_family dcset = sf_new( divisor_set->count + n_divisor_set->count, cube.size );
   pset set, set_dc;
 
   /* add g*x' */
@@ -588,11 +588,49 @@ inline void sop_bool_divide( std::vector<uint64_t>& divident, std::vector<uint64
     }
   }
 
-  onset = detail::espresso_minimize( onset, dcset );
+  pset_family offset;
+  offset = complement( cube2list( onset, dcset ) );
+  onset = complement( cube2list( offset, dcset ) );
+
+  /* smoothing x' from the onset */
+  // for ( int i = 0; i < onset->count; ++i )
+  // {
+  //   set = GETSET( onset, i );
+  //   int lit = GETINPUT( set, num_lit / 2 );
+  //   if ( lit == ESPRESSO_ZERO )
+  //   {
+  //     set_insert( set, num_lit + 1 );
+  //   }
+  // }
+
+  onset = espresso( onset, dcset, offset );
+
+  /* TODO: bug fix reminder could contains x' (return algebraic division if this is the case) */
+  for ( int i = 0; i < onset->count; ++i )
+  {
+    set = GETSET( onset, i );
+    int lit = GETINPUT( set, num_lit / 2 );
+    if ( lit == ESPRESSO_ZERO )
+    {
+      sf_free( offset );
+      sf_free( onset );
+      sf_free( dcset );
+      sf_free( n_divisor_set );
+      sf_free( divisor_set );
+      return;
+    }
+  }
+
   auto f = detail::espresso_to_sop( onset );
 
   /* extract quotient and reminder */
   sop_divide_by_cube( f, {static_cast<uint64_t>( 1 << ( num_lit + 1) )}, quotient, reminder );
+
+  sf_free( offset );
+  sf_free( onset );
+  sf_free( dcset );
+  sf_free( n_divisor_set );
+  sf_free( divisor_set );
 }
 
 /*! \brief Extracts all the kernels
@@ -799,6 +837,32 @@ inline bool sop_good_divisor( std::vector<uint64_t>& sop, std::vector<uint64_t>&
   /* compute all the kernels and return the one with the best factorization value */
   uint32_t best_cost = 0;
   sop_best_kernel_rec( sop, kernel, res, 0, best_cost, num_lit );
+
+  return true;
+}
+
+/*! \brief Finds a good Boolean divisor for a SOP
+*
+* This method is used to identify and return a good
+* Boolean divisor for the SOP.
+* 
+* \param sop
+* \param num_lit
+*/
+inline bool sop_good_divisor_bool( std::vector<uint64_t>& sop, std::vector<uint64_t>& res, uint32_t const num_lit )
+{
+  if ( sop.size() <= 1 )
+    return false;
+
+  /* each literal appears no more than once */
+  if ( detail::sop_literals_occurrences( sop, num_lit ) < 0 )
+    return false;
+
+  std::vector<uint64_t> kernel = sop;
+
+  /* compute all the kernels and return the one with the best factorization value */
+  uint32_t best_cost = 0;
+  sop_best_kernel_bool_rec( sop, kernel, res, 0, best_cost, num_lit );
 
   return true;
 }

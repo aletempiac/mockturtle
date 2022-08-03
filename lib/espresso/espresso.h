@@ -64,10 +64,8 @@
 
 
 /* Define host machine characteristics of "unsigned int" */
-// #ifndef ABC__misc__espresso__espresso_h
 #define BPI 32
 
-// #endif
 
 #if BPI == 32
 #define LOGBPI          5               /* log(BPI)/log(2) */
