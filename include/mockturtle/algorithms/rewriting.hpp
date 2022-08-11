@@ -72,7 +72,7 @@ struct rewriting_params
   cut_enumeration_params cut_enumeration_ps{};
 
   /*! \brief Rewrite using MFFC instead of cuts */
-  bool use_mffc{true};
+  bool use_mffc{false};
 
   /*! \brief If true, candidates are only accepted if they do not increase logic level of node. */
   bool preserve_depth{false};
@@ -104,7 +104,7 @@ struct rewriting_stats
   stopwatch<>::duration time_total{0};
 
   /*! \brief Accumulated runtime for computing MFFCs. */
-  stopwatch<>::duration time_mffc{0};
+  stopwatch<>::duration time_cuts{0};
 
   /*! \brief Accumulated runtime for rewriting. */
   stopwatch<>::duration time_matching{0};
@@ -118,7 +118,7 @@ struct rewriting_stats
   void report() const
   {
     std::cout << fmt::format( "[i] total time       = {:>5.2f} secs\n", to_seconds( time_total ) );
-    std::cout << fmt::format( "[i] MFFC time        = {:>5.2f} secs\n", to_seconds( time_mffc ) );
+    std::cout << fmt::format( "[i] cuts time        = {:>5.2f} secs\n", to_seconds( time_cuts ) );
     std::cout << fmt::format( "[i] matching time    = {:>5.2f} secs\n", to_seconds( time_matching ) );
     std::cout << fmt::format( "[i] rewriting time   = {:>5.2f} secs\n", to_seconds( time_rewriting ) );
     std::cout << fmt::format( "[i] simulation time  = {:>5.2f} secs\n", to_seconds( time_simulation ) );
@@ -135,6 +135,7 @@ class rewrite_impl
   using network_cuts_t = dynamic_network_cuts<Ntk, num_vars, true, cut_enumeration_rewrite_cut>;
   using cut_manager_t = detail::dynamic_cut_enumeration_impl<Ntk, num_vars, true, cut_enumeration_rewrite_cut>;
   using cut_t = typename network_cuts_t::cut_t;
+  using node_data = typename Ntk::storage::element_type::node_type;
 
 public:
   rewrite_impl( Ntk& ntk, Library&& library, rewriting_params const& ps, rewriting_stats& st, NodeCostFn const& cost_fn )
@@ -159,14 +160,10 @@ public:
     if ( !ps.use_mffc )
       cut_manager.init_cuts();
 
-    auto const& db = library.get_database();
+    auto& db = library.get_database();
 
     const auto size = ntk.num_gates();
     ntk.foreach_gate( [&]( auto const& n, auto i ) {
-      if ( i >= size )
-      {
-        return false;
-      }
       if ( ntk.fanout_size( n ) == 0u )
       {
         return true;
@@ -177,16 +174,21 @@ public:
       int32_t best_gain = -1;
       uint32_t best_cut = 0;
       signal<Ntk> best_signal;
+      std::vector<signal<Ntk>> best_leaves;
+      bool best_phase;
       std::vector<signal<Ntk>> leaves( num_vars, ntk.get_constant( false ) );
 
       if ( ps.use_mffc )
       {
-        const auto mffc = make_with_stopwatch<mffc_view<Ntk>>( st.time_mffc, ntk, n );
+        const auto mffc = make_with_stopwatch<mffc_view<Ntk>>( st.time_cuts, ntk, n );
 
         if ( mffc.num_pos() == 0 || mffc.num_pis() > num_vars || mffc.size() < num_vars + 1 )
         {
           return true;
         }
+
+        /* disconnect n */
+        ntk.set_value( n, 0 );
 
         default_simulator<kitty::static_truth_table<num_vars>> sim;
         const auto tt = call_with_stopwatch( st.time_simulation,
@@ -254,20 +256,21 @@ public:
 
           for ( auto const& dag : *structures )
           {
-            topo_view topo{db, dag.root};
-            auto new_f = cleanup_dangling( topo, ntk, leaves.begin(), leaves.end() ).front();
+            int32_t nodes_added = evaluate_entry( db, db.get_node( dag.root ), leaves );
 
-            if ( n == ntk.get_node( new_f ) )
+            /* discard if dag.root and n are the same */
+            if ( ntk.node_to_index( n ) == db.value( db.get_node( dag.root ) ) )
               continue;
             
-            int32_t gain = mffc_size - recursive_ref( ntk.get_node( new_f ) );
-            recursive_deref( ntk.get_node( new_f ) ) ;
+            int32_t gain = mffc_size - nodes_added;
 
             if ( ( gain > 0 || ( ps.allow_zero_gain && gain == 0 ) ) && gain > best_gain )
             {
               ++_candidates;
               best_gain = gain;
-              best_signal = new_f ^ phase;       
+              best_phase = phase;
+              best_signal = dag.root;
+              best_leaves = leaves;
             }
 
             if ( !ps.allow_multiple_structures )
@@ -279,6 +282,9 @@ public:
       {
         /* use cuts */
         cut_manager.compute_cuts( n );
+
+        /* disconnect n */
+        ntk.set_value( n, 0 );
 
         uint32_t cut_index = 0;
         for ( auto& cut : cuts.cuts( ntk.node_to_index( n ) ) )
@@ -358,21 +364,22 @@ public:
 
             for ( auto const& dag : *structures )
             {
-              topo_view topo{db, dag.root};
-              auto new_f = cleanup_dangling( topo, ntk, leaves.begin(), leaves.end() ).front();
+              int32_t nodes_added = evaluate_entry( db, db.get_node( dag.root ), leaves );
 
-              if ( n == ntk.get_node( new_f ) )
+              /* discard if dag.root and n are the same */
+              if ( ntk.node_to_index( n ) == db.value( db.get_node( dag.root ) ) )
                 continue;
-              
-              int32_t gain = mffc_size - recursive_ref( ntk.get_node( new_f ) );
-              recursive_deref( ntk.get_node( new_f ) ) ;
+
+              int32_t gain = mffc_size - nodes_added;
 
               if ( ( gain > 0 || ( ps.allow_zero_gain && gain == 0 ) ) && gain > best_gain )
               {
                 ++_candidates;
                 best_gain = gain;
-                best_signal = new_f ^ phase;
-                best_cut = cut_index;   
+                best_signal = dag.root;
+                best_leaves = leaves;
+                best_phase = phase;
+                best_cut = cut_index;
               }
 
               if ( !ps.allow_multiple_structures )
@@ -389,15 +396,26 @@ public:
         }
       }
 
+      /* reconnect n */
+      ntk.set_value( n, ntk.fanout_size( n ) );
+
       if ( best_gain > 0 || ( ps.allow_zero_gain && best_gain == 0 ) )
       {
         if ( !ps.use_mffc )
+        {
           measure_mffc_deref( n, &cuts.cuts( ntk.node_to_index( n ) )[best_cut] );
-        recursive_ref( ntk.get_node( best_signal ) );
+        }
+
+        topo_view topo{db, best_signal};
+        auto new_f = cleanup_dangling( topo, ntk, best_leaves.begin(), best_leaves.end() ).front();
+
+        assert( n != ntk.get_node( new_f ) );
+        recursive_ref( ntk.get_node( new_f ) );
+
         _estimated_gain += best_gain;
-        ntk.substitute_node( n, best_signal );
+        ntk.substitute_node( n, new_f ^ best_phase );
         ntk.set_value( n, 0 );
-        ntk.set_value( ntk.get_node( best_signal ), ntk.fanout_size( ntk.get_node( best_signal ) ) );
+        ntk.set_value( ntk.get_node( new_f ), ntk.fanout_size( ntk.get_node( new_f ) ) );
       }
       else if ( ps.use_mffc )
       {
@@ -478,6 +496,68 @@ private:
       }
     } );
     return value;
+  }
+
+  inline int32_t evaluate_entry( auto& db, node<Ntk> const& n, std::vector<signal<Ntk>> const& leaves )
+  {
+    db.incr_trav_id();
+    return evaluate_entry_rec( db, n, leaves );
+  }
+
+  int32_t evaluate_entry_rec( auto& db, node<Ntk> const& n, std::vector<signal<Ntk>> const& leaves )
+  {
+    if ( db.is_pi( n ) || db.is_constant( n ) )
+      return 0;
+    if ( db.visited( n ) == db.trav_id() )
+      return 0;
+
+    db.set_visited( n, db.trav_id() );
+
+    int32_t area = 0;
+    bool hashed = true;
+
+    std::array<signal<Ntk>, Ntk::max_fanin_size> node_data;
+    db.foreach_fanin( n, [&]( auto const& f, auto i ) {
+      node<Ntk> g = db.get_node( f );
+      if ( db.is_constant( g ) )
+      {
+        node_data[i] = f; /* ntk.get_costant( db.is_complemented( f ) ) */
+        return;
+      }
+      if ( db.is_pi( g ) )
+      {
+        node_data[i] = leaves[db.node_to_index( g ) - 1] ^ db.is_complemented( f );
+        return;
+      }
+
+      area += evaluate_entry_rec( db, g, leaves );
+
+      /* check value */
+      if ( db.value( g ) < ntk.size() )
+      {
+        node_data[i] = ntk.make_signal( ntk.index_to_node( db.value( g ) ) ) ^ db.is_complemented( f );
+      }
+      else
+      {
+        hashed = false;
+      }
+    } );
+
+    if ( hashed )
+    {
+      /* try hash */
+      /* only AIG is supported now */
+      auto val = ntk.has_and( node_data[0], node_data[1] );
+
+      if ( val.has_value() )
+      {
+        db.set_value( n, *val );
+        return area + ( ntk.value( *val ) > 0 ? 0 : 1 );
+      }
+    }
+
+    db.set_value( n, ntk.size() );
+    return area + 1;
   }
 
 private:

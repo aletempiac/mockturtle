@@ -814,7 +814,7 @@ public:
   cut_set_t& cuts( uint32_t node_index )
   {
     if ( node_index >= _cuts.size() )
-      _cuts.resize( node_index );
+      _cuts.resize( node_index + 1 );
 
     return _cuts[node_index];
   }
