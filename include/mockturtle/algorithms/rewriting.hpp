@@ -552,12 +552,12 @@ private:
       if ( val.has_value() )
       {
         db.set_value( n, *val );
-        return area + ( ntk.value( *val ) > 0 ? 0 : 1 );
+        return area + ( ntk.value( *val ) > 0 ? 0 : cost_fn( ntk, n ) );
       }
     }
 
     db.set_value( n, ntk.size() );
-    return area + 1;
+    return area + cost_fn( ntk, n );
   }
 
 private:
