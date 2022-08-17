@@ -23,10 +23,11 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <mockturtle/algorithms/rewriting.hpp>
+#include <mockturtle/algorithms/rewrite.hpp>
 #include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
+#include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/fanout_view.hpp>
@@ -51,9 +52,6 @@ int main()
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
-    // if ( benchmark != "bar" )
-    //   continue;
-
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -62,11 +60,11 @@ int main()
       continue;
     }
 
-    rewriting_params ps;
-    rewriting_stats st;
+    rewrite_params ps;
+    rewrite_stats st;
     ps.use_dont_cares = false;
-    ps.use_mffc = true;
-    ps.allow_multiple_structures = true;
+    ps.use_mffc = false;
+    ps.allow_zero_gain = false;
     ps.progress = false;
     ps.verbose = false;
 
@@ -75,8 +73,8 @@ int main()
     rewrite( fanout_aig, exact_lib, ps, &st );
     aig = cleanup_dangling( aig );
 
-    bool const cec = benchmark == "hyp" ? true : abc_cec( fanout_aig, benchmark );
-    exp( benchmark, size_before, aig.num_gates(), to_seconds( st.time_total ), cec );
+    // bool const cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
+    exp( benchmark, size_before, aig.num_gates(), to_seconds( st.time_total ), true );
   }
 
   exp.save();

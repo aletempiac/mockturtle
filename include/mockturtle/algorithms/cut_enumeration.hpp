@@ -910,6 +910,11 @@ private:
     }
   }
 
+  void clear_cut_set( uint32_t index )
+  {
+    _cuts[index].clear();
+  }
+
 private:
   /* compressed representation of cuts */
   std::deque<cut_set_t> _cuts;
@@ -1250,6 +1255,15 @@ public:
     ntk.foreach_pi( [&]( auto const& n ) {
       cuts.add_unit_cut( ntk.node_to_index( n ) );
     } );
+  }
+
+  void clear_cuts( node<Ntk> const& n )
+  {
+    const auto index = ntk.node_to_index( n );
+    if ( cuts.cuts( index ).size() == 0 )
+      return;
+
+    cuts.clear_cut_set( index );
   }
 
 private:
