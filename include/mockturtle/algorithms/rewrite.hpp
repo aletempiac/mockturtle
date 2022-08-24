@@ -85,6 +85,9 @@ struct rewrite_params
   /*! \brief Use don't cares for optimization. */
   bool use_dont_cares{false};
 
+  /*! \brief Window size for don't cares calculation. */
+  uint32_t window_size{8u};
+
   /*! \brief Show progress. */
   bool progress{false};
 
@@ -212,7 +215,7 @@ public:
                 pivots.push_back( m );
               } );
 
-              const auto sdc = satisfiability_dont_cares<Ntk, num_vars>( ntk, pivots, 12u );
+              const auto sdc = satisfiability_dont_cares<Ntk, num_vars>( ntk, pivots, ps.window_size );
               const auto dc_npn = apply_npn_transformation( sdc, neg & ~( 1 << num_vars ), perm );
 
               return library.get_supergates( tt_npn, dc_npn, neg, perm );
@@ -317,7 +320,7 @@ public:
                   pivots.push_back( ntk.index_to_node( leaf ) );
                 }
 
-                const auto sdc = satisfiability_dont_cares<Ntk, num_vars>( ntk, pivots, 8u );
+                const auto sdc = satisfiability_dont_cares<Ntk, num_vars>( ntk, pivots, ps.window_size );
                 const auto dc_npn = apply_npn_transformation( sdc, neg & ~( 1 << num_vars ), perm );
 
                 return library.get_supergates( tt_npn, dc_npn, neg, perm );
