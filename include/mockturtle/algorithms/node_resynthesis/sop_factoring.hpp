@@ -55,6 +55,12 @@ struct sop_factoring_params
 
   /*! \brief Factoring considers input and output inverters as additional cost. */
   bool consider_inverter_cost{false};
+
+  /*! \brief Use Boolean division instead of the algebraic one */
+  bool use_boolean_division{false};
+
+  /*! \brief Use espresso to minimize the SOP */
+  bool minimize_with_espresso{false};
 };
 
 /*! \brief Resynthesis function based on SOP factoring.
@@ -94,27 +100,30 @@ public:
   {
     assert( function.num_vars() <= 31 );
 
+    if ( kitty::is_const0( function ) )
+    {
+      /* constant 0 */
+      fn( dest.get_constant( false ) );
+      return;
+    }
+    else if ( kitty::is_const0( ~function ) )
+    {
+      /* constant 1 */
+      fn( dest.get_constant( true ) );
+      return;
+    }
+
     /* derive ISOP */
     bool negated;
     auto cubes = get_isop( function, negated );
 
-    if ( cubes.size() == 0 )
-    {
-      /* constant 0 */
-      fn( dest.get_constant( negated ) );
-      return;
-    }
-    else if ( cubes.size() == 1 && cubes[0]._mask == 0 )
-    {
-      /* constant 1 */
-      fn( dest.get_constant( !negated ) );
-      return;
-    }
-
     /* create literal form of SOP */
     sop_t sop = cubes_to_sop( cubes, function.num_vars() );
 
-    // minimize_sop( sop, function.num_vars() );
+    if ( _ps.minimize_with_espresso )
+    {
+      minimize_sop( sop, function.num_vars(), sop_simplify_type::simp_exact );
+    }
 
     /* derive the factored form */
     signal f = gen_factor_rec( dest, {begin, end}, sop, 2 * function.num_vars() );
@@ -127,25 +136,31 @@ public:
   {
     assert( function.num_vars() <= 31 );
 
+    if ( kitty::is_const0( function & ( ~dc ) ) )
+    {
+      /* constant 0 */
+      fn( dest.get_constant( false ) );
+      return;
+    }
+    else if ( kitty::is_const0( ~( function | dc ) ) )
+    {
+      /* constant 1 */
+      fn( dest.get_constant( true ) );
+      return;
+    }
+
     /* derive ISOP */
     bool negated;
     auto cubes = get_isop_dc( function, dc, negated );
 
-    if ( cubes.size() == 0 )
-    {
-      /* constant 0 */
-      fn( dest.get_constant( negated ) );
-      return;
-    }
-    else if ( cubes.size() == 1 && cubes[0]._mask == 0 )
-    {
-      /* constant 1 */
-      fn( dest.get_constant( !negated ) );
-      return;
-    }
-
     /* create literal form of SOP */
     sop_t sop = cubes_to_sop( cubes, function.num_vars() );
+
+    if ( _ps.minimize_with_espresso )
+    {
+      /* TODO: add external don't cares here */
+      minimize_sop( sop, function.num_vars(), sop_simplify_type::simp_exact );
+    }
 
     /* derive the factored form */
     signal f = gen_factor_rec( dest, {begin, end}, sop, 2 * function.num_vars() );
@@ -259,28 +274,42 @@ private:
     assert( sop.size() );
 
     /* compute the divisor */
-    if ( !sop_quick_divisor( sop, divisor, num_lit ) )
+    if ( _ps.use_boolean_division )
     {
-      /* generate trivial sop circuit */
-      return gen_andor_circuit_rec( ntk, children, sop.begin(), sop.end(), num_lit );
+      if ( !sop_good_divisor_bool( sop, divisor, num_lit ) )
+      {
+        /* generate trivial sop circuit */
+        return gen_andor_circuit_rec( ntk, children, sop.begin(), sop.end(), num_lit );
+      }
+      /* divide the SOP by the divisor */
+      sop_bool_divide( sop, divisor, quotient, reminder, num_lit );
     }
-
-    /* divide the SOP by the divisor */
-    sop_divide( sop, divisor, quotient, reminder );
+    else
+    {
+      if ( !sop_quick_divisor( sop, divisor, num_lit ) )
+      {
+        /* generate trivial sop circuit */
+        return gen_andor_circuit_rec( ntk, children, sop.begin(), sop.end(), num_lit );
+      }
+      /* divide the SOP by the divisor */
+      sop_divide( sop, divisor, quotient, reminder );
+    }
 
     assert( quotient.size() > 0 );
 
-    if ( quotient.size() == 1 )
+    if ( !_ps.use_boolean_division )
     {
-      return lit_factor_rec( ntk, children, sop, quotient[0], num_lit );
+      if ( quotient.size() == 1 )
+      {
+        return lit_factor_rec( ntk, children, sop, quotient[0], num_lit );
+      }
+      sop_make_cube_free( quotient );
+
+      /* divide the SOP by the quotient */
+      sop_divide( sop, quotient, divisor, reminder );
     }
 
-    sop_make_cube_free( quotient );
-
-    /* divide the SOP by the quotient */
-    sop_divide( sop, quotient, divisor, reminder );
-
-    if ( sop_is_cube_free( divisor ) )
+    if ( sop_is_cube_free( divisor ) || _ps.use_boolean_division )
     {
       signal div_s = gen_factor_rec( ntk, children, divisor, num_lit );
       signal quot_s = gen_factor_rec( ntk, children, quotient, num_lit );

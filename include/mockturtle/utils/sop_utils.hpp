@@ -44,6 +44,12 @@ extern "C"
 namespace mockturtle
 {
 
+enum class sop_simplify_type : uint32_t
+{
+  simp_espresso = 0,
+  simp_exact = 1
+};
+
 namespace detail
 {
 
@@ -251,6 +257,37 @@ inline pset_family espresso_minimize( pset_family onset, pset_family dcset )
 
   // perform minimization
   onset = espresso( onset, dcset, offset );
+
+  // free covers
+  sf_free( offset );
+
+  if ( dcset_tofree )
+    sf_free( dcset );
+
+  return onset;
+}
+
+inline pset_family exact_minimize( pset_family onset, pset_family dcset )
+{
+  pset_family offset;
+  bool dcset_tofree;
+
+  /* create the dcset */
+  dcset_tofree = ( dcset == NULL );
+  if ( dcset == NULL )
+      dcset = sf_new( 1, cube.size );
+
+  dcset->wsize = onset->wsize;
+  dcset->sf_size = onset->sf_size;
+
+  // derive the offset
+  if ( dcset->sf_size == 0 || dcset->count == 0 )
+      offset = complement( cube1list( onset ) );
+  else
+      offset = complement( cube2list( onset, dcset ) ); 
+
+  // perform minimization
+  onset = minimize_exact( onset, dcset, offset, 1 );
 
   // free covers
   sf_free( offset );
@@ -593,17 +630,7 @@ inline void sop_bool_divide( std::vector<uint64_t>& divident, std::vector<uint64
   onset = complement( cube2list( offset, dcset ) );
 
   /* smoothing x' from the onset */
-  // for ( int i = 0; i < onset->count; ++i )
-  // {
-  //   set = GETSET( onset, i );
-  //   int lit = GETINPUT( set, num_lit / 2 );
-  //   if ( lit == ESPRESSO_ZERO )
-  //   {
-  //     set_insert( set, num_lit + 1 );
-  //   }
-  // }
-
-  onset = espresso( onset, dcset, offset );
+  onset = minimize_exact( onset, dcset, offset, 0 );
 
   /* TODO: bug fix reminder could contains x' (return algebraic division if this is the case) */
   for ( int i = 0; i < onset->count; ++i )
@@ -900,14 +927,17 @@ inline std::vector<uint64_t> cubes_to_sop( std::vector<kitty::cube> const& cubes
   return sop;
 }
 
-inline void minimize_sop( std::vector<uint64_t>& sop, uint32_t const num_vars )
+inline void minimize_sop( std::vector<uint64_t>& sop, uint32_t const num_vars, sop_simplify_type type = sop_simplify_type::simp_espresso )
 {
   pset_family cover;
 
   define_cube_size( static_cast<int>( num_vars ) );
   cover = detail::sop_to_espresso( sop, num_vars );
 
-  cover = detail::espresso_minimize( cover, NULL );
+  if ( type == sop_simplify_type::simp_espresso )
+    cover = detail::espresso_minimize( cover, NULL );
+  else
+    cover = detail::exact_minimize( cover, NULL );
 
   sop = detail::espresso_to_sop( cover );
 
