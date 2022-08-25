@@ -73,8 +73,8 @@ int main()
     rewrite( fanout_aig, exact_lib, ps, &st );
     aig = cleanup_dangling( aig );
 
-    // bool const cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
-    exp( benchmark, size_before, aig.num_gates(), to_seconds( st.time_total ), true );
+    bool const cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
+    exp( benchmark, size_before, aig.num_gates(), to_seconds( st.time_total ), cec );
   }
 
   exp.save();

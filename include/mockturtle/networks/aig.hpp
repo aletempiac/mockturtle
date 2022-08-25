@@ -27,6 +27,7 @@
   \file aig.hpp
   \brief AIG logic network implementation
 
+  \author Alessandro Tempia Calvino
   \author Heinz Riener
   \author Jinzheng Tu
   \author Mathias Soeken
@@ -465,11 +466,11 @@ public:
     /* trivial cases */
     if ( a.index == b.index )
     {
-      return ( a.complement == b.complement ) ? get_node( a ) : 0;
+      return ( a.complement == b.complement ) ? a.index : 0;
     }
     else if ( a.index == 0 )
     {
-      return a.complement ? get_node( b ) : 0;
+      return a.complement ? b.index : 0;
     }
 
     storage::element_type::node_type node;

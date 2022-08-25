@@ -767,6 +767,12 @@ public:
     return _database;
   }
 
+  /*! \brief Returns the NPN database of structures. */
+  const Ntk& get_database() const
+  {
+    return _database;
+  }
+
   /*! \brief Get inverter information.
    *
    * Returns area, and delay cost of the inverter.

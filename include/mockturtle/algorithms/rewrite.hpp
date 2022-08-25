@@ -561,8 +561,42 @@ private:
     if ( hashed )
     {
       /* try hash */
-      /* only AIG is supported now */
-      auto val = ntk.has_and( node_data[0], node_data[1] );
+      std::optional<node<Ntk>> val;
+      do
+      {
+        if constexpr ( has_is_and_v<Ntk> && has_has_and_v<Ntk> )
+        {
+          if ( db.is_and( n ) )
+          {
+            val = ntk.has_and( node_data[0], node_data[1] );
+            break;
+          }
+        }
+        if constexpr ( has_is_xor_v<Ntk> && has_has_xor_v<Ntk> )
+        {
+          if ( db.is_xor( n ) )
+          {
+            val = ntk.has_xor( node_data[0], node_data[1] );
+            break;
+          }
+        }
+        if constexpr ( has_is_maj_v<Ntk> && has_has_maj_v<Ntk> )
+        {
+          if ( db.is_maj( n ) )
+          {
+            val = ntk.has_maj( node_data[0], node_data[1], node_data[2] );
+            break;
+          }
+        }
+        if constexpr ( has_is_xor3_v<Ntk> && has_has_xor3_v<Ntk> )
+        {
+          if ( db.is_xor3( n ) )
+          {
+            val = ntk.has_xor3( node_data[0], node_data[1], node_data[3] );
+            break;
+          }
+        }
+      } while ( false );
 
       if ( val.has_value() )
       {
