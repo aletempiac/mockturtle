@@ -55,12 +55,12 @@ void write_genlib( std::vector<gate> const& gates, std::ostream& os )
     os << "GATE ";
     std::string name = g.name;
     std::string expression = g.expression;
-    const uint32_t name_spacing = std::max( 29u, static_cast<uint32_t>( name.length() + 1 ) );
+    const uint32_t name_spacing = std::max( 32u, static_cast<uint32_t>( name.length() + 1 ) );
 
     os << name.append( std::string( name_spacing - name.length(), ' ' ) );
     os << fmt::format( "{:>5.0f} ", g.area );
 
-    const uint32_t expr_spacing = std::max( 29u, static_cast<uint32_t>( expression.length() + 2 ) );
+    const uint32_t expr_spacing = std::max( 40u, static_cast<uint32_t>( expression.length() + 2 ) );
     os << g.output_name << "=" << expression << ";";
 
     if ( g.pins.size() != 0 )
