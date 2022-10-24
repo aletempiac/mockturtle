@@ -27,6 +27,7 @@
   \file resubstitution.hpp
   \brief Generic resubstitution framework
 
+  \author Alessandro Tempia Calvino
   \author Eleonora Testa
   \author Heinz Riener
   \author Mathias Soeken
@@ -72,6 +73,8 @@ struct resubstitution_params
 
   /*! \brief Maximum fanout of a node to be considered as divisor. */
   uint32_t skip_fanout_limit_for_divisors{ 100 };
+
+  bool zero_literal_resub{false};
 
   /*! \brief Show progress. */
   bool progress{ false };
@@ -275,6 +278,213 @@ public:
     }
 
     return true;
+  }
+
+private:
+  void collect_divisors_rec( node const& n )
+  {
+    /* skip visited nodes */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+    {
+      return;
+    }
+    ntk.set_visited( n, ntk.trav_id() );
+
+    ntk.foreach_fanin( n, [&]( const auto& f ) {
+      collect_divisors_rec( ntk.get_node( f ) );
+    } );
+
+    /* collect the internal nodes */
+    if ( ntk.value( n ) == 0 && n != 0 ) /* ntk.fanout_size( n ) */
+    {
+      divs.emplace_back( n );
+    }
+  }
+
+  bool collect_divisors( node const& root )
+  {
+    auto max_depth = std::numeric_limits<uint32_t>::max();
+    if ( ps.preserve_depth )
+    {
+      max_depth = ntk.level( root ) - 1;
+    }
+    /* add the leaves of the cuts to the divisors */
+    divs.clear();
+
+    ntk.incr_trav_id();
+    for ( const auto& l : leaves )
+    {
+      divs.emplace_back( l );
+      ntk.set_visited( l, ntk.trav_id() );
+    }
+
+    /* mark nodes in the MFFC */
+    for ( const auto& t : mffc )
+    {
+      ntk.set_value( t, 1 );
+    }
+
+    /* collect the cone (without MFFC) */
+    collect_divisors_rec( root );
+
+    /* unmark the current MFFC */
+    for ( const auto& t : mffc )
+    {
+      ntk.set_value( t, 0 );
+    }
+
+    /* check if the number of divisors is not exceeded */
+    if ( divs.size() + mffc.size() - leaves.size() > ps.max_divisors - ps.max_pis )
+    {
+      return false;
+    }
+    uint32_t limit = ps.max_divisors - ps.max_pis - mffc.size() + leaves.size();
+
+    /* explore the fanouts, which are not in the MFFC */
+    bool quit = false;
+    for ( auto i = 0u; i < divs.size(); ++i )
+    {
+      auto const d = divs.at( i );
+
+      if ( ntk.fanout_size( d ) > ps.skip_fanout_limit_for_divisors )
+      {
+        continue;
+      }
+      if ( divs.size() >= limit )
+      {
+        break;
+      }
+
+      /* if the fanout has all fanins in the set, add it */
+      ntk.foreach_fanout( d, [&]( node const& p ) {
+        if ( ntk.visited( p ) == ntk.trav_id() || ntk.level( p ) > max_depth )
+        {
+          return true; /* next fanout */
+        }
+
+        bool all_fanins_visited = true;
+        ntk.foreach_fanin( p, [&]( const auto& g ) {
+          if ( ntk.visited( ntk.get_node( g ) ) != ntk.trav_id() )
+          {
+            all_fanins_visited = false;
+            return false; /* terminate fanin-loop */
+          }
+          return true; /* next fanin */
+        } );
+
+        if ( !all_fanins_visited )
+          return true; /* next fanout */
+
+        bool has_root_as_child = false;
+        ntk.foreach_fanin( p, [&]( const auto& g ) {
+          if ( ntk.get_node( g ) == root )
+          {
+            has_root_as_child = true;
+            return false; /* terminate fanin-loop */
+          }
+          return true; /* next fanin */
+        } );
+
+        if ( has_root_as_child )
+        {
+          return true; /* next fanout */
+        }
+
+        divs.emplace_back( p );
+        ntk.set_visited( p, ntk.trav_id() );
+
+        /* quit computing divisors if there are too many of them */
+        if ( divs.size() >= limit )
+        {
+          quit = true;
+          return false; /* terminate fanout-loop */
+        }
+
+        return true; /* next fanout */
+      } );
+
+      if ( quit )
+      {
+        break;
+      }
+    }
+
+    /* note: different from the previous version, now we do not add MFFC nodes into divs */
+    assert( root == mffc.at( mffc.size() - 1u ) );
+    /* note: this assertion makes sure window_simulator does not go out of bounds */
+    assert( divs.size() + mffc.size() - leaves.size() <= ps.max_divisors - ps.max_pis );
+
+    return true;
+  }
+
+private:
+  Ntk const& ntk;
+  resubstitution_params ps;
+  stats& st;
+
+  cut_comp cuts;
+  cut_comp_statistics_type cuts_st;
+
+public:
+  std::vector<node> leaves;
+  std::vector<node> divs;
+  std::vector<node> mffc;
+};
+
+template<class Ntk, class MffcMgr = node_mffc_factor<Ntk>, typename MffcRes = std::pair<uint32_t, uint32_t>, typename cut_comp = detail::reconvergence_driven_cut_impl<Ntk>>
+class factor_divisor_collector
+{
+public:
+  using stats = default_collector_stats;
+  using mffc_result_t = MffcRes;
+  using node = typename Ntk::node;
+
+  using cut_comp_parameters_type = typename cut_comp::parameters_type;
+  using cut_comp_statistics_type = typename cut_comp::statistics_type;
+
+public:
+  explicit factor_divisor_collector( Ntk const& ntk, resubstitution_params const& ps, stats& st )
+    : ntk( ntk ), ps( ps ), st( st ), cuts( ntk, cut_comp_parameters_type{ps.max_pis}, cuts_st )
+  {
+  }
+
+  bool run( node const& n, mffc_result_t& potential_gain )
+  {
+    /* skip nodes with many fanouts */
+    if ( ntk.fanout_size( n ) > ps.skip_fanout_limit_for_roots )
+    {
+      return false;
+    }
+
+    /* compute a reconvergence-driven cut */
+    leaves = call_with_stopwatch( st.time_cuts, [&]() {
+        return cuts.run( { n } ).first;
+    });
+    st.num_total_leaves += leaves.size();
+
+    /* collect the MFFC */
+    MffcMgr mffc_mgr( ntk );
+    potential_gain = call_with_stopwatch( st.time_mffc, [&]() {
+      return mffc_mgr.run( n, leaves, mffc );
+    });
+
+    /* collect the divisor nodes in the cut */
+    bool div_comp_success = call_with_stopwatch( st.time_divs, [&]() {
+      return collect_divisors( n );
+    });
+
+    if ( !div_comp_success )
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  void restore( node const& n )
+  {
+    MffcMgr mffc_mgr( ntk );
+    mffc_mgr.reference_mffc( n, leaves );
   }
 
 private:
@@ -766,6 +976,213 @@ private:
   /* temporary statistics for progress bar */
   uint32_t candidates{ 0 };
   uint32_t last_gain{ 0 };
+
+  /* events */
+  std::shared_ptr<typename network_events<Ntk>::add_event_type> add_event;
+  std::shared_ptr<typename network_events<Ntk>::modified_event_type> modified_event;
+  std::shared_ptr<typename network_events<Ntk>::delete_event_type> delete_event;
+};
+
+/*! \brief The top-level factor resubstitution framework.
+ *
+ * \param ResubEngine The engine that computes the resubtitution for a given root
+ * node and divisors. One can choose from `window_based_resub_engine` which
+ * does complete simulation within small windows, or `simulation_based_resub_engine`
+ * which does partial simulation on the whole circuit.
+ *
+ * \param DivCollector Collects divisors near a given root node, and compute
+ * the potential gain (MFFC size or its variants).
+ * Currently only `default_divisor_collector` is implemented, but
+ * a frontier-based approach may be integrated in the future.
+ * When using `window_based_resub_engine`, the `DivCollector` should prepare
+ * three public data members: `leaves`, `divs`, and `mffc` (see documentation
+ * of `default_divisor_collector` for details). When using `simulation_based_resub_engine`,
+ * only `divs` is needed.
+ */
+template<class Ntk, class ResubEngine = window_based_resub_engine<Ntk, kitty::dynamic_truth_table>, class DivCollector = factor_divisor_collector<Ntk>>
+class factor_resubstitution_impl
+{
+public:
+  using engine_st_t = typename ResubEngine::stats;
+  using collector_st_t = typename DivCollector::stats;
+  using node = typename Ntk::node;
+  using signal = typename Ntk::signal;
+  using resub_callback_t = std::function<bool( Ntk&, node const&, signal const& )>;
+  using mffc_result_t = typename ResubEngine::mffc_result_t;
+
+  /*! \brief Constructor of the top-level resubstitution framework.
+   *
+   * \param ntk The network to be optimized.
+   * \param ps Resubstitution parameters.
+   * \param st Top-level resubstitution statistics.
+   * \param engine_st Statistics of the resubstitution engine.
+   * \param collector_st Statistics of the divisor collector.
+   * \param callback Callback function when a resubstitution is found.
+   */
+  explicit factor_resubstitution_impl( Ntk& ntk, resubstitution_params const& ps, resubstitution_stats& st, engine_st_t& engine_st, collector_st_t& collector_st )
+      : ntk( ntk ), ps( ps ), st( st ), engine_st( engine_st ), collector_st( collector_st )
+  {
+    static_assert( std::is_same_v<typename ResubEngine::mffc_result_t, typename DivCollector::mffc_result_t>, "MFFC result type of the engine and the collector are different" );
+
+    st.initial_size = ntk.num_gates();
+
+    register_events();
+  }
+
+  ~factor_resubstitution_impl()
+  {
+    ntk.events().release_add_event( add_event );
+    ntk.events().release_modified_event( modified_event );
+    ntk.events().release_delete_event( delete_event );
+  }
+
+  void run( resub_callback_t const& callback = substitute_fn<Ntk> )
+  {
+    stopwatch t( st.time_total );
+
+    /* start the managers */
+    DivCollector collector( ntk, ps, collector_st );
+    ResubEngine resub_engine( ntk, ps, engine_st );
+    call_with_stopwatch( st.time_resub, [&]() {
+      resub_engine.init();
+    });
+
+    progress_bar pbar{ntk.size(), "resub |{0}| node = {1:>4}   cand = {2:>4}   est. gain = {3:>5}", ps.progress};
+
+    auto const size = ntk.num_gates();
+    ntk.foreach_gate( [&]( auto const& n, auto i ) {
+      if ( i >= size )
+      {
+        return false; /* terminate */
+      }
+
+      pbar( i, i, candidates, st.estimated_gain );
+
+      /* compute cut, collect divisors, compute MFFC */
+      mffc_result_t potential_gain;
+      const auto collector_success = call_with_stopwatch( st.time_divs, [&]() {
+        return collector.run( n, potential_gain );
+      });
+      if ( !collector_success )
+      {
+        /* restore fanout_size info */
+        collector.restore( n );
+        return true; /* next */
+      }
+
+      /* assign weights to the divisors based on the fanout */
+      for ( auto const& t : collector.divs )
+      {
+        ntk.set_value( t, ( ntk.fanout_size( t ) > 1u ) || ( ntk.is_pi( t ) ) ? 0u : 1u );
+      }
+
+      /* restore fanout_size info */
+      collector.restore( n );
+
+      /* update statistics */
+      last_gain = 0;
+      st.num_total_divisors += collector.divs.size();
+
+      /* try to find a resubstitution with the divisors */
+      auto g = call_with_stopwatch( st.time_resub, [&]() {
+        if constexpr ( ResubEngine::require_leaves_and_mffc ) /* window-based */
+        {
+          return resub_engine.run( n, collector.leaves, collector.divs, collector.mffc, potential_gain, last_gain );
+        }
+        else /* simulation-based */
+        {
+          return resub_engine.run( n, collector.divs, potential_gain, last_gain );
+        }
+      });
+
+      /* restore values */
+      for ( auto const& t : collector.divs )
+      {
+        ntk.set_value( t, 0u );
+      }
+
+      if ( !g )
+      {
+        return true; /* next */
+      }
+
+      /* update progress bar */
+      candidates++;
+      st.estimated_gain += last_gain;
+
+      /* update network */
+      call_with_stopwatch( st.time_callback, [&]() {
+        return callback( ntk, n, *g );
+      } );
+
+      return true; /* next */
+    } );
+  }
+
+private:
+  void register_events()
+  {
+    auto const update_level_of_new_node = [&]( const auto& n ) {
+      ntk.resize_levels();
+      update_node_level( n );
+    };
+
+    auto const update_level_of_existing_node = [&]( node const& n, const auto& old_children ) {
+      (void)old_children;
+      ntk.resize_levels();
+      update_node_level( n );
+    };
+
+    auto const update_level_of_deleted_node = [&]( const auto& n ) {
+      ntk.set_level( n, -1 );
+    };
+
+    add_event = ntk.events().register_add_event( update_level_of_new_node );
+    modified_event = ntk.events().register_modified_event( update_level_of_existing_node );
+    delete_event = ntk.events().register_delete_event( update_level_of_deleted_node );
+  }
+
+  /* maybe should move to depth_view */
+  void update_node_level( node const& n, bool top_most = true )
+  {
+    uint32_t curr_level = ntk.level( n );
+
+    uint32_t max_level = 0;
+    ntk.foreach_fanin( n, [&]( const auto& f ) {
+      auto const p = ntk.get_node( f );
+      auto const fanin_level = ntk.level( p );
+      if ( fanin_level > max_level )
+      {
+        max_level = fanin_level;
+      }
+    } );
+    ++max_level;
+
+    if ( curr_level != max_level )
+    {
+      ntk.set_level( n, max_level );
+
+      /* update only one more level */
+      if ( top_most )
+      {
+        ntk.foreach_fanout( n, [&]( const auto& p ) {
+          update_node_level( p, false );
+        } );
+      }
+    }
+  }
+
+private:
+  Ntk& ntk;
+
+  resubstitution_params const& ps;
+  resubstitution_stats& st;
+  engine_st_t& engine_st;
+  collector_st_t& collector_st;
+
+  /* temporary statistics for progress bar */
+  uint32_t candidates{0};
+  uint32_t last_gain{0};
 
   /* events */
   std::shared_ptr<typename network_events<Ntk>::add_event_type> add_event;

@@ -30,6 +30,7 @@
   class `node_mffc_inside`, class `window_simulator` (originally `simulator`),
   and class `default_resub_functor` moved from resubstitution.hpp
 
+  \author Alessandro Tempia Calvino
   \author Heinz Riener
   \author Siang-Yun (Sonia) Lee
 */
@@ -508,6 +509,192 @@ private:
 private:
   Ntk const& ntk;
 }; /* node_mffc_inside */
+
+template<typename Ntk>
+class node_mffc_factor
+{
+public:
+  using node = typename Ntk::node;
+
+public:
+  explicit node_mffc_factor( Ntk const& ntk )
+      : ntk( ntk )
+  {
+    static_assert( has_incr_fanout_size_v<Ntk>, "Ntk does not implement the incr_fanout_size method" );
+    static_assert( has_decr_fanout_size_v<Ntk>, "Ntk does not implement the decr_fanout_size method" );
+    static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
+    static_assert( has_incr_trav_id_v<Ntk>, "Ntk does not implement the incr_trav_id method" );
+    static_assert( has_trav_id_v<Ntk>, "Ntk does not implement the trav_id method" );
+    static_assert( has_set_visited_v<Ntk>, "Ntk does not implement the set_visited method" );
+    static_assert( has_visited_v<Ntk>, "Ntk does not implement the visited method" );
+    static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
+    static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+    static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  }
+
+  template<typename Fn>
+  std::pair<uint32_t, uint32_t> call_on_mffc_and_count( node const& n, std::vector<node> const& leaves, Fn&& fn )
+  {
+    /* increment the fanout counters for the leaves */
+    uint32_t ref_leaves = 0;
+    uint32_t index = 0;
+    uint32_t mffc_size = 0;
+
+    for ( const auto& l : leaves )
+    {
+      if ( !ntk.is_pi( l ) && ntk.fanout_size( l ) == 1 )
+        ref_leaves |= 1 << index;
+
+      ntk.incr_fanout_size( l );
+      ++index;
+    }
+
+    /* dereference the node */
+    auto count1 = measure_literals_dereference_rec( n, mffc_size );
+
+    /* call `fn` on MFFC nodes */
+    ntk.incr_trav_id();
+    node_mffc_cone_rec( n, true, fn );
+
+    /* dereference leaves */
+    index = 0;
+    for ( const auto& l : leaves )
+    {
+      ntk.decr_fanout_size( ntk.index_to_node( l ) );
+
+      if ( ntk.fanout_size( l ) == 0 && ( ( ref_leaves >> index ) & 1 ) == 1 )
+        count1 -= 2;
+      if ( ntk.fanout_size( l ) == 0 && ( ( ref_leaves >> index ) & 1 ) != 1 )
+        --count1;
+      else if ( !ntk.is_pi( l ) && ntk.fanout_size( l ) == 1 && ( ( ref_leaves >> index ) & 1 ) != 1 )
+        ++count1;
+      ++index;
+    }
+
+    return { count1, mffc_size };
+  }
+
+  std::pair<uint32_t, uint32_t> run( node const& n, std::vector<node> const& leaves, std::vector<node>& inside )
+  {
+    inside.clear();
+    return call_on_mffc_and_count( n, leaves, [&inside]( node const& m ){ inside.emplace_back( m ); } );
+  }
+
+  void reference_mffc( node const& n, std::vector<node> const& leaves )
+  {
+    /* increment the fanout counters for the leaves */
+    for ( const auto& l : leaves )
+    {
+      ntk.incr_fanout_size( l );
+    }
+
+    node_ref_rec( n );
+
+    /* dereference leaves */
+    for ( const auto& l : leaves )
+    {
+      ntk.decr_fanout_size( l );
+    }
+  }
+
+private:
+  uint32_t measure_literals_dereference_rec( node const& n, uint32_t& mffc_size )
+  {
+    /* terminate? */
+    if ( ntk.is_constant( n ) )
+      return 0;
+    
+    if ( ntk.is_pi( n ) )
+      return 1u;
+
+    mffc_size += 1;
+
+    /* recursively dereference and count literals */
+    uint32_t lits = 0;
+    ntk.foreach_fanin( n, [&]( auto const& s ) {
+      auto g = ntk.get_node( s );
+      if ( ntk.is_constant( g ) )
+      {
+        ntk.decr_fanout_size( g );
+        return;
+      }
+      if ( ntk.is_pi( g ) )
+      {
+        ntk.decr_fanout_size( g );
+        ++lits;
+        return;
+      }
+
+      auto ref = ntk.decr_fanout_size( g );
+      if ( ref == 0 )
+      {
+        lits += measure_literals_dereference_rec( g, mffc_size );
+      }
+      else
+      {
+        /* add literal */
+        ++lits;
+        if ( ref == 1 )
+          ++lits;
+      }
+    } );
+    return lits;
+  }
+
+  /* ! \brief Reference the node's MFFC */
+  int32_t node_ref_rec( node const& n )
+  {
+    if ( ntk.is_pi( n ) )
+      return 0;
+
+    int32_t counter = 1;
+    ntk.foreach_fanin( n, [&]( const auto& f ) {
+      auto const& p = ntk.get_node( f );
+
+      if ( ntk.is_pi( p ) )
+      {
+        ntk.incr_fanout_size( p );
+        return;
+      }
+
+      auto v = ntk.fanout_size( p );
+      ntk.incr_fanout_size( p );
+      if ( v == 0 )
+      {
+        counter += node_ref_rec( p );
+      }
+    } );
+
+    return counter;
+  }
+
+  template<typename Fn>
+  void node_mffc_cone_rec( node const& n, bool top_most, Fn&& fn )
+  {
+    /* skip visited nodes */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+    {
+      return;
+    }
+    ntk.set_visited( n, ntk.trav_id() );
+
+    if ( !top_most && ( ntk.is_pi( n ) || ntk.fanout_size( n ) > 0 ) )
+    {
+      return;
+    }
+
+    /* recurse on children */
+    ntk.foreach_fanin( n, [&]( const auto& f ) {
+      node_mffc_cone_rec( ntk.get_node( f ), false, fn );
+    } );
+
+    /* collect the internal nodes */
+    fn( n );
+  }
+
+private:
+  Ntk const& ntk;
+}; /* node_mffc_factor */
 
 template<typename Ntk, typename TT>
 class window_simulator
