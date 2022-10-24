@@ -71,28 +71,28 @@ struct rewrite_params
   cut_enumeration_params cut_enumeration_ps{};
 
   /*! \brief Rewrite using MFFC instead of cuts */
-  bool use_mffc{false};
+  bool use_mffc{ false };
 
-  /*! \brief If true, candidates are only accepted if they do not increase logic level of node. */
-  bool preserve_depth{false};
+  /*! \brief TODO: If true, candidates are only accepted if they do not increase logic level of node. */
+  bool preserve_depth{ false };
 
   /*! \brief Allow rewrite with multiple structures */
-  bool allow_multiple_structures{true};
+  bool allow_multiple_structures{ true };
 
   /*! \brief Allow zero-gain substitutions */
-  bool allow_zero_gain{false};
+  bool allow_zero_gain{ false };
 
   /*! \brief Use don't cares for optimization. */
-  bool use_dont_cares{false};
+  bool use_dont_cares{ false };
 
   /*! \brief Window size for don't cares calculation. */
-  uint32_t window_size{8u};
+  uint32_t window_size{ 8u };
 
   /*! \brief Show progress. */
   bool progress{false};
 
   /*! \brief Be verbose. */
-  bool verbose{false};
+  bool verbose{ false };
 };
 
 /*! \brief Statistics for rewrite.
