@@ -155,6 +155,7 @@ aig_network abc_opt( aig_network const& aig, std::string const& script )
   return res;
 }
 
+#pragma region explore
 template<class Lib>
 void low_effort_optimization( aig_network& aig, int32_t opt_iterations, bool report_steps, Lib const& exact_lib, sop_factoring<aig_network>& sop_resyn )
 {
@@ -1177,7 +1178,181 @@ void optimizer5( aig_network& aig, uint32_t opt_iterations, bool report_steps )
     }
   }
 }
+#pragma endregion
 
+#pragma region lastest code
+void resub_opt( aig_network& aig, uint32_t k, uint32_t n, bool report_steps )
+{
+  resubstitution_params ps;
+  resubstitution_stats st;
+
+  ps.max_pis = k;
+  ps.max_inserts = n;
+  ps.progress = false;
+  factor_resubstitution( aig, ps, &st );
+  aig = cleanup_dangling( aig );
+
+  if ( report_steps )
+    std::cout << fmt::format( "rs -K {} -N {}\t gates = {};\t lits = {}\n", k, n, aig.num_gates(), count_literals( aig ) );
+}
+
+template<class Lib>
+void rewrite_opt( aig_network& aig, Lib const& exact_lib, bool lit_cost, bool zero_gain, bool report_steps )
+{
+  rewrite_params ps;
+  rewrite_stats st;
+  ps.use_mffc = false;
+  ps.optimize_literal_cost = lit_cost;
+  ps.allow_zero_gain = zero_gain;
+
+  fanout_view fanout_aig{aig};
+  rewrite( fanout_aig, exact_lib, ps, &st );
+  aig = cleanup_dangling( aig );
+
+  if ( report_steps )
+    std::cout << fmt::format( "{}         \t gates = {};\t lits = {}\n", zero_gain ? "rwz" : "rw", aig.num_gates(), count_literals( aig ) );
+}
+
+void refactor_opt( aig_network& aig, sop_factoring<aig_network>& sop_resyn, bool zero_gain, bool report_steps )
+{
+  fanout_view fanout_aig{aig};
+  refactoring_params fps;
+  fps.max_pis = 10;
+  fps.allow_zero_gain = zero_gain;
+
+  refactoring( aig, sop_resyn, fps );
+
+  aig = cleanup_dangling( aig );
+
+  if ( report_steps )
+    std::cout << fmt::format( "{}         \t gates = {};\t lits = {}\n", zero_gain ? "rfz" : "rf", aig.num_gates(), count_literals( aig ) );
+}
+
+void refactor_opt_new( aig_network& aig, sop_factoring<aig_network>& sop_resyn, bool zero_gain, bool report_steps )
+{
+  fanout_view fanout_aig{aig};
+  win_refactoring_params fps;
+  fps.max_pis = 10;
+  fps.allow_zero_gain = zero_gain;
+
+  win_refactoring( aig, sop_resyn, fps );
+
+  aig = cleanup_dangling( aig );
+
+  if ( report_steps )
+    std::cout << fmt::format( "{}         \t gates = {};\t lits = {}\n", zero_gain ? "rfz" : "rf", aig.num_gates(), count_literals( aig ) );
+}
+
+void optimizer_old( aig_network& aig, uint32_t opt_iterations, bool report_steps )
+{
+  sop_factoring_params sop_ps;
+  sop_ps.use_boolean_division = false;
+  sop_ps.minimize_with_espresso = false;
+  sop_factoring<aig_network> sop_resyn( sop_ps );
+
+
+  xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> resyn;
+  exact_library_params eps;
+  exact_library<aig_network, decltype( resyn )> exact_lib( resyn, eps );
+
+  int opt_i = opt_iterations;
+  while( opt_i-- > 0 )
+  {
+    const uint32_t lits_loop_before = count_literals( aig );
+
+    resub_opt( aig, 6, 1, report_steps);
+
+    rewrite_opt( aig, exact_lib, true, false, report_steps );
+
+    resub_opt( aig, 6, 2, report_steps);
+
+    refactor_opt(aig, sop_resyn, false, report_steps );
+
+    resub_opt( aig, 8, 1, report_steps);
+
+    aig_balance( aig );
+
+    resub_opt( aig, 8, 2, report_steps);
+
+    rewrite_opt( aig, exact_lib, true, false, report_steps );
+
+    resub_opt( aig, 10, 2, report_steps);
+
+    rewrite_opt( aig, exact_lib, true, true, report_steps );
+
+    resub_opt( aig, 10, 2, report_steps);
+
+    aig_balance( aig );
+
+    resub_opt( aig, 12, 1, report_steps);
+
+    refactor_opt(aig, sop_resyn, true, report_steps );
+
+    resub_opt( aig, 12, 2, report_steps);
+
+    rewrite_opt( aig, exact_lib, true, true, report_steps );
+
+    if ( count_literals( aig ) >= lits_loop_before )
+      break;
+  }
+
+  /* size recovery */
+  rewrite_opt( aig, exact_lib, true, false, report_steps );
+}
+
+void optimizer( aig_network& aig, uint32_t opt_iterations, bool report_steps )
+{
+  sop_factoring_params sop_ps;
+  sop_ps.use_boolean_division = false;
+  sop_ps.minimize_with_espresso = false;
+  sop_factoring<aig_network> sop_resyn( sop_ps );
+
+  xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> resyn;
+  exact_library_params eps;
+  exact_library<aig_network, decltype( resyn )> exact_lib( resyn, eps );
+
+  uint32_t lits_loop_before = count_literals( aig );
+
+  int opt_i = opt_iterations;
+  while( opt_i-- > 0 )
+  {
+    resub_opt( aig, 12, 2, report_steps );
+
+    refactor_opt_new( aig, sop_resyn, true, report_steps );
+
+    refactor_opt_new( aig, sop_resyn, true, report_steps );
+
+    resub_opt( aig, 10, 3, report_steps );
+
+    rewrite_opt( aig, exact_lib, true, false, report_steps );
+
+    aig_balance( aig );
+    if ( report_steps )
+        std::cout << fmt::format( "b          \t gates = {};\t lits = {}\n", aig.num_gates(), count_literals( aig ) );
+
+    resub_opt( aig, 12, 2, report_steps );
+
+    if ( opt_i == 0 || count_literals( aig ) >= lits_loop_before )
+      break;
+    
+    lits_loop_before = count_literals( aig );
+
+    rewrite_opt( aig, exact_lib, false, true, report_steps );
+
+    resub_opt( aig, 12, 2, report_steps );
+
+    refactor_opt_new( aig, sop_resyn, true, report_steps );
+
+    resub_opt( aig, 12, 2, report_steps );
+
+    refactor_opt_new( aig, sop_resyn, true, report_steps );
+
+    rewrite_opt( aig, exact_lib, false, true, report_steps );
+
+    refactor_opt_new( aig, sop_resyn, true, report_steps );
+  }
+}
+#pragma endregion
 
 int main()
 {
