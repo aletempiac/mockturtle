@@ -33,12 +33,13 @@
 
 #pragma once
 
-#include <unordered_map>
 #include <vector>
 
 #include <kitty/hash.hpp>
 #include <kitty/operations.hpp>
 #include <kitty/operators.hpp>
+
+#include <parallel_hashmap/phmap.h>
 
 namespace mockturtle
 {
@@ -110,7 +111,7 @@ public:
   auto size() const { return _data.size(); }
 
 private:
-  std::unordered_map<TT, uint32_t, kitty::hash<TT>> _indexes;
+  phmap::flat_hash_map<TT, uint32_t, kitty::hash<TT>> _indexes;
   std::vector<TT> _data;
 };
 

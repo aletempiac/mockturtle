@@ -71,13 +71,13 @@ struct emap_params
 {
   emap_params()
   {
-    cut_enumeration_ps.cut_limit = 49;
+    cut_enumeration_ps.cut_limit = 16;
     cut_enumeration_ps.minimize_truth_table = true;
   }
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut limit is 49. By default,
+   * The default cut limit is 31. By default,
    * truth table minimization is performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
@@ -85,8 +85,8 @@ struct emap_params
   /*! \brief Required time for delay optimization. */
   double required_time{ 0.0f };
 
-  /*! \brief Skip delay round for area optimization. */
-  bool skip_delay_round{ false };
+  /*! \brief Do area-oriented mapping. */
+  bool area_oriented_mapping{ false };
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
@@ -101,7 +101,7 @@ struct emap_params
   uint32_t switching_activity_patterns{ 2048u };
 
   /*! \brief Remove the cuts that are contained in others */
-  bool remove_dominated_cuts{ true };
+  bool remove_dominated_cuts{ false };
 
   /*! \brief Be verbose. */
   bool verbose{ false };
@@ -155,12 +155,16 @@ namespace detail
 {
 
 #pragma region cut set
-template<unsigned NInputs>
+template<unsigned NInputs, unsigned CutSize>
 struct cut_enumeration_emap_cut
 {
+  /* stats */
   double delay{ 0 };
   double flow{ 0 };
   bool ignore{ false };
+
+  /* function */
+  kitty::static_truth_table<CutSize> function;
 
   /* list of supergates matching the cut for positive and negative output phases */
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
@@ -504,12 +508,12 @@ template<class Ntk, unsigned CutSize, unsigned NInputs, classification_type Conf
 class emap_impl
 {
 public:
-  static constexpr uint32_t max_cut_num = 250;
-  using cut_t = cut_type<true, cut_enumeration_emap_cut<NInputs>>;
+  static constexpr uint32_t max_cut_num = 32;
+  using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
-  using tt_cache = truth_table_cache<kitty::static_truth_table<CutSize>>;
+  using TT = kitty::static_truth_table<CutSize>;
 
 public:
   explicit emap_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps, emap_stats& st )
@@ -523,12 +527,6 @@ public:
   {
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
-
-    kitty::static_truth_table<CutSize> zero, proj;
-    kitty::create_nth_var( proj, 0u );
-
-    truth_tables.insert( zero );
-    truth_tables.insert( proj );
   }
 
   explicit emap_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, std::vector<float> const& switch_activity, emap_params const& ps, emap_stats& st )
@@ -542,12 +540,6 @@ public:
   {
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
-
-    kitty::static_truth_table<CutSize> zero, proj;
-    kitty::create_nth_var( proj, 0u );
-
-    truth_tables.insert( zero );
-    truth_tables.insert( proj );
   }
 
   binding_view<klut_network> run()
@@ -563,7 +555,7 @@ public:
     } );
 
     /* compute cuts, matches, and initial mapping */
-    if ( !ps.skip_delay_round )
+    if ( !ps.area_oriented_mapping )
     {
       if ( !compute_mapping_match<false>() )
       {
@@ -613,6 +605,8 @@ public:
 
     /* generate the output network */
     finalize_cover( res, old2new );
+
+    std::cout << cuts_total << std::endl;
 
     return res;
   }
@@ -738,7 +732,7 @@ private:
         /* compute function */
         vcuts[0] = c1;
         vcuts[1] = c2;
-        new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        compute_truth_table( index, vcuts, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -820,7 +814,7 @@ private:
           return true; /* continue */
         }
 
-        new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        compute_truth_table( index, vcuts, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -842,7 +836,7 @@ private:
       {
         cut_t new_cut = *cut;
 
-        new_cut->func_id = compute_truth_table( index, { cut }, new_cut );
+        compute_truth_table( index, { cut }, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -1110,7 +1104,7 @@ private:
       /* Global target time constraint */
       if ( ps.required_time < delay - epsilon )
       {
-        if ( !ps.skip_delay_round && iteration == 1 )
+        if ( !ps.area_oriented_mapping && iteration == 1 )
           std::cerr << fmt::format( "[i] MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
       }
       else
@@ -1989,7 +1983,7 @@ private:
       return;
     }
 
-    const auto tt = truth_tables[cut->func_id];
+    const auto tt = cut->data.function;
     const auto fe = kitty::shrink_to<NInputs>( tt );
     auto fe_canon = fe;
 
@@ -1999,7 +1993,7 @@ private:
     /* match positive polarity */
     if constexpr ( Configuration == classification_type::p_configurations )
     {
-      auto canon = kitty::exact_n_canonization( fe );
+      auto canon = kitty::exact_n_canonization_support( fe, cut.size() );
       fe_canon = std::get<0>( canon );
       negations_pos = std::get<1>( canon );
     }
@@ -2008,7 +2002,7 @@ private:
     /* match negative polarity */
     if constexpr ( Configuration == classification_type::p_configurations )
     {
-      auto canon = kitty::exact_n_canonization( ~fe );
+      auto canon = kitty::exact_n_canonization_support( ~fe, cut.size() );
       fe_canon = std::get<0>( canon );
       negations_neg = std::get<1>( canon );
     }
@@ -2114,8 +2108,6 @@ private:
   void add_zero_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
-
-    cut->func_id = 0;
     cut->data.ignore = true;
   }
 
@@ -2123,11 +2115,40 @@ private:
   {
     auto& cut = cuts[index].add_cut( &index, &index + 1 );
 
-    cut->func_id = 2;
+    kitty::create_nth_var( cut->data.function, 0 );
     cut->data.ignore = true;
   }
 
-  uint32_t compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
+  inline bool fast_support_minimization( TT const& tt, cut_t& res )
+  {
+    uint32_t support = 0u;
+    uint32_t support_size = 0u;
+    for ( uint32_t i = 0u; i < tt.num_vars(); ++i )
+    {
+      if ( kitty::has_var( tt, i ) )
+      {
+        support |= 1u << i;
+        ++support_size;
+      }
+    }
+
+    /* has not minimized support? */
+    if ( ( support & ( support + 1u ) ) != 0u )
+    {
+      return false;
+    }
+
+    /* variables not in the support are the most significative */
+    if ( support_size != res.size() )
+    {
+      std::vector<uint32_t> leaves( res.begin(), res.begin() + support_size );
+      res.set_leaves( leaves.begin(), leaves.end() );
+    }
+
+    return true;
+  }
+
+  void compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
   {
     stopwatch t( st.cut_enumeration_st.time_truth_table );
 
@@ -2135,7 +2156,7 @@ private:
     auto i = 0;
     for ( auto const& cut : vcuts )
     {
-      tt[i] = truth_tables[( *cut )->func_id];
+      tt[i] = ( *cut )->data.function;
       const auto supp = compute_truth_table_support( *cut, res );
       kitty::expand_inplace( tt[i], supp );
       ++i;
@@ -2143,25 +2164,23 @@ private:
 
     auto tt_res = ntk.compute( ntk.index_to_node( index ), tt.begin(), tt.end() );
 
-    if ( ps.cut_enumeration_ps.minimize_truth_table )
+    if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
     {
       const auto support = kitty::min_base_inplace( tt_res );
-      if ( support.size() != res.size() )
-      {
-        std::vector<uint32_t> leaves_before( res.begin(), res.end() );
-        std::vector<uint32_t> leaves_after( support.size() );
 
-        auto it_support = support.begin();
-        auto it_leaves = leaves_after.begin();
-        while ( it_support != support.end() )
-        {
-          *it_leaves++ = leaves_before[*it_support++];
-        }
-        res.set_leaves( leaves_after.begin(), leaves_after.end() );
+      std::vector<uint32_t> leaves_before( res.begin(), res.end() );
+      std::vector<uint32_t> leaves_after( support.size() );
+
+      auto it_support = support.begin();
+      auto it_leaves = leaves_after.begin();
+      while ( it_support != support.end() )
+      {
+        *it_leaves++ = leaves_before[*it_support++];
       }
+      res.set_leaves( leaves_after.begin(), leaves_after.end() );
     }
 
-    return truth_tables.insert( tt_res );
+    res->data.function = tt_res;
   }
 
   template<bool DO_AREA>
@@ -2282,7 +2301,6 @@ private:
   /* cut computation */
   std::vector<cut_set_t> cuts; /* compressed representation of cuts */
   cut_merge_t lcuts;           /* cut merger container */
-  tt_cache truth_tables;       /* cut truth tables */
   uint32_t cuts_total{ 0 };    /* current computed cuts */
 };
 

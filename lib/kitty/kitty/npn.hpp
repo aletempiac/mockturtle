@@ -334,6 +334,81 @@ std::tuple<TT, uint32_t> exact_n_canonization( const TT& tt, Callback&& fn = det
   return std::make_tuple( tmin, phase );
 }
 
+/*! \brief Exact N canonization given a support size
+
+  Given a truth table, this function finds the lexicographically smallest truth
+  table in its N class, called N representative. Two functions are in the
+  same N class, if one can obtain one from the other by input negations.
+
+  The function can accept a callback as second parameter which is called for
+  every visited function when trying out all combinations.  This allows to
+  exhaustively visit the whole N class.
+
+  The function returns a N configuration which contains the necessary
+  transformations to obtain the representative.  It is a tuple of
+
+  - the N representative
+  - input negations that lead to the representative
+
+  \param tt The truth table
+  \param support_size Support size used for the canonization
+  \param fn Callback for each visited truth table in the class (default does nothing)
+  \return N configurations
+*/
+template<typename TT, typename Callback = decltype( detail::exact_npn_canonization_null_callback<TT> )>
+std::tuple<TT, uint32_t> exact_n_canonization_support( const TT& tt, uint32_t support_size, Callback&& fn = detail::exact_npn_canonization_null_callback<TT> )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  assert( support_size <= tt.num_vars() );
+
+  const auto num_vars = support_size;
+
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
+  {
+    return std::make_tuple( tt, 0 );
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    return std::make_tuple( tt, 0 );
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tt;
+  auto tmin = t1;
+
+  fn( t1 );
+
+  const auto& flips = detail::flips[num_vars - 2u];
+  int best_flip = -1;
+
+  for ( std::size_t j = 0; j < flips.size(); ++j )
+  {
+    const auto pos = flips[j];
+    flip_inplace( t1, pos );
+
+    fn( t1 );
+
+    if ( t1 < tmin )
+    {
+      best_flip = static_cast<int>( j );
+      tmin = t1;
+    }
+  }
+
+  uint32_t phase = 0;
+  for ( auto i = 0; i <= best_flip; ++i )
+  {
+    phase ^= 1 << flips[i];
+  }
+
+  return std::make_tuple( tmin, phase );
+}
+
 /*! \brief Flip-swap NPN heuristic
 
   This algorithm will iteratively try to reduce the numeric value of the truth
