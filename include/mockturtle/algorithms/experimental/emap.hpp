@@ -85,11 +85,14 @@ struct emap_params
   /*! \brief Required time for delay optimization. */
   double required_time{ 0.0f };
 
+  /*! \brief Required time relaxation ratio. */
+  double relax_required{ 0.0f };
+
   /*! \brief Do area-oriented mapping. */
   bool area_oriented_mapping{ false };
 
   /*! \brief Number of rounds for area flow optimization. */
-  uint32_t area_flow_rounds{ 1u };
+  uint32_t area_flow_rounds{ 2u };
 
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
@@ -175,7 +178,8 @@ struct cut_enumeration_emap_cut
 enum class emap_cut_sort_type
 {
   DELAY = 0,
-  AREA = 1,
+  DELAY2 = 1,
+  AREA = 2,
   NONE = 2
 };
 
@@ -247,6 +251,20 @@ public:
     return c1.size() < c2.size();
   }
 
+  static bool sort_delay2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    if ( c1->data.delay < c2->data.delay - eps )
+      return true;
+    if ( c1->data.delay > c2->data.delay + eps )
+      return false;
+    return c1->data.flow < c2->data.flow - eps;
+  }
+
   static bool sort_area( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
@@ -274,6 +292,10 @@ public:
     if ( sort == emap_cut_sort_type::DELAY )
     {
       return sort_delay( cut1, cut2 );
+    }
+    else if ( sort == emap_cut_sort_type::DELAY2 )
+    {
+      return sort_delay2( cut1, cut2 );
     }
     else if ( sort == emap_cut_sort_type::AREA )
     {
@@ -305,6 +327,10 @@ public:
     if ( sort == emap_cut_sort_type::DELAY )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
+    }
+    else if ( sort == emap_cut_sort_type::DELAY2 )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
     }
     else if ( sort == emap_cut_sort_type::AREA )
     {
@@ -512,6 +538,8 @@ public:
   using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
+  using support_t = typename std::array<uint8_t, CutSize>;
+  using truth_compute_t = typename std::array<kitty::static_truth_table<CutSize>, CutSize>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
   using TT = kitty::static_truth_table<CutSize>;
 
@@ -1077,9 +1105,9 @@ private:
     /* blend estimated references */
     for ( auto i = 0u; i < ntk.size(); ++i )
     {
-      node_match[i].est_refs[2] = ( 2.0 * node_match[i].est_refs[2] + 1.0f * node_match[i].map_refs[2] ) / 3.0;
-      node_match[i].est_refs[1] = ( 2.0 * node_match[i].est_refs[1] + 1.0f * node_match[i].map_refs[1] ) / 3.0;
-      node_match[i].est_refs[0] = ( 2.0 * node_match[i].est_refs[0] + 1.0f * node_match[i].map_refs[0] ) / 3.0;
+      node_match[i].est_refs[2] = ( 1.0 * node_match[i].est_refs[2] + 2.0f * node_match[i].map_refs[2] ) / 3.0;
+      node_match[i].est_refs[1] = ( 1.0 * node_match[i].est_refs[1] + 2.0f * node_match[i].map_refs[1] ) / 3.0;
+      node_match[i].est_refs[0] = ( 1.0 * node_match[i].est_refs[0] + 2.0f * node_match[i].map_refs[0] ) / 3.0;
     }
 
     ++iteration;
@@ -1093,15 +1121,21 @@ private:
       node_match[i].required[0] = node_match[i].required[1] = std::numeric_limits<double>::max();
     }
 
-    /* return in case of `skip_delay_round` */
-    if ( iteration == 0 )
+    /* return if mapping is area oriented */
+    if ( ps.area_oriented_mapping )
       return;
 
-    auto required = delay;
+    double required = delay;
 
+    /* relax delay constraints */
+    if ( ps.required_time == 0.0f && ps.relax_required > 0.0f )
+    {
+      required *= ( 100.0 + ps.relax_required ) / 100.0;
+    }
+
+    /* Global target time constraint */
     if ( ps.required_time != 0.0f )
     {
-      /* Global target time constraint */
       if ( ps.required_time < delay - epsilon )
       {
         if ( !ps.area_oriented_mapping && iteration == 1 )
@@ -2090,19 +2124,22 @@ private:
    * Example:
    *   compute_truth_table_support( {1, 3, 6}, {0, 1, 2, 3, 6, 7} ) = {1, 3, 4}
    */
-  std::vector<uint8_t> compute_truth_table_support( cut_t const& sub, cut_t const& sup ) const
+  void compute_truth_table_support( cut_t const& sub, cut_t const& sup, kitty::static_truth_table<CutSize>& tt )
   {
-    std::vector<uint8_t> support;
-    support.reserve( sub.size() );
-
+    size_t j = 0;
     auto itp = sup.begin();
     for ( auto i : sub )
     {
       itp = std::find( itp, sup.end(), i );
-      support.push_back( static_cast<uint8_t>( std::distance( sup.begin(), itp ) ) );
+      lsupport[j++] = static_cast<uint8_t>( std::distance( sup.begin(), itp ) );
     }
 
-    return support;
+    /* swap variables in the truth table */
+    for ( int i = j - 1; i >= 0; --i )
+    {
+      assert( i <= lsupport[i] );
+      swap_inplace( tt, i, lsupport[i] );
+    }
   }
 
   void add_zero_cut( uint32_t index )
@@ -2150,19 +2187,17 @@ private:
 
   void compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
   {
-    stopwatch t( st.cut_enumeration_st.time_truth_table );
+    // stopwatch t( st.cut_enumeration_st.time_truth_table );
 
-    std::vector<kitty::static_truth_table<CutSize>> tt( vcuts.size() );
     auto i = 0;
     for ( auto const& cut : vcuts )
     {
-      tt[i] = ( *cut )->data.function;
-      const auto supp = compute_truth_table_support( *cut, res );
-      kitty::expand_inplace( tt[i], supp );
+      ltruth[i] = ( *cut )->data.function;
+      compute_truth_table_support( *cut, res, ltruth[i] );
       ++i;
     }
 
-    auto tt_res = ntk.compute( ntk.index_to_node( index ), tt.begin(), tt.end() );
+    auto tt_res = ntk.compute( ntk.index_to_node( index ), ltruth.begin(), ltruth.begin() + vcuts.size() );
 
     if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
     {
@@ -2299,9 +2334,11 @@ private:
   std::vector<float> switch_activity;
 
   /* cut computation */
-  std::vector<cut_set_t> cuts; /* compressed representation of cuts */
-  cut_merge_t lcuts;           /* cut merger container */
-  uint32_t cuts_total{ 0 };    /* current computed cuts */
+  std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
+  cut_merge_t lcuts;            /* cut merger container */
+  truth_compute_t ltruth;       /* truth table merger container */
+  support_t lsupport;           /* support merger container */
+  uint32_t cuts_total{ 0 };     /* current computed cuts */
 };
 
 } /* namespace detail */
