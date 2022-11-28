@@ -97,7 +97,8 @@ public:
       : _gates( gates ),
         _supergates_spec( supergates_spec ),
         _ps( ps ),
-        _supergates()
+        _supergates(),
+        _multioutput_gates()
   {
     if ( _supergates_spec.supergates.size() == 0 )
     {
@@ -129,18 +130,51 @@ public:
     return simple_gates_size;
   }
 
+  /*! \brief Get multi-output gates.
+   *
+   * Returns a list of multioutput gates.
+   */
+  const std::vector<std::vector<composed_gate<NInputs>>>& get_multioutput_library() const
+  {
+    return _multioutput_gates;
+  }
+
 public:
   void generate_library_with_genlib()
   {
     uint32_t initial_size = _supergates.size();
 
+    std::unordered_map<std::string, uint32_t> multioutput_map;
+    std::unordered_map<std::string, uint32_t> multioutput_idx;
+    multioutput_map.reserve( _gates.size() );
+
+    /* look for multi-output gates (gates with the same name) */
+    uint32_t multioutput_i = 0;
+    for ( const auto& g : _gates )
+    {
+      if ( multioutput_map.find( g.name ) != multioutput_map.end() )
+      {
+        /* assign an index */
+        if ( multioutput_map[g.name] == 1 )
+          multioutput_idx[g.name] = multioutput_i++;
+
+        multioutput_map[g.name] += 1;
+      }
+      else
+      {
+        multioutput_map[g.name] = 1;
+        multioutput_idx[g.name] = UINT32_MAX;
+      }
+    }
+
+    /* create composed gates */
     for ( const auto& g : _gates )
     {
       std::array<float, NInputs> pin_to_pin_delays{};
 
       if ( g.function.num_vars() > NInputs )
       {
-        std::cerr << "[i] WARNING: gate " << g.name << " IGNORED, too many variables for the library settings" << std::endl;
+        std::cerr << "[i] WARNING: gate " << g.name << " IGNORED, too many inputs for the library settings" << std::endl;
         continue;
       }
 
@@ -151,14 +185,34 @@ public:
         pin_to_pin_delays[i++] = std::max( pin.rise_block_delay, pin.fall_block_delay );
       }
 
-      _supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
-                                                        false,
-                                                        &g,
-                                                        g.num_vars,
-                                                        g.function,
-                                                        g.area,
-                                                        pin_to_pin_delays,
-                                                        {} } );
+      if ( multioutput_map[ g.name ] == 1 )
+      {
+        _supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
+                                                          false,
+                                                          &g,
+                                                          g.num_vars,
+                                                          g.function,
+                                                          g.area,
+                                                          pin_to_pin_delays,
+                                                          {} } );
+      }
+      else
+      {
+        uint32_t idx = multioutput_idx[g.name];
+        if ( _multioutput_gates.size() <= idx )
+          _multioutput_gates.emplace_back( std::vector<composed_gate<NInputs>>() );
+
+        _multioutput_gates[multioutput_idx[g.name]].emplace_back(
+                                    composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
+                                                          false,
+                                                          &g,
+                                                          g.num_vars,
+                                                          g.function,
+                                                          g.area,
+                                                          pin_to_pin_delays,
+                                                          {} }
+                                    );
+      }
     }
 
     simple_gates_size = _supergates.size() - initial_size;
@@ -166,6 +220,7 @@ public:
     if ( _ps.verbose )
     {
       std::cout << fmt::format( "[i] Loaded {} simple gates in the library\n", simple_gates_size );
+      std::cout << fmt::format( "[i] Loaded {} multi-output gates in the library\n", _multioutput_gates.size() );
     }
   }
 
@@ -407,6 +462,7 @@ protected:
   super_lib const& _supergates_spec;
   super_utils_params const _ps;
   std::deque<composed_gate<NInputs>> _supergates;
+  std::vector<std::vector<composed_gate<NInputs>>> _multioutput_gates;
 }; /* class super_utils */
 
 } /* namespace mockturtle */

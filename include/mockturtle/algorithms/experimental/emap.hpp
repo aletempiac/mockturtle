@@ -82,14 +82,14 @@ struct emap_params
    */
   cut_enumeration_params cut_enumeration_ps{};
 
+  /*! \brief Do area-oriented mapping. */
+  bool area_oriented_mapping{ false };
+
   /*! \brief Required time for delay optimization. */
   double required_time{ 0.0f };
 
   /*! \brief Required time relaxation ratio. */
   double relax_required{ 0.0f };
-
-  /*! \brief Do area-oriented mapping. */
-  bool area_oriented_mapping{ false };
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 2u };
@@ -633,8 +633,6 @@ public:
 
     /* generate the output network */
     finalize_cover( res, old2new );
-
-    std::cout << cuts_total << std::endl;
 
     return res;
   }
