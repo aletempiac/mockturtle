@@ -614,9 +614,9 @@ private:
   std::vector<gate> const _gates;    /* collection of gates */
   super_lib const& _supergates_spec; /* collection of supergates declarations */
   tech_library_params const _ps;
-  super_utils<NInputs> _super; /* supergates generation */
-  lib_t _super_lib;            /* library of enumerated gates */
-};                             /* class tech_library */
+  super_utils<NInputs> _super;      /* supergates generation */
+  lib_t _super_lib;                 /* library of enumerated gates */
+}; /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>
 struct exact_supergate
