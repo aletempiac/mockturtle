@@ -81,9 +81,13 @@ std::string const mcnc_library = "GATE   inv1    1  O=!a;             PIN * INV 
 
 enum class classification_type : uint32_t
 {
-  /* generate the NP configurations (n! * 2^n) */
+  /*! \brief generate the NP configurations (n! * 2^n)
+   *  Direct matching: best up to ~200 library gates */
   np_configurations = 0,
-  /* generate the P configurations (n!) and N-canonization */
+
+  /*! \brief generate the P configurations (n!)
+   *  Matching by N-canonization: best for more
+   * than ~200 library gates */
   p_configurations = 1,
 };
 
@@ -146,7 +150,7 @@ struct supergate
       mockturtle::tech_library lib_super( gates, supergates_spec );
    \endverbatim
  */
-template<unsigned NInputs = 4u, classification_type Configuration = classification_type::np_configurations>
+template<unsigned NInputs = 5u, classification_type Configuration = classification_type::np_configurations>
 class tech_library
 {
   using supergates_list_t = std::vector<supergate<NInputs>>;
@@ -158,7 +162,7 @@ public:
       : _gates( gates ),
         _supergates_spec( supergates_spec ),
         _ps( ps ),
-        _super( _gates, _supergates_spec ),
+        _super( _gates, _supergates_spec, super_utils_params{ ps.verbose } ),
         _use_supergates( false ),
         _super_lib()
   {
@@ -552,7 +556,7 @@ private:
         }
       }
 
-      if ( _ps.verbose )
+      if ( _ps.very_verbose )
       {
         std::cout << "Gate " << gate.root->name << ", num_vars = " << gate.num_vars << ", np entries = " << np_count << std::endl;
       }
@@ -614,9 +618,9 @@ private:
   std::vector<gate> const _gates;    /* collection of gates */
   super_lib const& _supergates_spec; /* collection of supergates declarations */
   tech_library_params const _ps;
-  super_utils<NInputs> _super;      /* supergates generation */
-  lib_t _super_lib;                 /* library of enumerated gates */
-}; /* class tech_library */
+  super_utils<NInputs> _super; /* supergates generation */
+  lib_t _super_lib;            /* library of enumerated gates */
+};                             /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>
 struct exact_supergate

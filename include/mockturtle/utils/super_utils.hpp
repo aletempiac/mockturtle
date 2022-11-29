@@ -37,6 +37,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <fmt/format.h>
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
 
@@ -168,13 +169,16 @@ public:
     }
 
     /* create composed gates */
+    uint32_t ignored = 0;
+    uint32_t ignored_id = 0;
     for ( const auto& g : _gates )
     {
       std::array<float, NInputs> pin_to_pin_delays{};
 
       if ( g.function.num_vars() > NInputs )
       {
-        std::cerr << "[i] WARNING: gate " << g.name << " IGNORED, too many inputs for the library settings" << std::endl;
+        ++ignored;
+        ignored_id = g.id;
         continue;
       }
 
@@ -185,7 +189,7 @@ public:
         pin_to_pin_delays[i++] = std::max( pin.rise_block_delay, pin.fall_block_delay );
       }
 
-      if ( multioutput_map[ g.name ] == 1 )
+      if ( multioutput_map[g.name] == 1 )
       {
         _supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
                                                           false,
@@ -203,15 +207,14 @@ public:
           _multioutput_gates.emplace_back( std::vector<composed_gate<NInputs>>() );
 
         _multioutput_gates[multioutput_idx[g.name]].emplace_back(
-                                    composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
-                                                          false,
-                                                          &g,
-                                                          g.num_vars,
-                                                          g.function,
-                                                          g.area,
-                                                          pin_to_pin_delays,
-                                                          {} }
-                                    );
+            composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
+                                    false,
+                                    &g,
+                                    g.num_vars,
+                                    g.function,
+                                    g.area,
+                                    pin_to_pin_delays,
+                                    {} } );
       }
     }
 
@@ -221,6 +224,11 @@ public:
     {
       std::cout << fmt::format( "[i] Loaded {} simple gates in the library\n", simple_gates_size );
       std::cout << fmt::format( "[i] Loaded {} multi-output gates in the library\n", _multioutput_gates.size() );
+    }
+
+    if ( ignored > 0 )
+    {
+      std::cerr << fmt::format( "[i] WARNING: {} gates IGNORED (e.g., {}), too many inputs for the library settings\n", ignored, _gates[ignored_id].name );
     }
   }
 
