@@ -339,6 +339,9 @@ private:
       if ( !gate_mark( index1, index2, cut ) )
         continue;
       
+      ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
+      ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
+      
       ++st.mapped_fa;
     }
 
@@ -351,6 +354,9 @@ private:
 
       if ( !gate_mark( index1, index2, cut ) )
         continue;
+
+      ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
+      ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
 
       ++st.mapped_ha;
     }
