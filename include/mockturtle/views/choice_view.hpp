@@ -120,7 +120,7 @@ public:
     }
   }
 
-  choice_view( Ntk& ntk, choice_view_params const& ps = {} )
+  choice_view( Ntk const& ntk, choice_view_params const& ps = {} )
     : Ntk( ntk )
     , _ps( ps )
   {

@@ -44,6 +44,7 @@
 #include <kitty/static_truth_table.hpp>
 
 #include <fmt/format.h>
+#include <parallel_hashmap/phmap.h>
 
 #include "../../networks/klut.hpp"
 #include "../../utils/cuts.hpp"
@@ -51,6 +52,7 @@
 #include "../../utils/stopwatch.hpp"
 #include "../../utils/tech_library.hpp"
 #include "../../views/binding_view.hpp"
+#include "../../views/choice_view.hpp"
 #include "../../views/depth_view.hpp"
 #include "../../views/topo_view.hpp"
 #include "../cleanup.hpp"
@@ -127,8 +129,11 @@ struct emap_stats
   /*! \brief Power result. */
   double power{ 0 };
 
-  /*! \brief Runtime for covering. */
-  stopwatch<>::duration time_mapping{ 0 };
+  /*! \brief Mapped adders. */
+  double adders{ 0 };
+
+  /*! \brief Runtime for multi-output matching. */
+  stopwatch<>::duration time_multioutput{ 0 };
   /*! \brief Total runtime. */
   stopwatch<>::duration time_total{ 0 };
 
@@ -152,8 +157,8 @@ struct emap_stats
       std::cout << fmt::format( " Power = {:>5.2f};\n", power );
     else
       std::cout << "\n";
-    std::cout << fmt::format( "[i] Mapping runtime = {:>5.2f} secs\n", to_seconds( time_mapping ) );
-    std::cout << fmt::format( "[i] Total runtime   = {:>5.2f} secs\n", to_seconds( time_total ) );
+    std::cout << fmt::format( "[i] Multi-output runtime = {:>5.2f} secs\n", to_seconds( time_multioutput ) );
+    std::cout << fmt::format( "[i] Total runtime        = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
 
@@ -176,6 +181,12 @@ struct cut_enumeration_emap_cut
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
   /* input negations, 0: pos, 1: neg */
   std::array<uint8_t, 2> negations{ 0, 0 };
+};
+
+struct cut_enumeration_emap_multi_cut
+{
+  /* stats */
+  bool is_xor{ false };
 };
 
 enum class emap_cut_sort_type
@@ -506,6 +517,22 @@ private:
 };
 #pragma endregion
 
+#pragma region Hashing
+struct emap_triple_hash
+{
+  uint64_t operator()( const std::array<uint32_t, 3>& p ) const
+  {
+    uint64_t word = p[0];
+    uint64_t seed = hash_block( p[0] );
+
+    hash_combine( seed, hash_block( p[1] ) );
+    hash_combine( seed, hash_block( p[2] ) );
+
+    return seed;
+  }
+};
+#pragma endregion
+
 template<unsigned NInputs>
 struct node_match_flex
 {
@@ -546,6 +573,15 @@ public:
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
   using TT = kitty::static_truth_table<CutSize>;
 
+  static constexpr uint32_t max_multioutput_cut_size = 3;
+  using multi_cuts_t = fast_network_cuts<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>;
+  using multi_cut_t = typename multi_cuts_t::cut_t;
+  using multi_leaves_set_t = std::array<uint32_t, max_multioutput_cut_size>;
+  using multi_output_set_t = std::vector<uint64_t>;
+  using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash>;
+  using multi_match_t = std::pair<uint64_t, uint64_t>;
+  using multi_matches_t = std::vector<multi_match_t>;
+
 public:
   explicit emap_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps, emap_stats& st )
       : ntk( ntk ),
@@ -553,6 +589,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
+        node_tuple_match( ntk.size() ),
         switch_activity( ps.eswp_rounds ? switching_activity( ntk, ps.switching_activity_patterns ) : std::vector<float>( 0 ) ),
         cuts( ntk.size() )
   {
@@ -566,6 +603,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
+        node_tuple_match( ntk.size() ),
         switch_activity( switch_activity ),
         cuts( ntk.size() )
   {
@@ -575,15 +613,18 @@ public:
 
   binding_view<klut_network> run()
   {
-    stopwatch t( st.time_mapping );
+    stopwatch t( st.time_total );
 
     auto [res, old2new] = initialize_map_network();
 
+    /* multi-output initialization */
+    if ( ps.map_multioutput )
+    {
+      compute_multioutput_match();
+    }
+
     /* compute and save topological order */
-    top_order.reserve( ntk.size() );
-    topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
-      top_order.push_back( n );
-    } );
+    init_topo_order();
 
     /* compute cuts, matches, and initial mapping */
     if ( !ps.area_oriented_mapping )
@@ -644,7 +685,7 @@ private:
   template<bool DO_AREA>
   bool compute_mapping_match()
   {
-    for ( auto const& n : top_order )
+    for ( auto const& n : topo_order )
     {
       auto const index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
@@ -888,7 +929,7 @@ private:
   template<bool DO_AREA>
   bool compute_mapping()
   {
-    for ( auto const& n : top_order )
+    for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
       {
@@ -934,7 +975,7 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact()
   {
-    for ( auto const& n : top_order )
+    for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
         continue;
@@ -1013,7 +1054,7 @@ private:
 
     /* compute current area and update mapping refs in top-down order */
     area = 0.0f;
-    for ( auto it = top_order.rbegin(); it != top_order.rend(); ++it )
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       const auto index = ntk.node_to_index( *it );
       auto& node_data = node_match[index];
@@ -1158,7 +1199,7 @@ private:
     } );
 
     /* propagate required time to the PIs */
-    for ( auto it = top_order.rbegin(); it != top_order.rend(); ++it )
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       if ( ntk.is_pi( *it ) || ntk.is_constant( *it ) )
         break;
@@ -1848,9 +1889,24 @@ private:
     return { dest, old2new };
   }
 
+  void init_topo_order()
+  {
+    topo_order.reserve( ntk.size() );
+
+    if ( multi_node_match.size() > 0 )
+    {
+      multi_init_topo_order();
+      return;
+    }
+
+    topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
+      topo_order.push_back( n );
+    } );
+  }
+
   void finalize_cover( binding_view<klut_network>& res, klut_map& old2new )
   {
-    for ( auto const& n : top_order )
+    for ( auto const& n : topo_order )
     {
       auto index = ntk.node_to_index( n );
       auto const& node_data = node_match[index];
@@ -2268,7 +2324,7 @@ private:
   {
     double power = 0.0f;
 
-    for ( auto const& n : top_order )
+    for ( auto const& n : topo_order )
     {
       const auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
@@ -2309,6 +2365,424 @@ private:
     return power;
   }
 
+#pragma region multioutput
+  /* Experimental code */
+  void compute_multioutput_match()
+  {
+    stopwatch t( st.time_multioutput );
+
+    if ( library.num_multioutput_gates() == 0 )
+      return;
+
+    /* compute cuts: first simple method without proper matching */
+    cut_enumeration_params multi_ps;
+    multi_ps.minimize_truth_table = false;
+    multi_cuts_t multi_cuts = fast_cut_enumeration<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>( ntk, multi_ps );
+
+    /* TODO: Boolean matching */
+
+    /* Multi-output matching */
+    multi_enumerate_matches( multi_cuts );
+    multi_compute_matches( multi_cuts );
+    /* TODO: remove filtering? */
+    multi_filter_and_assign( multi_cuts ); /* it also adds the tuple for node mapping */
+  }
+
+  void multi_init_topo_order()
+  {
+    /* create and initialize a choice view to store the tuples */
+    choice_view<Ntk> choice_ntk{ ntk };
+    multi_add_choices( choice_ntk );
+
+    ntk.incr_trav_id();
+    ntk.incr_trav_id();
+
+    /* add constants and CIs */
+    const auto c0 = ntk.get_node( ntk.get_constant( false ) );
+    topo_order.push_back( c0 );
+    ntk.set_visited( c0, ntk.trav_id() );
+
+    if ( const auto c1 = ntk.get_node( ntk.get_constant( true ) ); ntk.visited( c1 ) != ntk.trav_id() )
+    {
+      topo_order.push_back( c1 );
+      ntk.set_visited( c1, ntk.trav_id() );
+    }
+
+    ntk.foreach_ci( [&]( auto const& n ) {
+      if ( ntk.visited( n ) != ntk.trav_id() )
+      {
+        topo_order.push_back( n );
+        ntk.set_visited( n, ntk.trav_id() );
+      }
+    } );
+
+    /* sort topologically */
+    ntk.foreach_co( [&]( auto const& f ) {
+      if ( ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() )
+        return;
+      multi_topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+    } );
+  }
+
+  /* Experimental code resticted to only half adders and full adders */
+  void multi_enumerate_matches( multi_cuts_t const& multi_cuts )
+  {
+    static_assert( max_multioutput_cut_size > 2 && max_multioutput_cut_size < 7 );
+
+    multi_cuts_classes.reserve( 2000 );
+
+    uint32_t counter = 0;
+    multi_leaves_set_t leaves = { 0 };
+
+    ntk.foreach_gate( [&]( auto const& n ) {
+      uint32_t cut_index = 0;
+      for ( auto& cut : multi_cuts.cuts( ntk.node_to_index( n ) ) )
+      {
+        kitty::static_truth_table<max_multioutput_cut_size> tt = multi_cuts.truth_table( *cut );
+
+        bool to_add = false;
+        if ( cut->size() == 2 )
+        {
+          /* check for and2 */
+          for ( uint32_t func : and2func )
+          {
+            if ( tt._bits == func )
+            {
+              to_add = true;
+              break;
+            }
+          }
+
+          /* check for xor2 */
+          for ( uint32_t func : xor2func )
+          {
+            if ( tt._bits == func )
+            {
+              ( *cut )->data.is_xor = true;
+              to_add = true;
+              break;
+            }
+          }
+        }
+        else if ( cut->size() == 3 )
+        {
+          /* check for maj3 */
+          for ( uint32_t func : maj3func )
+          {
+            if ( tt._bits == func )
+            {
+              to_add = true;
+              break;
+            }
+          }
+
+          /* check xor3 */
+          for ( uint32_t func : xor3func )
+          {
+            if ( tt._bits == func )
+            {
+              ( *cut )->data.is_xor = true;
+              to_add = true;
+              break;
+            }
+          }
+        }
+
+        if ( !to_add )
+        {
+          ++cut_index;
+          continue;
+        }
+        
+        uint64_t data = ( static_cast<uint64_t>( ntk.node_to_index( n ) ) << 16 ) | cut_index;
+        leaves[2] = 0;
+        uint32_t i = 0;
+        for ( auto l : *cut )
+          leaves[i++] = l;
+        
+        std::sort( leaves.begin(), leaves.begin() + i );
+
+        /* add to hash table */
+        auto &v = multi_cuts_classes[leaves];
+        v.push_back( data );
+
+        ++cut_index;
+      }
+    } );
+  }
+
+  /* Experimental code resticted to only half adders and full adders */
+  void multi_compute_matches( multi_cuts_t const& multi_cuts )
+  {
+    multi_node_match.reserve( multi_cuts_classes.size() );
+
+    /* copy set and sort by gate size: too slow */
+    std::vector<std::pair<multi_leaves_set_t, multi_output_set_t>> class_list;
+    class_list.reserve( multi_cuts_classes.size() );
+    for ( auto& it : multi_cuts_classes )
+      class_list.push_back( it );
+
+    std::sort( class_list.begin(), class_list.end(), [&]( auto const& a, auto const& b ) {
+      return a.first[2] > b.first[2];
+    } );
+
+    /* combine and match */
+    for ( auto it : class_list )
+    {
+      /* not matched to a multi-output gate */
+      if ( it.second.size() < 2 )
+        continue;
+
+      /* try half adder and full adder */
+      for ( uint32_t i = 0; i < it.second.size() - 1; ++i )
+      {
+        uint64_t data_i = it.second[i];
+        uint32_t index_i = data_i >> 16;
+        uint32_t cut_index_i = data_i & UINT16_MAX;
+        auto const& cut_i = multi_cuts.cuts( index_i )[cut_index_i];
+
+        for ( uint32_t j = i + 1; j < it.second.size(); ++j )
+        {
+          uint64_t data_j = it.second[j];
+          uint32_t index_j = data_j >> 16;
+          uint32_t cut_index_j = data_j & UINT16_MAX;
+          auto const& cut_j = multi_cuts.cuts( index_j )[cut_index_j];
+
+          /* not compatible */
+          if ( cut_i->data.is_xor == cut_j->data.is_xor )
+            continue;
+
+          /* check compatibility */
+          if ( !multi_check_adder( index_i, index_j, cut_i ) )
+            continue;
+
+          multi_node_match.push_back( { data_i, data_j } );
+        }
+      }
+    }
+
+    st.adders = multi_node_match.size();
+  }
+
+  /* Experimental code */
+  void multi_filter_and_assign( multi_cuts_t const& multi_cuts )
+  {
+    multi_matches_t multi_node_match_tmp;
+    multi_node_match_tmp.reserve( multi_node_match.size() );
+
+    ntk.incr_trav_id();
+    ntk.clear_values();
+
+    multi_cut_set.reserve( multi_node_match.size() );
+
+    for ( auto& pair : multi_node_match )
+    {
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      multi_cut_t const& cut = multi_cuts.cuts( index1 )[cut_index1];
+
+      /* remove contained multi-output gates */
+      if ( !multi_gate_mark( index1, index2, cut ) )
+        continue;
+
+      /* add cut */
+      multi_cut_set.push_back( cut );
+
+      /* re-index data */
+      uint64_t new_data1, new_data2;
+      new_data1 = ( static_cast<uint64_t>( index1 ) << 16 ) | ( multi_cut_set.size() - 1 );
+      new_data2 = ( static_cast<uint64_t>( index2 ) << 16 ) | ( multi_cut_set.size() - 1 );
+      multi_match_t p = { new_data1, new_data2 };
+
+      multi_node_match_tmp.push_back( p );
+      node_tuple_match[std::max( index1, index2 )] = multi_node_match_tmp.size() - 1;
+    }
+
+    multi_node_match = multi_node_match_tmp;
+    st.adders = multi_node_match.size();
+  }
+
+  /* specific code for checking adder mapping */
+  inline bool multi_check_adder( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
+  {
+    bool valid = true;
+    bool swapped = false;
+
+    /* check containment of cut1 in cut2 and viceversa */
+    if ( index1 > index2 )
+    {
+      std::swap( index1, index2 );
+      swapped = true;
+    }
+    
+    ntk.foreach_fanin( ntk.index_to_node( index2 ), [&]( auto const& f ) {
+      auto g = ntk.get_node( f );
+      if ( ntk.node_to_index( g ) == index1 && ntk.fanout_size( g ) == 1 )
+      {
+        valid = false;
+      }
+      return valid;
+    } );
+
+    if ( !valid )
+      return false;
+    
+    // if ( is_contained( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
+    //   return false;
+
+    return true;
+  }
+
+  inline bool multi_gate_mark( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
+  {
+    bool contained = false;
+
+    /* mark leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
+    }
+
+    contained = multi_mark_visited_rec<false>( ntk.index_to_node( index1 ) );
+    contained |= multi_mark_visited_rec<false>( ntk.index_to_node( index2 ) );
+
+    if ( contained )
+    {
+      /* unmark leaves */
+      for ( auto leaf : cut )
+      {
+        ntk.decr_value( ntk.index_to_node( leaf ) );
+      }
+      return false;
+    }
+
+    /* mark */
+    multi_mark_visited_rec<true>( ntk.index_to_node( index1 ) );
+    multi_mark_visited_rec<true>( ntk.index_to_node( index2 ) );
+
+    /* unmark leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+
+    return true;
+  }
+
+  template<bool MARK>
+  bool multi_mark_visited_rec( node<Ntk> const& n )
+  {
+    /* leaf */
+    if ( ntk.value( n ) )
+      return false;
+
+    /* already visited */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return true;
+
+    if constexpr ( MARK )
+    {
+      ntk.set_visited( n, ntk.trav_id() );
+    }
+
+    bool contained = false;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      contained |= multi_mark_visited_rec<MARK>( ntk.get_node( f ) );
+
+      if constexpr ( !MARK )
+      {
+        if ( contained )
+          return false;
+      }
+
+      return true;
+    } );
+
+    return contained;
+  }
+
+  void multi_add_choices( choice_view<Ntk>& choice_ntk )
+  {
+    for ( auto& pair : multi_node_match )
+    {
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      multi_cut_t const& cut = multi_cut_set[cut_index1];
+
+      if ( index1 > index2 )
+        std::swap( index1, index2 );
+
+      /* don't add choice if in TFI */
+      if ( multi_is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
+        continue;
+
+      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
+
+      assert( choice_ntk.count_choices( ntk.index_to_node( index1 ) ) == 2 );
+    }
+  }
+
+  void multi_topo_sort_rec( choice_view<Ntk>& choice_ntk, node<Ntk> const& n )
+  {
+    /* is permanently marked? */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    /* for all the choices */
+    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+      /* ensure that the node is not visited or temporarily marked */
+      assert( ntk.visited( g ) != ntk.trav_id() );
+      assert( ntk.visited( g ) != ntk.trav_id() - 1 );
+
+      /* mark node temporarily */
+      ntk.set_visited( g, ntk.trav_id() - 1 );
+
+      /* mark children */
+      ntk.foreach_fanin( g, [&]( auto const& f ) {
+        multi_topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+      } );
+
+      return true;
+    } );
+
+    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+      /* ensure that the node is not visited */
+      assert( ntk.visited( g ) != ntk.trav_id() );
+
+      /* mark node n permanently */
+      ntk.set_visited( g, ntk.trav_id() );
+
+      /* visit node */
+      topo_order.push_back( g );
+
+      return true;
+    } );
+  }
+
+  inline bool multi_is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, multi_cut_t const& cut )
+  {
+    /* reference cut leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
+    }
+
+    ntk.incr_trav_id();
+    multi_mark_visited_rec<true>( root );
+    bool contained = ntk.visited( n ) == ntk.trav_id();
+
+    /* dereference leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+
+    return contained;
+  }
+#pragma endregion
+
 private:
   Ntk const& ntk;
   tech_library<NInputs, Configuration> const& library;
@@ -2330,8 +2804,9 @@ private:
   float lib_buf_delay;
   uint32_t lib_buf_id;
 
-  std::vector<node<Ntk>> top_order;
+  std::vector<node<Ntk>> topo_order;
   std::vector<node_match_flex<NInputs>> node_match;
+  std::vector<uint32_t> node_tuple_match;
   std::vector<float> switch_activity;
 
   /* cut computation */
@@ -2340,6 +2815,17 @@ private:
   truth_compute_t ltruth;       /* truth table merger container */
   support_t lsupport;           /* support merger container */
   uint32_t cuts_total{ 0 };     /* current computed cuts */
+
+  /* multi-output matching */
+  multi_hash_t multi_cuts_classes;        /* cuts leaves classes */
+  std::vector<multi_cut_t> multi_cut_set; /* set of multi-output cuts */
+  multi_matches_t multi_node_match;       /* matched multi-output gates */
+
+  /* multioutput HA and FA functions */
+  const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
+  const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x17, 0x2b, 0x4d, 0x8e };
+  const std::array<uint64_t, 2> xor2func = { 0x66, 0x99 };
+  const std::array<uint64_t, 2> xor3func = { 0x69, 0x96 };
 };
 
 } /* namespace detail */
@@ -2387,7 +2873,6 @@ binding_view<klut_network> emap( Ntk const& ntk, tech_library<NInputs, Configura
   detail::emap_impl<Ntk, CutSize, NInputs, Configuration> p( ntk, library, ps, st );
   auto res = p.run();
 
-  st.time_total = st.time_mapping + st.cut_enumeration_st.time_total;
   if ( ps.verbose && !st.mapping_error )
   {
     st.report();

@@ -341,10 +341,10 @@ private:
 
       if ( !gate_mark( index1, index2, cut ) )
         continue;
-      
+
       ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
       ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
-      
+
       ++st.mapped_fa;
     }
 
@@ -550,7 +550,7 @@ private:
 
     /* create and initialize a choice view */
     choice_view<Ntk> choice_ntk{ ntk };
-    add_choices( choice_ntk );
+    add_choices( choice_ntk ); /* TODO: buggy */
 
     ntk.incr_trav_id();
     ntk.incr_trav_id();
