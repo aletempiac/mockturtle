@@ -106,6 +106,9 @@ struct emap_params
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ false };
 
+  /*! \brief Maps multi-output gates */
+  bool map_multioutput{ false };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };

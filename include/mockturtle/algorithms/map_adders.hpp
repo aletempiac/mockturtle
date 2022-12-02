@@ -41,6 +41,7 @@
 #include "detail/mffc_utils.hpp"
 #include "cut_enumeration.hpp"
 #include "../networks/storage.hpp"
+#include "../views/choice_view.hpp"
 #include "../utils/stopwatch.hpp"
 
 namespace mockturtle
@@ -90,7 +91,7 @@ struct map_adders_stats
   {
     std::cout << fmt::format( "[i] Cuts = {}\t And2 = {}\t Xor2 = {}\t Maj3 = {}\t Xor3 = {}\n",
       cuts_total, and2, xor2, maj3, xor3 );
-    std::cout << fmt::format( "[i] Classes = {} \tMapped HA = {}\t Mapped FA:{}\n\n", num_classes, mapped_ha, mapped_fa );
+    std::cout << fmt::format( "[i] Classes = {} \tMapped HA = {}\t Mapped FA:{}\n", num_classes, mapped_ha, mapped_fa );
     std::cout << fmt::format( "[i] Total runtime = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
@@ -157,6 +158,8 @@ public:
     ntk.incr_trav_id();
     ntk.clear_values();
     map();
+
+    topo_sort();
   }
 
 private:
@@ -491,7 +494,7 @@ private:
     return contained;
   }
 
-  inline bool is_contained( node<Ntk> const& root,  node<Ntk> const& n, cut_t const& cut )
+  inline bool is_contained( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
   {
     /* reference cut leaves */
     for ( auto leaf : cut )
@@ -501,7 +504,7 @@ private:
 
     recursive_deref( ntk, root );
 
-    bool contained = ntk.fanout_size( n ) == 0;
+    bool contained = ntk.value( n ) == 0;
 
     recursive_ref( ntk, root );
 
@@ -514,6 +517,157 @@ private:
     return contained;
   }
 
+  inline bool is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
+  {
+    assert( ntk.value( n ) == ntk.fanout_size( n ) );
+
+    /* reference cut leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
+    }
+
+    recursive_deref( ntk, root );
+
+    bool contained = ntk.value( n ) != ntk.fanout_size( n );
+
+    recursive_ref( ntk, root );
+
+    /* dereference leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+
+    return contained;
+  }
+
+  void topo_sort()
+  {
+    ntk.incr_trav_id();
+    initialize_values_with_fanout( ntk );
+    topo_order.reserve( ntk.size() );
+
+    /* create and initialize a choice view */
+    choice_view<Ntk> choice_ntk{ ntk };
+    add_choices( choice_ntk );
+
+    ntk.incr_trav_id();
+    ntk.incr_trav_id();
+
+    /* add constants and CIs */
+    const auto c0 = ntk.get_node( ntk.get_constant( false ) );
+    topo_order.push_back( c0 );
+    ntk.set_visited( c0, ntk.trav_id() );
+
+    if ( const auto c1 = ntk.get_node( ntk.get_constant( true ) ); ntk.visited( c1 ) != ntk.trav_id() )
+    {
+      topo_order.push_back( c1 );
+      ntk.set_visited( c1, ntk.trav_id() );
+    }
+
+    ntk.foreach_ci( [&]( auto const& n ) {
+      if ( ntk.visited( n ) != ntk.trav_id() )
+      {
+        topo_order.push_back( n );
+        ntk.set_visited( n, ntk.trav_id() );
+      }
+    } );
+
+    /* sort topologically */
+    ntk.foreach_co( [&]( auto const& f ) {
+      if ( ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() )
+        return;
+      topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+    } );
+
+    /* print the order */
+    for ( auto const& n : topo_order )
+      std::cout << ntk.node_to_index( n ) << " ";
+
+    std::cout << "\n";
+  }
+
+  void topo_sort_rec( choice_view<Ntk>& choice_ntk, node<Ntk> const& n )
+  {
+    /* is permanently marked? */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    /* for all the choices */
+    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+      /* ensure that the node is not visited or temporarily marked */
+      assert( ntk.visited( g ) != ntk.trav_id() );
+      assert( ntk.visited( g ) != ntk.trav_id() - 1 );
+
+      /* mark node temporarily */
+      ntk.set_visited( g, ntk.trav_id() - 1 );
+
+      /* mark children */
+      ntk.foreach_fanin( g, [&]( auto const& f ) {
+        topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+      } );
+
+      return true;
+    } );
+
+    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+      /* ensure that the node is not visited */
+      assert( ntk.visited( g ) != ntk.trav_id() );
+
+      /* mark node n permanently */
+      ntk.set_visited( g, ntk.trav_id() );
+
+      /* visit node */
+      topo_order.push_back( g );
+
+      return true;
+    } );
+  }
+
+  void add_choices( choice_view<Ntk>& choice_ntk )
+  {
+    for ( auto& pair : full_adders )
+    {
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
+
+      if ( !gate_mark( index1, index2, cut ) )
+        continue;
+
+      if ( index1 > index2 )
+        std::swap( index1, index2 );
+
+      /* don't add choice if in TFI */
+      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
+        continue;
+
+      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
+    }
+
+    for ( auto& pair : half_adders )
+    {
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
+
+      if ( !gate_mark( index1, index2, cut ) )
+        continue;
+
+      if ( index1 > index2 )
+        std::swap( index1, index2 );
+
+      /* don't add choice if in TFI */
+      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
+        continue;
+
+      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
+    }
+  }
+
 private:
   Ntk& ntk;
   map_adders_params const& ps;
@@ -523,6 +677,8 @@ private:
   leaves_hash_t cuts_classes;
   matches_t half_adders;
   matches_t full_adders;
+
+  std::vector<node<Ntk>> topo_order;
 
   const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
   const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x17, 0x2b, 0x4d, 0x8e };
