@@ -520,7 +520,7 @@ private:
 #pragma region Hashing
 struct emap_triple_hash
 {
-  uint64_t operator()( const std::array<uint32_t, 3>& p ) const
+  inline uint64_t operator()( const std::array<uint32_t, 3>& p ) const
   {
     uint64_t word = p[0];
     uint64_t seed = hash_block( p[0] );
@@ -733,6 +733,10 @@ private:
 
       /* try to drop one phase */
       match_drop_phase<DO_AREA, false>( n, 0 );
+
+      /* try a multi-output match */
+      if ( ps.map_multioutput && node_tuple_match[index] != 0 )
+        match_multioutput<DO_AREA>( n );
     }
 
     double area_old = area;
@@ -1677,6 +1681,12 @@ private:
       node_data.area[0] = node_data.area[1] + lib_inv_area;
       node_data.phase[0] = 1;
     }
+  }
+
+  template<bool DO_AREA>
+  void match_multioutput( node<Ntk> const& n )
+  {
+    return;
   }
 
   inline double cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
@@ -2629,7 +2639,8 @@ private:
 
     if ( !valid )
       return false;
-    
+
+    /* TODO: add a more precise check */
     // if ( is_contained( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
     //   return false;
 

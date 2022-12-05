@@ -207,7 +207,7 @@ public:
           _multioutput_gates.emplace_back( std::vector<composed_gate<NInputs>>() );
 
         _multioutput_gates[multioutput_idx[g.name]].emplace_back(
-            composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
+            composed_gate<NInputs>{ static_cast<unsigned int>( idx ),
                                     false,
                                     &g,
                                     g.num_vars,

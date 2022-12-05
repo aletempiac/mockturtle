@@ -771,6 +771,102 @@ void exact_np_enumeration( const TT& tt, Callback&& fn )
   }
 }
 
+/*! \brief Exact multi NP enumeration
+
+  Given multiple truth tables, this function enumerates all the functions in their
+  NP class. Two functions are in the same NP class, if one can be obtained
+  from the other by input negation and input permutation.
+
+  The function takes a callback as second parameter which is called for
+  every enumerated function. The callback should take as parameters:
+  - NP-enumerated truth tables
+  - input negations
+  - input permutation to apply
+
+  \param tts Truth tables
+  \param fn Callback for each enumerated truth table in the NP class
+*/
+template<typename TT, typename Callback>
+void exact_multi_np_enumeration( const std::vector<TT>& tts, Callback&& fn )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  assert( tts.size() > 0 );
+
+  const auto num_vars = tts[0].num_vars();
+
+  for ( auto i = 0; i < tts.size(); ++i )
+    assert( tts[i].num_vars == num_vars );
+
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
+  {
+    fn( tts, 0u, std::vector<uint8_t>{} );
+    return;
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    fn( tts, 0u, std::vector<uint8_t>{ 0 } );
+    return;
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tts;
+
+  std::vector<uint8_t> perm( num_vars );
+  std::iota( perm.begin(), perm.end(), 0u );
+
+  uint32_t phase = 0;
+
+  fn( t1, phase, perm );
+
+  const auto& swaps = detail::swaps[num_vars - 2u];
+  const auto& flips = detail::flips[num_vars - 2u];
+
+  for ( std::size_t i = 0; i < swaps.size(); ++i )
+  {
+    const auto pos = swaps[i];
+
+    for ( auto& tt : t1 )
+      swap_adjacent_inplace( tt, pos );
+
+    std::swap( perm[pos], perm[pos + 1] );
+
+    fn( t1, phase, perm );
+  }
+
+  for ( std::size_t j = 0; j < flips.size(); ++j )
+  {
+    const auto pos = flips[j];
+
+    for ( auto& tt : t1 )
+    {
+      swap_adjacent_inplace( tt, 0 );
+      flip_inplace( tt, pos );
+    }
+
+    std::swap( perm[0], perm[1] );
+    phase ^= 1 << perm[pos];
+
+    fn( t1, phase, perm );
+
+    for ( std::size_t i = 0; i < swaps.size(); ++i )
+    {
+      const auto pos = swaps[i];
+
+      for ( auto& tt : t1 )
+        swap_adjacent_inplace( tt, pos );
+
+      std::swap( perm[pos], perm[pos + 1] );
+
+      fn( t1, phase, perm );
+    }
+  }
+}
+
 /*! \brief Exact P enumeration
 
   Given a truth table, this function enumerates all the functions in its
@@ -821,6 +917,70 @@ void exact_p_enumeration( const TT& tt, Callback&& fn )
   {
     const auto pos = swaps[i];
     swap_adjacent_inplace( t1, pos );
+
+    std::swap( perm[pos], perm[pos + 1] );
+
+    fn( t1, perm );
+  }
+}
+
+/*! \brief Exact multi P enumeration
+
+  Given multiple truth tables, this function enumerates all the functions in their
+  P class. Two functions are in the same P class, if one can be obtained
+  from the other by input permutation.
+
+  The function takes a callback as second parameter which is called for
+  every enumerated function. The callback should take as parameters:
+  - P-enumerated truth tables
+  - input permutation to apply
+
+  \param tt Truth tables
+  \param fn Callback for each enumerated truth table in the P class
+*/
+template<typename TT, typename Callback>
+void exact_multi_p_enumeration( const std::vector<TT>& tts, Callback&& fn )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  assert( tts.size() > 0 );
+
+  const auto num_vars = tts[0].num_vars();
+
+  for ( auto i = 0; i < tts.size(); ++i )
+    assert( tts[i].num_vars == num_vars );
+
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
+  {
+    fn( tts, std::vector<uint8_t>{} );
+    return;
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    fn( tts, std::vector<uint8_t>{ 0 } );
+    return;
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tts;
+
+  std::vector<uint8_t> perm( num_vars );
+  std::iota( perm.begin(), perm.end(), 0u );
+
+  fn( t1, perm );
+
+  const auto& swaps = detail::swaps[num_vars - 2u];
+
+  for ( std::size_t i = 0; i < swaps.size(); ++i )
+  {
+    const auto pos = swaps[i];
+
+    for ( auto& tt : t1 )
+      swap_adjacent_inplace( tt, pos );
 
     std::swap( perm[pos], perm[pos + 1] );
 

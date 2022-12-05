@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <unordered_map>
 #include <vector>
@@ -43,6 +44,7 @@
 #include <kitty/npn.hpp>
 #include <kitty/print.hpp>
 #include <kitty/static_truth_table.hpp>
+#include <kitty/operators.hpp>
 
 #include <parallel_hashmap/phmap.h>
 
@@ -93,6 +95,9 @@ enum class classification_type : uint32_t
 
 struct tech_library_params
 {
+   /*! \brief Loads multioutput gates in the library */
+  bool load_multioutput_gates{ false };
+
   /*! \brief reports np enumerations */
   bool verbose{ false };
 
@@ -118,6 +123,25 @@ struct supergate
   /* pin negations */
   uint8_t polarity{ 0 };
 };
+
+namespace detail
+{
+
+template<uint32_t NumVars, uint32_t NumOutputs>
+struct tuple_tt_hash
+{
+  inline std::size_t operator()( std::array<kitty::static_truth_table<NumVars, true>, NumOutputs> const& tts ) const
+  {
+    std::size_t seed = kitty::hash_block( tts[0]._bits );
+
+    for ( auto i = 1; i < NumOutputs; ++i )
+      kitty::hash_combine( seed, hash_block( tts[i]._bits ) );
+
+    return seed;
+  }
+};
+
+} // namespace detail
 
 /*! \brief Library of gates for Boolean matching
  *
@@ -153,9 +177,15 @@ struct supergate
 template<unsigned NInputs = 5u, classification_type Configuration = classification_type::np_configurations>
 class tech_library
 {
+private:
+  static constexpr uint32_t max_multi_outputs = 2;
   using supergates_list_t = std::vector<supergate<NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
+  using multi_tt_hash = detail::tuple_tt_hash<NInputs, max_multi_outputs>;
   using lib_t = phmap::flat_hash_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
+  using multi_relation_t = std::array<kitty::static_truth_table<NInputs>, max_multi_outputs>;
+  using multi_supergates_list_t = std::vector<std::vector<supergate<NInputs>>>;
+  using multi_lib_t = phmap::flat_hash_map<multi_relation_t, multi_supergates_list_t, multi_tt_hash>;
 
 public:
   explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, super_lib const& supergates_spec = {} )
@@ -164,9 +194,15 @@ public:
         _ps( ps ),
         _super( _gates, _supergates_spec, super_utils_params{ ps.verbose } ),
         _use_supergates( false ),
-        _super_lib()
+        _super_lib(),
+        _multi_lib()
   {
+    static_assert( NInputs < 7, "The technology library database supports NInputs up to 6\n" );
+
     generate_library();
+
+    if ( ps.load_multioutput_gates )
+      generate_multioutput_library();
   }
 
   explicit tech_library( std::vector<gate> const& gates, super_lib const& supergates_spec, tech_library_params const ps = {} )
@@ -175,9 +211,15 @@ public:
         _ps( ps ),
         _super( _gates, _supergates_spec, super_utils_params{ ps.verbose } ),
         _use_supergates( true ),
-        _super_lib()
+        _super_lib(),
+        _multi_lib()
   {
+    static_assert( NInputs < 7, "The technology library database supports NInputs up to 6\n" );
+
     generate_library();
+
+    if ( ps.load_multioutput_gates )
+      generate_multioutput_library();
   }
 
   /*! \brief Get the gates matching the function.
@@ -221,6 +263,14 @@ public:
   const std::vector<gate> get_gates() const
   {
     return _gates;
+  }
+
+  /*! \brief Returns the number of multi-output gates loaded in the library. */
+  const uint32_t num_multioutput_gates() const
+  {
+    if ( !_ps.load_multioutput_gates )
+      return 0;
+    return _super.get_multioutput_library().size();
   }
 
 private:
@@ -587,6 +637,192 @@ private:
     }
   }
 
+  void generate_multioutput_library()
+  {
+    /* NP-configurations only */
+    uint32_t np_count = 0;
+
+    /* load multi-output gates */
+    auto const& multioutput_gates = _super.get_multioutput_library();
+
+    uint32_t ignored_gates = 0;
+    for ( auto const& multi_gate : multioutput_gates )
+    {
+      /* select the on up to max_multi_outputs outputs */
+      if ( multi_gate.size() > max_multi_outputs )
+      {
+        ++ignored_gates;
+        continue;
+      }
+
+      const auto on_np = [&]( auto const& tts, auto neg, auto const& perm ) {
+        std::vector<supergate<NInputs>> multi_sg;
+
+        for ( auto const& gate : multi_gate )
+        {
+          multi_sg.emplace_back( supergate<NInputs> { &gate,
+                                                      static_cast<float>( gate.area ),
+                                                      {},
+                                                      perm,
+                                                      0 }
+          );
+        }
+
+        for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
+        {
+          uint32_t j = 0;
+          for ( auto sg : multi_sg )
+          {
+            sg.tdelay[i] = multi_gate[j++].tdelay[perm[i]];
+            sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
+          }
+        }
+
+        std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> static_tts = {};
+
+        for ( auto i = 0; i < tts.size(); ++i )
+          static_tts[i] = kitty::extend_to<NInputs>( tts[i] );
+
+        std::sort( static_tts.begin(), static_tts.end() );
+
+        auto& v = _multi_lib[static_tts];
+
+        /* ordered insert by ascending area and number of input pins */
+        auto it = std::lower_bound( v.begin(), v.end(), multi_sg, [&]( auto const& s1, auto const& s2 ) {
+          if ( s1[0].area < s2[0].area )
+            return true;
+          if ( s1[0].area > s2[0].area )
+            return false;
+          if ( s1[0].root->num_vars < s2[0].root->num_vars )
+            return true;
+          if ( s1[0].root->num_vars > s2[0].root->num_vars )
+            return true;
+          return s1[0].root->id < s2[0].root->id;
+        } );
+
+        bool to_add = true;
+        /* search for duplicated elements due to symmetries */
+        while ( it != v.end() )
+        {
+          /* if different gate, exit */
+          if ( multi_sg[0].root->id != ( *it )[0].root->id )
+            break;
+
+          /* if already in the library, exit */
+          if ( multi_sg[0].polarity != ( *it )[0].polarity )
+          {
+            ++it;
+            continue;
+          }
+
+          bool same_delay = true;
+          for ( auto i = 0; i < multi_sg.size(); ++i )
+          {
+            if ( multi_sg[i].tdelay != ( *it )[i].tdelay )
+            {
+              same_delay = false;
+              break;
+            }
+          }
+
+          /* do not add if equivalent to another in the library */
+          if ( same_delay )
+          {
+            to_add = false;
+            break;
+          }
+
+          ++it;
+        }
+
+        if ( to_add )
+        {
+          v.insert( it, multi_sg );
+          ++np_count;
+        }
+      };
+
+      if constexpr ( Configuration == classification_type::np_configurations )
+      {
+        /* NP enumeration of the function */
+        std::vector<kitty::dynamic_truth_table> tts;
+        for ( auto gate : multi_gate )
+          tts.push_back( gate.function );
+        kitty::exact_multi_np_enumeration( tts, on_np );
+      }
+      // else
+      // {
+      //   /* P enumeration followed by N canonization of the function */
+      //   const auto tt = gate.function;
+      //   kitty::exact_p_enumeration( tt, on_p );
+      // }
+    }
+
+    std::cout << _multi_lib.size() << "\n";
+    //   const auto on_p = [&]( auto const& tt, auto const& perm ) {
+    //     /* get all the configurations that lead to the N-class representative */
+    //     auto [tt_canon, phases] = kitty::exact_n_canonization_complete( tt );
+
+    //     for ( auto phase : phases )
+    //     {
+    //       supergate<NInputs> sg = { &gate,
+    //                                 static_cast<float>( gate.area ),
+    //                                 {},
+    //                                 perm,
+    //                                 static_cast<uint8_t>( phase ) };
+
+    //       for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
+    //       {
+    //         sg.tdelay[i] = gate.tdelay[perm[i]];
+    //       }
+
+    //       const auto static_tt = kitty::extend_to<NInputs>( tt_canon );
+
+    //       auto& v = _super_lib[static_tt];
+
+    //       /* ordered insert by ascending area and number of input pins */
+    //       auto it = std::lower_bound( v.begin(), v.end(), sg, [&]( auto const& s1, auto const& s2 ) {
+    //         if ( s1.area < s2.area )
+    //           return true;
+    //         if ( s1.area > s2.area )
+    //           return false;
+    //         if ( s1.root->num_vars < s2.root->num_vars )
+    //           return true;
+    //         if ( s1.root->num_vars > s2.root->num_vars )
+    //           return true;
+    //         return s1.root->id < s2.root->id;
+    //       } );
+
+    //       bool to_add = true;
+    //       /* search for duplicated element due to symmetries */
+    //       while ( it != v.end() )
+    //       {
+    //         if ( sg.root->id == it->root->id )
+    //         {
+    //           /* if already in the library exit, else ignore permutations if with equal delay cost */
+    //           if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
+    //           {
+    //             to_add = false;
+    //             break;
+    //           }
+    //         }
+    //         else
+    //         {
+    //           break;
+    //         }
+    //         ++it;
+    //       }
+
+    //       if ( to_add )
+    //       {
+    //         v.insert( it, sg );
+    //         ++np_count;
+    //       }
+    //     }
+    //   };
+    // }
+  }
+
   float compute_worst_delay( gate const& g )
   {
     float worst_delay = 0.0f;
@@ -620,6 +856,7 @@ private:
   tech_library_params const _ps;
   super_utils<NInputs> _super; /* supergates generation */
   lib_t _super_lib;            /* library of enumerated gates */
+  multi_lib_t _multi_lib;      /* library of enumerated multioutput gates */
 };                             /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>
