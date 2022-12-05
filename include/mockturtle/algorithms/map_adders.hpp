@@ -159,7 +159,7 @@ public:
     ntk.clear_values();
     map();
 
-    topo_sort();
+    // topo_sort();
   }
 
 private:

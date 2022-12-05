@@ -580,6 +580,7 @@ public:
   using multi_output_set_t = std::vector<uint64_t>;
   using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash>;
   using multi_match_t = std::pair<uint64_t, uint64_t>;
+  using multi_cut_set_t = std::vector<std::array<multi_cut_t, 2>>;
   using multi_matches_t = std::vector<multi_match_t>;
 
 public:
@@ -2516,11 +2517,15 @@ private:
   {
     multi_node_match.reserve( multi_cuts_classes.size() );
 
-    /* copy set and sort by gate size: too slow */
+    /* copy set and sort by gate size: improve, too slow */
     std::vector<std::pair<multi_leaves_set_t, multi_output_set_t>> class_list;
     class_list.reserve( multi_cuts_classes.size() );
     for ( auto& it : multi_cuts_classes )
-      class_list.push_back( it );
+    {
+      /* insert multiple occurring cuts */
+      if ( it.second.size() > 1 )
+        class_list.push_back( it );
+    }
 
     std::sort( class_list.begin(), class_list.end(), [&]( auto const& a, auto const& b ) {
       return a.first[2] > b.first[2];
@@ -2529,10 +2534,6 @@ private:
     /* combine and match */
     for ( auto it : class_list )
     {
-      /* not matched to a multi-output gate */
-      if ( it.second.size() < 2 )
-        continue;
-
       /* try half adder and full adder */
       for ( uint32_t i = 0; i < it.second.size() - 1; ++i )
       {
@@ -2580,14 +2581,17 @@ private:
       uint32_t index1 = pair.first >> 16;
       uint32_t index2 = pair.second >> 16;
       uint32_t cut_index1 = pair.first & UINT16_MAX;
-      multi_cut_t const& cut = multi_cuts.cuts( index1 )[cut_index1];
+      uint32_t cut_index2 = pair.second & UINT16_MAX;
+      multi_cut_t const& cut1 = multi_cuts.cuts( index1 )[cut_index1];
+      multi_cut_t const& cut2 = multi_cuts.cuts( index2 )[cut_index2];
 
       /* remove contained multi-output gates */
-      if ( !multi_gate_mark( index1, index2, cut ) )
+      if ( !multi_gate_mark( index1, index2, cut1 ) )
         continue;
 
       /* add cut */
-      multi_cut_set.push_back( cut );
+      std::array<multi_cut_t, 2> cut_pair = { cut1, cut2 };
+      multi_cut_set.push_back( cut_pair );
 
       /* re-index data */
       uint64_t new_data1, new_data2;
@@ -2607,13 +2611,11 @@ private:
   inline bool multi_check_adder( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
   {
     bool valid = true;
-    bool swapped = false;
 
     /* check containment of cut1 in cut2 and viceversa */
     if ( index1 > index2 )
     {
       std::swap( index1, index2 );
-      swapped = true;
     }
     
     ntk.foreach_fanin( ntk.index_to_node( index2 ), [&]( auto const& f ) {
@@ -2709,7 +2711,7 @@ private:
       uint32_t index1 = pair.first >> 16;
       uint32_t index2 = pair.second >> 16;
       uint32_t cut_index1 = pair.first & UINT16_MAX;
-      multi_cut_t const& cut = multi_cut_set[cut_index1];
+      multi_cut_t const& cut = multi_cut_set[cut_index1][0];
 
       if ( index1 > index2 )
         std::swap( index1, index2 );
@@ -2817,9 +2819,9 @@ private:
   uint32_t cuts_total{ 0 };     /* current computed cuts */
 
   /* multi-output matching */
-  multi_hash_t multi_cuts_classes;        /* cuts leaves classes */
-  std::vector<multi_cut_t> multi_cut_set; /* set of multi-output cuts */
-  multi_matches_t multi_node_match;       /* matched multi-output gates */
+  multi_hash_t multi_cuts_classes;  /* cuts leaves classes */
+  multi_cut_set_t multi_cut_set;    /* set of multi-output cuts */
+  multi_matches_t multi_node_match; /* matched multi-output gates */
 
   /* multioutput HA and FA functions */
   const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
