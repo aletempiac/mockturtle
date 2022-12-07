@@ -220,6 +220,14 @@ public:
     }
   }
 
+  /*! \brief Sets the cut limit.
+   */
+  void set_cut_limit( uint32_t limit )
+  {
+    assert( limit <= MaxCuts );
+    set_limit = limit;
+  }
+
   /*! \brief Adds a cut to the end of the set.
    *
    * This function should only be called to create a set of cuts which is known
@@ -265,19 +273,19 @@ public:
     return c1.size() < c2.size();
   }
 
-  static bool sort_delay2( CutType const& c1, CutType const& c2 )
-  {
-    constexpr auto eps{ 0.005f };
-    if ( c1.size() < c2.size() )
-      return true;
-    if ( c1.size() > c2.size() )
-      return false;
-    if ( c1->data.delay < c2->data.delay - eps )
-      return true;
-    if ( c1->data.delay > c2->data.delay + eps )
-      return false;
-    return c1->data.flow < c2->data.flow - eps;
-  }
+  // static bool sort_delay2( CutType const& c1, CutType const& c2 )
+  // {
+  //   constexpr auto eps{ 0.005f };
+  //   if ( c1.size() < c2.size() )
+  //     return true;
+  //   if ( c1.size() > c2.size() )
+  //     return false;
+  //   if ( c1->data.delay < c2->data.delay - eps )
+  //     return true;
+  //   if ( c1->data.delay > c2->data.delay + eps )
+  //     return false;
+  //   return c1->data.flow < c2->data.flow - eps;
+  // }
 
   static bool sort_area( CutType const& c1, CutType const& c2 )
   {
@@ -338,13 +346,24 @@ public:
     /* insert cut in a sorted way */
     typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
 
+    /* do not insert if worst than set_limit */
+    // if ( std::distance( _pcuts.begin(), _pend ) >= set_limit )
+    // {
+    //   if ( sort == emap_cut_sort_type::DELAY && !sort_delay( cut, **( ipos + set_limit - 1 ) ) )
+    //   {
+    //     return;
+    //   }
+    //   if ( sort == emap_cut_sort_type::AREA && !sort_area( cut, **( ipos + set_limit - 1 ) ) )
+    //   {
+    //     return;
+    //   }
+    // }
+
+    /* do not sort if less cuts than limit */
+
     if ( sort == emap_cut_sort_type::DELAY )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
-    }
-    else if ( sort == emap_cut_sort_type::DELAY2 )
-    {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
     }
     else if ( sort == emap_cut_sort_type::AREA )
     {
@@ -514,6 +533,7 @@ private:
   std::array<CutType*, MaxCuts> _pcuts;
   typename std::array<CutType*, MaxCuts>::const_iterator _pcend{ _pcuts.begin() };
   typename std::array<CutType*, MaxCuts>::iterator _pend{ _pcuts.begin() };
+  uint32_t set_limit{ MaxCuts };
 };
 #pragma endregion
 
@@ -544,6 +564,8 @@ struct node_match_flex
   uint32_t best_cut[2];
   /* node is mapped using only one phase */
   bool same_match{ false };
+  /* node is mapped to a multi-output gate */
+  bool multioutput_match{ false };
 
   /* arrival time at node output */
   double arrival[2];
@@ -574,13 +596,14 @@ public:
   using TT = kitty::static_truth_table<CutSize>;
 
   static constexpr uint32_t max_multioutput_cut_size = 3;
+  static constexpr uint32_t max_multioutput_output_size = 2;
   using multi_cuts_t = fast_network_cuts<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>;
   using multi_cut_t = typename multi_cuts_t::cut_t;
   using multi_leaves_set_t = std::array<uint32_t, max_multioutput_cut_size>;
   using multi_output_set_t = std::vector<uint64_t>;
   using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash>;
-  using multi_match_t = std::pair<uint64_t, uint64_t>;
-  using multi_cut_set_t = std::vector<std::array<multi_cut_t, 2>>;
+  using multi_match_t = std::array<uint64_t, max_multioutput_output_size>;
+  using multi_cut_set_t = std::vector<std::array<cut_t, max_multioutput_output_size>>;
   using multi_matches_t = std::vector<multi_match_t>;
 
 public:
@@ -735,8 +758,11 @@ private:
       match_drop_phase<DO_AREA, false>( n, 0 );
 
       /* try a multi-output match */
-      if ( ps.map_multioutput && node_tuple_match[index] != 0 )
-        match_multioutput<DO_AREA>( n );
+      if constexpr ( DO_AREA)
+      {
+        if ( ps.map_multioutput && node_tuple_match[index] != 0 )
+          match_multioutput<DO_AREA>( n );
+      }
     }
 
     double area_old = area;
@@ -786,6 +812,9 @@ private:
     } );
     lcuts[2] = &cuts[index];
     auto& rcuts = *lcuts[fanin];
+
+    /* set cut limit for run-time optimization*/
+    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit - 1 );
 
     cut_t new_cut;
     std::vector<cut_t const*> vcuts( fanin );
@@ -855,6 +884,9 @@ private:
     const auto fanin = cut_sizes.size();
     lcuts[fanin] = &cuts[index];
     auto& rcuts = *lcuts[fanin];
+
+    /* set cut limit for run-time optimization*/
+    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
 
     if ( fanin > 1 && fanin <= ps.cut_enumeration_ps.fanin_limit )
     {
@@ -936,6 +968,8 @@ private:
   {
     for ( auto const& n : topo_order )
     {
+      uint32_t index = ntk.node_to_index( n );
+
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
       {
         continue;
@@ -949,6 +983,13 @@ private:
 
       /* try to drop one phase */
       match_drop_phase<DO_AREA, false>( n, 0 );
+
+      /* try a multi-output match */
+      if constexpr ( DO_AREA)
+      {
+        if ( ps.map_multioutput && node_tuple_match[index] != 0 )
+          match_multioutput<DO_AREA>( n );
+      }
     }
 
     double area_old = area;
@@ -1686,7 +1727,120 @@ private:
   template<bool DO_AREA>
   void match_multioutput( node<Ntk> const& n )
   {
-    return;
+    /* extract outputs tuple */
+    uint32_t index = ntk.node_to_index( n );
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+
+    /* get the cuts */
+    uint32_t cut_index = tuple_data[0] & UINT16_MAX;
+    auto const& cut_pair = multi_cut_set[cut_index];
+
+    /* local values storage */
+    std::array<double, max_multioutput_output_size> arrival;
+    std::array<double, max_multioutput_output_size> area_flow;
+    std::array<double, max_multioutput_output_size> area;
+    std::array<uint8_t, max_multioutput_output_size> phase;
+
+    double old_flow_sum = 0;
+    bool have_same_match = true;
+
+    /* iterate for each possible match */
+    for ( auto i = 0; i < cut_pair[0]->data.supergates[0]->size(); ++i )
+    {
+      /* store local validity and comparison info */
+      bool valid = true;
+      bool is_best = true;
+
+      /* iterate for each output of the multi-output gate */
+      for ( auto j = 0; j < max_multioutput_output_size; ++j )
+      {
+        uint32_t node_index = tuple_data[j] >> 16;
+        auto& node_data = node_match[node_index];
+        auto const& cut = cut_pair[j];
+        supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+
+        have_same_match = have_same_match & node_data.same_match;
+
+        /* get the output phase */
+        phase[j] = gate.polarity >> NInputs;
+        uint8_t old_phase = node_data.phase[phase[j]];
+
+        /* compute area flow */
+        old_flow_sum += node_data.flows[phase[j]];
+        node_data.phase[phase[j]] = gate.polarity;
+        area_flow[j] = gate.area + cut_leaves_flow( cut, n, phase[j] );
+        node_data.phase[phase[j]] = old_phase;
+
+        arrival[j] = 0.0;
+        auto ctr = 0u;
+        for ( auto l : cut )
+        {
+          double arrival_pin = node_match[l].arrival[( gate.polarity >> ctr ) & 1] + gate.tdelay[ctr];
+          arrival[j] = std::max( arrival[j], arrival_pin );
+          ++ctr;
+        }
+
+        /* check required time */
+        if constexpr ( DO_AREA )
+        {
+          if ( arrival[j] > node_data.required[phase[j]] + epsilon )
+          {
+            valid = false;
+            break;
+          }
+        }
+
+        /* recompute local area flow */
+        double mapped_flow = node_data.flows[phase[j]];
+        if ( node_data.same_match )
+          mapped_flow *= node_data.est_refs[2];
+        else
+          mapped_flow *= node_data.est_refs[phase[j]];
+
+        /* local evaluation */
+        auto const& mapped_cut = cuts[node_index][node_data.best_cut[phase[j]]];
+        if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
+        {
+          is_best = false;
+        }
+      }
+
+      /* not better than individual gates */
+      if ( !valid )
+        continue;
+
+      /* combine evaluation for area */
+      if constexpr ( DO_AREA )
+      {
+        /* check the sum of area flow */
+        double flow_sum = 0;
+        for ( auto j = 0; j < max_multioutput_output_size; ++j )
+        {
+          flow_sum += area_flow[j];
+        }
+
+        /* TODO: add fanout estimation */
+        if ( flow_sum < old_flow_sum - epsilon )
+          is_best = true;
+      }
+
+      /* not better than individual gates */
+      if ( !is_best )
+        continue;
+
+      /* evaluate phase substitution */
+      // if ( !have_same_match )
+      // {
+
+      // }
+      
+      /* commit */
+      // for ( auto j = 0; j < max_multioutput_output_size; ++j )
+      // {
+
+      // }
+      // std::cout << "Commit";
+    }
   }
 
   inline double cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
@@ -2396,7 +2550,7 @@ private:
     multi_enumerate_matches( multi_cuts );
     multi_compute_matches( multi_cuts );
     /* TODO: remove filtering? */
-    multi_filter_and_assign( multi_cuts ); /* it also adds the tuple for node mapping */
+    multi_filter_and_match( multi_cuts ); /* it also adds the tuple for node mapping */
   }
 
   void multi_init_topo_order()
@@ -2576,7 +2730,7 @@ private:
   }
 
   /* Experimental code */
-  void multi_filter_and_assign( multi_cuts_t const& multi_cuts )
+  void multi_filter_and_match( multi_cuts_t const& multi_cuts )
   {
     multi_matches_t multi_node_match_tmp;
     multi_node_match_tmp.reserve( multi_node_match.size() );
@@ -2588,10 +2742,10 @@ private:
 
     for ( auto& pair : multi_node_match )
     {
-      uint32_t index1 = pair.first >> 16;
-      uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      uint32_t cut_index2 = pair.second & UINT16_MAX;
+      uint32_t index1 = pair[0] >> 16;
+      uint32_t index2 = pair[1] >> 16;
+      uint32_t cut_index1 = pair[0] & UINT16_MAX;
+      uint32_t cut_index2 = pair[1] & UINT16_MAX;
       multi_cut_t const& cut1 = multi_cuts.cuts( index1 )[cut_index1];
       multi_cut_t const& cut2 = multi_cuts.cuts( index2 )[cut_index2];
 
@@ -2599,8 +2753,19 @@ private:
       if ( !multi_gate_mark( index1, index2, cut1 ) )
         continue;
 
+      /* copy cuts */
+      cut_t new_cut1, new_cut2;
+      new_cut1.set_leaves( cut1.begin(), cut1.end() );
+      new_cut2.set_leaves( cut2.begin(), cut2.end() );
+      new_cut1->data.function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut1 ) );
+      new_cut2->data.function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut2 ) );
+
+      /* Multi-output Boolean matching, continue if no match */
+      std::array<cut_t, max_multioutput_output_size> cut_pair = { new_cut1, new_cut2 };
+      if ( !multi_compute_cut_data( cut_pair ) )
+        continue;
+
       /* add cut */
-      std::array<multi_cut_t, 2> cut_pair = { cut1, cut2 };
       multi_cut_set.push_back( cut_pair );
 
       /* re-index data */
@@ -2615,6 +2780,45 @@ private:
 
     multi_node_match = multi_node_match_tmp;
     st.adders = multi_node_match.size();
+  }
+
+  bool multi_compute_cut_data( std::array<cut_t, max_multioutput_output_size>& cut_tuple )
+  {
+    std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts;
+    std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts_order;
+    std::array<size_t, max_multioutput_output_size> order = {};
+
+    std::iota( order.begin(), order.end(), 0 );
+
+    for ( auto i = 0; i < max_multioutput_output_size; ++i )
+    {
+      tts[i] = kitty::shrink_to<NInputs>( cut_tuple[i]->data.function );
+      if ( tts[i]._bits & 1 == 1 )
+        tts[i] = ~tts[i];
+    }
+
+    std::sort( order.begin(), order.end(), [&]( size_t a, size_t b ) {
+      return tts[a] < tts[b];
+    } );
+
+    std::transform( order.begin(), order.end(), tts_order.begin(), [&]( size_t a ) {
+      return tts[a];
+    } );
+
+    auto const multigates_match = library.get_multi_supergates( tts_order );
+
+    /* Ignore not matched cuts */
+    if ( multigates_match == nullptr )
+      return false;
+
+    /* add cut matches */
+    for ( auto i = 0; i < max_multioutput_output_size; ++i )
+    {
+      std::vector<supergate<NInputs>> const* multigate = &( ( *multigates_match )[i] );
+      cut_tuple[order[i]]->data.supergates[0] = multigate;
+    }
+
+    return true;
   }
 
   /* specific code for checking adder mapping */
@@ -2719,10 +2923,10 @@ private:
   {
     for ( auto& pair : multi_node_match )
     {
-      uint32_t index1 = pair.first >> 16;
-      uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      multi_cut_t const& cut = multi_cut_set[cut_index1][0];
+      uint32_t index1 = pair[0] >> 16;
+      uint32_t index2 = pair[1] >> 16;
+      uint32_t cut_index1 = pair[0] & UINT16_MAX;
+      cut_t const& cut = multi_cut_set[cut_index1][0];
 
       if ( index1 > index2 )
         std::swap( index1, index2 );
@@ -2774,7 +2978,7 @@ private:
     } );
   }
 
-  inline bool multi_is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, multi_cut_t const& cut )
+  inline bool multi_is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
   {
     /* reference cut leaves */
     for ( auto leaf : cut )

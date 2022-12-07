@@ -798,7 +798,7 @@ private:
       std::cerr << fmt::format( "[i] WARNING: {} multi-output gates IGNORED (e.g., {}), too many outputs for the library settings\n", ignored_gates, ignored_name );
     }
 
-    std::cout << _multi_lib.size() << "\n";
+    // std::cout << _multi_lib.size() << "\n";
   }
 
   void multi_update_area()
@@ -847,8 +847,8 @@ private:
         }
 
         /* assign weighted contribution */
-        double area_old = multi_gates[0][i].area;
-        double area_check = 0;
+        // double area_old = multi_gates[0][i].area;
+        // double area_check = 0;
         for ( auto j = 0; j < max_multi_outputs; ++j )
         {
           auto& gate = multi_gates[j][i];
@@ -858,7 +858,7 @@ private:
           else
             gate.area = remaining_area;
 
-          area_check += gate.area;
+          // area_check += gate.area;
         }
 
         // std::cout << fmt::format( "Area before: {}\t Area after {}\n", area_old, area_check );
