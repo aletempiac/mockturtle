@@ -184,7 +184,7 @@ private:
   using multi_tt_hash = detail::tuple_tt_hash<NInputs, max_multi_outputs>;
   using lib_t = phmap::flat_hash_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
   using multi_relation_t = std::array<kitty::static_truth_table<NInputs>, max_multi_outputs>;
-  using multi_supergates_list_t = std::vector<std::vector<supergate<NInputs>>>;
+  using multi_supergates_list_t = std::array<std::vector<supergate<NInputs>>, max_multi_outputs>;
   using multi_lib_t = phmap::flat_hash_map<multi_relation_t, multi_supergates_list_t, multi_tt_hash>;
 
 public:
@@ -235,6 +235,19 @@ public:
     return nullptr;
   }
 
+  /*! \brief Get the multi-output gates matching the function.
+   *
+   * Returns a list of multi-output gates that match the function
+   * represented by the truth table.
+   */
+  const multi_supergates_list_t* get_multi_supergates( std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> const& tts ) const
+  {
+    auto match = _multi_lib.find( tts );
+    if ( match != _multi_lib.end() )
+      return &match->second;
+    return nullptr;
+  }
+
   /*! \brief Get inverter information.
    *
    * Returns area, delay, and ID of the smallest inverter.
@@ -270,7 +283,7 @@ public:
   {
     if ( !_ps.load_multioutput_gates )
       return 0;
-    return _super.get_multioutput_library().size();
+    return _multi_lib.size();
   }
 
 private:
@@ -637,10 +650,11 @@ private:
     }
   }
 
+  /* Supports only NP configurations */
   void generate_multioutput_library()
   {
-    /* NP-configurations only */
     uint32_t np_count = 0;
+    std::string ignored_name;
 
     /* load multi-output gates */
     auto const& multioutput_gates = _super.get_multioutput_library();
@@ -651,9 +665,12 @@ private:
       /* select the on up to max_multi_outputs outputs */
       if ( multi_gate.size() > max_multi_outputs )
       {
+        ignored_name = multi_gate[0].root->name;
         ++ignored_gates;
         continue;
       }
+
+      std::array<size_t, max_multi_outputs> order = { 0 };
 
       const auto on_np = [&]( auto const& tts, auto neg, auto const& perm ) {
         std::vector<supergate<NInputs>> multi_sg;
@@ -679,46 +696,66 @@ private:
         }
 
         std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> static_tts = {};
+        std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> sorted_tts = {};
 
+        /* canonize output */
         for ( auto i = 0; i < tts.size(); ++i )
+        {
           static_tts[i] = kitty::extend_to<NInputs>( tts[i] );
+          if ( static_tts[i]._bits & 1 == 1 )
+          {
+            static_tts[i] = ~static_tts[i];
+            multi_sg[i].polarity |= 1 << NInputs; /* set flipped output polarity*/
+          }
+        }
 
-        std::sort( static_tts.begin(), static_tts.end() );
+        std::iota( order.begin(), order.end(), 0 );
 
-        auto& v = _multi_lib[static_tts];
+        std::sort( order.begin(), order.end(), [&]( size_t a, size_t b ) {
+          return static_tts[a] < static_tts[b];
+        } );
+
+        std::transform( order.begin(), order.end(), sorted_tts.begin(), [&]( size_t a ) {
+          return static_tts[a];
+        } );
+
+        // std::sort( static_tts.begin(), static_tts.end() );
+
+        auto& v = _multi_lib[sorted_tts];
 
         /* ordered insert by ascending area and number of input pins */
-        auto it = std::lower_bound( v.begin(), v.end(), multi_sg, [&]( auto const& s1, auto const& s2 ) {
-          if ( s1[0].area < s2[0].area )
+        auto it = std::lower_bound( v[0].begin(), v[0].end(), multi_sg[0], [&]( auto const& s1, auto const& s2 ) {
+          if ( s1.area < s2.area )
             return true;
-          if ( s1[0].area > s2[0].area )
+          if ( s1.area > s2.area )
             return false;
-          if ( s1[0].root->num_vars < s2[0].root->num_vars )
+          if ( s1.root->num_vars < s2.root->num_vars )
             return true;
-          if ( s1[0].root->num_vars > s2[0].root->num_vars )
+          if ( s1.root->num_vars > s2.root->num_vars )
             return true;
-          return s1[0].root->id < s2[0].root->id;
+          return s1.root->id < s2.root->id;
         } );
 
         bool to_add = true;
         /* search for duplicated elements due to symmetries */
-        while ( it != v.end() )
+        while ( it != v[0].end() )
         {
           /* if different gate, exit */
-          if ( multi_sg[0].root->id != ( *it )[0].root->id )
+          if ( multi_sg[0].root->id != it->root->id )
             break;
 
           /* if already in the library, exit */
-          if ( multi_sg[0].polarity != ( *it )[0].polarity )
+          if ( multi_sg[order[0]].polarity != it->polarity )
           {
             ++it;
             continue;
           }
 
           bool same_delay = true;
+          size_t d = std::distance( v[0].begin(), it );
           for ( auto i = 0; i < multi_sg.size(); ++i )
           {
-            if ( multi_sg[i].tdelay != ( *it )[i].tdelay )
+            if ( multi_sg[order[i]].tdelay != v[i][d].tdelay )
             {
               same_delay = false;
               break;
@@ -737,90 +774,96 @@ private:
 
         if ( to_add )
         {
-          v.insert( it, multi_sg );
+          size_t d = std::distance( v[0].begin(), it );
+          for ( auto i = 0; i < multi_sg.size(); ++i )
+          {
+            v[i].insert( v[i].begin() + d, multi_sg[order[i]] );
+          }
           ++np_count;
         }
       };
 
-      if constexpr ( Configuration == classification_type::np_configurations )
-      {
-        /* NP enumeration of the function */
-        std::vector<kitty::dynamic_truth_table> tts;
-        for ( auto gate : multi_gate )
-          tts.push_back( gate.function );
-        kitty::exact_multi_np_enumeration( tts, on_np );
-      }
-      // else
-      // {
-      //   /* P enumeration followed by N canonization of the function */
-      //   const auto tt = gate.function;
-      //   kitty::exact_p_enumeration( tt, on_p );
-      // }
+      /* NP enumeration of the function */
+      std::vector<kitty::dynamic_truth_table> tts;
+      for ( auto gate : multi_gate )
+        tts.push_back( gate.function );
+      kitty::exact_multi_np_enumeration( tts, on_np );
+    }
+
+    /* update area based on the single output contribution */
+    multi_update_area();
+
+    if ( _ps.verbose && ignored_gates > 0 )
+    {
+      std::cerr << fmt::format( "[i] WARNING: {} multi-output gates IGNORED (e.g., {}), too many outputs for the library settings\n", ignored_gates, ignored_name );
     }
 
     std::cout << _multi_lib.size() << "\n";
-    //   const auto on_p = [&]( auto const& tt, auto const& perm ) {
-    //     /* get all the configurations that lead to the N-class representative */
-    //     auto [tt_canon, phases] = kitty::exact_n_canonization_complete( tt );
+  }
 
-    //     for ( auto phase : phases )
-    //     {
-    //       supergate<NInputs> sg = { &gate,
-    //                                 static_cast<float>( gate.area ),
-    //                                 {},
-    //                                 perm,
-    //                                 static_cast<uint8_t>( phase ) };
+  void multi_update_area()
+  {
+    /* update area for each sub-function in a multi-output gate with their contribution */
+    for ( auto& pair : _multi_lib )
+    {
+      auto& multi_gates = pair.second;
+      for ( auto i = 0; i < multi_gates[0].size(); ++i )
+      {
+        /* get sum of area and area count */
+        double area = 0;
+        uint32_t contribution_count = 0;
+        std::array<double, max_multi_outputs> area_contribution = { 0 };
+        for ( auto j = 0; j < max_multi_outputs; ++j )
+        {
+          auto& gate = multi_gates[j][i];
+          const kitty::static_truth_table<NInputs> tt = kitty::extend_to<NInputs>( gate.root->function );
 
-    //       for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
-    //       {
-    //         sg.tdelay[i] = gate.tdelay[perm[i]];
-    //       }
+          /* get the area of the smallest match with a simple gate */
+          const auto match = get_supergates( tt );
+          if ( match == nullptr )
+            continue;
+          
+          area_contribution[j] = ( *match )[0].area;
+          area += area_contribution[j];
+          ++contribution_count;
 
-    //       const auto static_tt = kitty::extend_to<NInputs>( tt_canon );
+          // std::cout << fmt::format( "Contribution {}\t = {}\n", ( *match )[0].root->root->name, area_contribution[j] );
+        }
 
-    //       auto& v = _super_lib[static_tt];
+        /* compute scaling factor and remaining area for non-matched gates */
+        double scaling_factor = 1.0;
+        double remaining_area = 0;
 
-    //       /* ordered insert by ascending area and number of input pins */
-    //       auto it = std::lower_bound( v.begin(), v.end(), sg, [&]( auto const& s1, auto const& s2 ) {
-    //         if ( s1.area < s2.area )
-    //           return true;
-    //         if ( s1.area > s2.area )
-    //           return false;
-    //         if ( s1.root->num_vars < s2.root->num_vars )
-    //           return true;
-    //         if ( s1.root->num_vars > s2.root->num_vars )
-    //           return true;
-    //         return s1.root->id < s2.root->id;
-    //       } );
+        if ( contribution_count != max_multi_outputs )
+        {
+          scaling_factor = 0.9;
 
-    //       bool to_add = true;
-    //       /* search for duplicated element due to symmetries */
-    //       while ( it != v.end() )
-    //       {
-    //         if ( sg.root->id == it->root->id )
-    //         {
-    //           /* if already in the library exit, else ignore permutations if with equal delay cost */
-    //           if ( sg.polarity == it->polarity && sg.tdelay == it->tdelay )
-    //           {
-    //             to_add = false;
-    //             break;
-    //           }
-    //         }
-    //         else
-    //         {
-    //           break;
-    //         }
-    //         ++it;
-    //       }
+          if ( area > multi_gates[0][i].area )
+            scaling_factor -= ( area - multi_gates[0][i].area ) / area;
 
-    //       if ( to_add )
-    //       {
-    //         v.insert( it, sg );
-    //         ++np_count;
-    //       }
-    //     }
-    //   };
-    // }
+          remaining_area = ( multi_gates[0][i].area - area * scaling_factor );
+          area = area * scaling_factor + remaining_area;
+          remaining_area /= ( max_multi_outputs - contribution_count );
+        }
+
+        /* assign weighted contribution */
+        double area_old = multi_gates[0][i].area;
+        double area_check = 0;
+        for ( auto j = 0; j < max_multi_outputs; ++j )
+        {
+          auto& gate = multi_gates[j][i];
+
+          if ( area_contribution[j] > 0 )
+            gate.area = scaling_factor * area_contribution[j] * gate.area / area;
+          else
+            gate.area = remaining_area;
+
+          area_check += gate.area;
+        }
+
+        // std::cout << fmt::format( "Area before: {}\t Area after {}\n", area_old, area_check );
+      }
+    }
   }
 
   float compute_worst_delay( gate const& g )

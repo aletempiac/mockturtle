@@ -222,8 +222,8 @@ public:
 
     if ( _ps.verbose )
     {
-      std::cout << fmt::format( "[i] Loaded {} simple gates in the library\n", simple_gates_size );
-      std::cout << fmt::format( "[i] Loaded {} multi-output gates in the library\n", _multioutput_gates.size() );
+      std::cout << fmt::format( "[i] Loading {} simple gates in the library\n", simple_gates_size );
+      std::cout << fmt::format( "[i] Loading {} multi-output gates in the library\n", _multioutput_gates.size() );
     }
 
     if ( ignored > 0 )
