@@ -796,7 +796,7 @@ void exact_multi_np_enumeration( const std::vector<TT>& tts, Callback&& fn )
   const auto num_vars = tts[0].num_vars();
 
   for ( auto i = 0; i < tts.size(); ++i )
-    assert( tts[i].num_vars == num_vars );
+    assert( tts[i].num_vars() == num_vars );
 
   /* Special case for n = 0 */
   if ( num_vars == 0 )

@@ -1822,13 +1822,42 @@ private:
 
         /* recompute local area flow of previous matches */
         double mapped_flow = node_data.flows[phase[j]];
-        if ( node_data.same_match )
-          mapped_flow *= node_data.est_refs[2];
+
+        if ( node_data.multioutput_match[phase[j]] )
+        {
+          /* recompute estimate for multi-output gate */
+          float k_est = 0;
+          for ( auto k = 0; k < max_multioutput_output_size; ++k )
+          {
+            uint32_t index_k = tuple_data[k] >> 16;
+            if ( node_match[index_k].same_match )
+              k_est += node_match[index_k].est_refs[2];
+            else
+            {
+              if ( node_match[index_k].multioutput_match[0] )
+                k_est += node_match[index_k].est_refs[0];
+              else
+                k_est += node_match[index_k].est_refs[1];
+            }
+          }
+          mapped_flow *= k_est;
+        }
         else
-          mapped_flow *= node_data.est_refs[phase[j]];
+        {
+          if ( node_data.same_match )
+            mapped_flow *= node_data.est_refs[2];
+          else
+            mapped_flow *= node_data.est_refs[phase[j]];
+        }
 
         /* local evaluation (area flow improvement is approximated) */
-        auto const& mapped_cut = cuts[node_index][node_data.best_cut[phase[j]]];
+        uint32_t mapped_cut_index = node_data.best_cut[phase[j]] & cut_index_filter;
+        auto const& mapped_cut = [&]() {
+          if ( node_data.multioutput_match[phase[j]] )
+            return multi_cut_set[mapped_cut_index][0];
+          else
+            return cuts[node_index][mapped_cut_index];
+        } ();
         if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
         {
           is_best = false;
@@ -1940,7 +1969,7 @@ private:
         node_data.flows[2] = flow_sum;
       }
 
-      std::cout << "Commit";
+      // std::cout << "Commit";
     }
   }
 

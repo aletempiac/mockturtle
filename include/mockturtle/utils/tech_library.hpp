@@ -688,7 +688,7 @@ private:
         for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
         {
           uint32_t j = 0;
-          for ( auto sg : multi_sg )
+          for ( auto& sg : multi_sg )
           {
             sg.tdelay[i] = multi_gate[j++].tdelay[perm[i]];
             sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
