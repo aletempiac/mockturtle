@@ -628,7 +628,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
-        node_tuple_match( ntk.size() ),
+        node_tuple_match( ntk.size(), UINT32_MAX ),
         switch_activity( switch_activity ),
         cuts( ntk.size() )
   {
@@ -761,7 +761,7 @@ private:
       /* try a multi-output match */
       if constexpr ( DO_AREA)
       {
-        if ( ps.map_multioutput && node_tuple_match[index] != 0 )
+        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
           match_multioutput<DO_AREA>( n );
       }
     }
@@ -988,7 +988,7 @@ private:
       /* try a multi-output match */
       if constexpr ( DO_AREA)
       {
-        if ( ps.map_multioutput && node_tuple_match[index] != 0 )
+        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
           match_multioutput<DO_AREA>( n );
       }
     }
@@ -1048,6 +1048,13 @@ private:
 
       /* try to drop one phase */
       match_drop_phase<true, true>( n, 0 );
+
+      /* try a multi-output match */
+      if constexpr ( DO_AREA)
+      {
+        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
+          match_multioutput_exact<SwitchActivity>( n );
+      }
     }
 
     double area_old = area;
@@ -1338,6 +1345,13 @@ private:
     auto& node_data = node_match[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
 
+    /* unmap multioutput */
+    if ( node_data.multioutput_match[phase] )
+    {
+      best_supergate = nullptr;
+      node_data.multioutput_match[phase] = false;
+    }
+
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
@@ -1437,6 +1451,13 @@ private:
 
     auto& node_data = node_match[index];
     supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
+
+    /* unmap multioutput */
+    if ( node_data.multioutput_match[phase] )
+    {
+      best_supergate = nullptr;
+      node_data.multioutput_match[phase] = false;
+    }
 
     /* recompute best match info */
     if ( best_supergate != nullptr )
@@ -1973,6 +1994,229 @@ private:
     }
   }
 
+  // template<bool SwitchActivity>
+  // void match_multioutput_exact( node<Ntk> const& n )
+  // {
+  //   /* extract outputs tuple */
+  //   uint32_t index = ntk.node_to_index( n );
+  //   multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+
+  //   /* get the cuts */
+  //   uint32_t cut_index = tuple_data[0] & UINT16_MAX;
+  //   auto const& cut_pair = multi_cut_set[cut_index];
+
+  //   /* local values storage */
+  //   std::array<double, max_multioutput_output_size> arrival;
+  //   std::array<double, max_multioutput_output_size> area_flow;
+  //   std::array<double, max_multioutput_output_size> area;
+  //   std::array<uint8_t, max_multioutput_output_size> phase;
+  //   std::array<uint8_t, max_multioutput_output_size> pin_phase;
+  //   std::array<double, max_multioutput_output_size> est_refs;
+  //   std::array<bool, max_multioutput_output_size> use_same_phase;
+
+  //   double old_flow_sum = 0;
+
+  //   /* iterate for each possible match */
+  //   for ( auto i = 0; i < cut_pair[0]->data.supergates[0]->size(); ++i )
+  //   {
+  //     /* store local validity and comparison info */
+  //     bool valid = true;
+  //     bool is_best = true;
+
+  //     /* iterate for each output of the multi-output gate */
+  //     for ( auto j = 0; j < max_multioutput_output_size; ++j )
+  //     {
+  //       uint32_t node_index = tuple_data[j] >> 16;
+  //       auto& node_data = node_match[node_index];
+  //       auto const& cut = cut_pair[j];
+  //       supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+  //       use_same_phase[j] = false;
+
+  //       /* get the output phase */
+  //       pin_phase[j] = gate.polarity;
+  //       phase[j] = gate.polarity >> NInputs;
+  //       uint8_t old_phase = node_data.phase[phase[j]];
+
+  //       /* compute area flow */
+  //       old_flow_sum += node_data.flows[phase[j]];
+  //       node_data.phase[phase[j]] = gate.polarity;
+  //       area[j] = gate.area;
+  //       area_flow[j] = gate.area + cut_leaves_flow( cut, n, phase[j] );
+  //       node_data.phase[phase[j]] = old_phase;
+
+  //       /* compute arrival */
+  //       arrival[j] = 0.0;
+  //       auto ctr = 0u;
+  //       for ( auto l : cut )
+  //       {
+  //         double arrival_pin = node_match[l].arrival[( gate.polarity >> ctr ) & 1] + gate.tdelay[ctr];
+  //         arrival[j] = std::max( arrival[j], arrival_pin );
+  //         ++ctr;
+  //       }
+
+  //       /* check required time */
+  //       if constexpr ( DO_AREA )
+  //       {
+  //         if ( arrival[j] > node_data.required[phase[j]] + epsilon )
+  //         {
+  //           valid = false;
+  //           break;
+  //         }
+  //       }
+
+  //       /* recompute local area flow of previous matches */
+  //       double mapped_flow = node_data.flows[phase[j]];
+
+  //       if ( node_data.multioutput_match[phase[j]] )
+  //       {
+  //         /* recompute estimate for multi-output gate */
+  //         float k_est = 0;
+  //         for ( auto k = 0; k < max_multioutput_output_size; ++k )
+  //         {
+  //           uint32_t index_k = tuple_data[k] >> 16;
+  //           if ( node_match[index_k].same_match )
+  //             k_est += node_match[index_k].est_refs[2];
+  //           else
+  //           {
+  //             if ( node_match[index_k].multioutput_match[0] )
+  //               k_est += node_match[index_k].est_refs[0];
+  //             else
+  //               k_est += node_match[index_k].est_refs[1];
+  //           }
+  //         }
+  //         mapped_flow *= k_est;
+  //       }
+  //       else
+  //       {
+  //         if ( node_data.same_match )
+  //           mapped_flow *= node_data.est_refs[2];
+  //         else
+  //           mapped_flow *= node_data.est_refs[phase[j]];
+  //       }
+
+  //       /* local evaluation (area flow improvement is approximated) */
+  //       uint32_t mapped_cut_index = node_data.best_cut[phase[j]] & cut_index_filter;
+  //       auto const& mapped_cut = [&]() {
+  //         if ( node_data.multioutput_match[phase[j]] )
+  //           return multi_cut_set[mapped_cut_index][0];
+  //         else
+  //           return cuts[node_index][mapped_cut_index];
+  //       } ();
+  //       if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
+  //       {
+  //         is_best = false;
+  //       }
+
+  //       /* collect fanout estimations and mapping phases */
+  //       if ( node_data.same_match )
+  //       {
+  //         /* quit exit to not unmap phases, TODO: implement it well */
+  //         /* current version may lead to delay increase */
+  //         use_same_phase[j] = true;
+  //         est_refs[j] = node_data.est_refs[2];
+  //         continue;
+  //       }
+
+  //       /* evaluate phase substitution based on delay only, */
+  //       /* we suppose that it is always the right decision for area, TODO: check */
+  //       uint8_t nphase = phase[j] ^ 1;
+  //       if constexpr ( DO_AREA )
+  //       {
+  //         if ( arrival[j] + lib_inv_delay < node_data.required[nphase] + epsilon )
+  //         {
+  //           est_refs[j] = node_data.est_refs[2];
+  //           use_same_phase[j] = true;
+  //         }
+  //         else
+  //         {
+  //           est_refs[j] = node_data.est_refs[phase[j]];
+  //         }
+  //       }
+  //       else
+  //       {
+  //         if ( arrival[j] < node_data.arrival[nphase] + epsilon )
+  //         {
+  //           est_refs[j] = node_data.est_refs[2];
+  //           use_same_phase[j] = true;
+  //         }
+  //         else
+  //         {
+  //           est_refs[j] = node_data.est_refs[phase[j]];
+  //         }
+  //       }
+  //     }
+
+  //     /* not better than individual gates */
+  //     if ( !valid )
+  //       continue;
+
+  //     if constexpr ( !DO_AREA )
+  //     {
+  //       if ( !is_best )
+  //         continue;
+  //     }
+
+  //     /* combine evaluation for precise area flow estimantion */
+  //     double flow_sum = 0;
+  //     double combined_est_refs = 0;
+  //     for ( auto j = 0; j < max_multioutput_output_size; ++j )
+  //     {
+  //       flow_sum += area_flow[j];
+  //       combined_est_refs += est_refs[j];
+  //     }
+  //     flow_sum = flow_sum / combined_est_refs;
+
+  //     /* not better than individual gates */
+  //     if ( flow_sum > old_flow_sum + epsilon )
+  //       continue;
+
+  //     /* evaluate phase substitution */
+  //     // if ( !have_same_match )
+  //     // {
+
+  //     // }
+      
+  //     /* commit multi-output gate */
+  //     for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
+  //     {
+  //       uint32_t node_index = tuple_data[j] >> 16;
+  //       auto& node_data = node_match[node_index];
+  //       auto const& cut = cut_pair[j];
+  //       supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+
+  //       uint8_t mapped_phase = phase[j];
+  //       node_data.multioutput_match[mapped_phase] = true;
+
+  //       node_data.same_match = use_same_phase[j];
+  //       node_data.best_supergate[mapped_phase] = &gate;
+  //       node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+  //       node_data.phase[mapped_phase] = pin_phase[j];
+  //       node_data.arrival[mapped_phase] = arrival[j];
+  //       node_data.area[mapped_phase] = area[j]; /* partial area contribution */
+  //       node_data.flows[mapped_phase] = flow_sum;
+
+  //       if ( !use_same_phase[j] )
+  //       {
+  //         node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
+  //         continue;
+  //       }
+
+  //       /* select opposite phase */
+  //       mapped_phase ^= 1;
+  //       node_data.multioutput_match[mapped_phase] = true;
+  //       node_data.best_supergate[mapped_phase] = nullptr;
+  //       node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+  //       node_data.phase[mapped_phase] = pin_phase[j];
+  //       node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
+  //       node_data.area[mapped_phase] = area[j]; /* partial area contribution */
+  //       node_data.flows[mapped_phase] = flow_sum;
+  //       node_data.flows[2] = flow_sum;
+  //     }
+
+  //     // std::cout << "Commit";
+  //   }
+  // }
+
   inline double cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
   {
     double flow{ 0.0f };
@@ -2055,7 +2299,14 @@ private:
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
         {
-          count += cut_ref<SwitchActivity>( cuts[leaf][node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto const& best_cut = [&]() {
+            if ( node_match[leaf].multioutput_match[leaf_phase] )
+              return multi_cut_set[best_cut_index][0];
+            else
+              return cuts[leaf][best_cut_index];
+          }();
+          count += cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       else
@@ -2063,7 +2314,14 @@ private:
         ++node_match[leaf].map_refs[2];
         if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
         {
-          count += cut_ref<SwitchActivity>( cuts[leaf][node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto const& best_cut = [&]() {
+            if ( node_match[leaf].multioutput_match[leaf_phase] )
+              return multi_cut_set[best_cut_index][0];
+            else
+              return cuts[leaf][best_cut_index];
+          }();
+          count += cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
     }
@@ -2124,7 +2382,14 @@ private:
         /* Recursive dereferencing */
         if ( --node_match[leaf].map_refs[2] == 0u )
         {
-          count += cut_deref<SwitchActivity>( cuts[leaf][node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto const& best_cut = [&]() {
+            if ( node_match[leaf].multioutput_match[leaf_phase] )
+              return multi_cut_set[best_cut_index][0];
+            else
+              return cuts[leaf][best_cut_index];
+          }();
+          count += cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
       else
@@ -2132,7 +2397,14 @@ private:
         --node_match[leaf].map_refs[2];
         if ( --node_match[leaf].map_refs[leaf_phase] == 0u )
         {
-          count += cut_deref<SwitchActivity>( cuts[leaf][node_match[leaf].best_cut[leaf_phase]], ntk.index_to_node( leaf ), leaf_phase );
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto const& best_cut = [&]() {
+            if ( node_match[leaf].multioutput_match[leaf_phase] )
+              return multi_cut_set[best_cut_index][0];
+            else
+              return cuts[leaf][best_cut_index];
+          }();
+          count += cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
     }
