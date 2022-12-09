@@ -1022,7 +1022,6 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact()
   {
-    uint32_t counter = 0;
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
@@ -1806,9 +1805,10 @@ private:
     std::array<bool, max_multioutput_output_size> use_same_phase;
 
     double old_flow_sum = 0;
+    uint8_t iteration_phase = cut_pair[0]->data.supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut_pair[0]->data.supergates[0]->size(); ++i )
+    for ( auto i = 0; i < cut_pair[0]->data.supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -1820,12 +1820,13 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cut_pair[j];
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
 
         /* get the output phase */
         pin_phase[j] = gate.polarity;
-        phase[j] = gate.polarity >> NInputs;
+        phase[j] = ( gate.polarity >> NInputs ) ^ phase_inverted;
         uint8_t old_phase = node_data.phase[phase[j]];
 
         /* compute area flow */
@@ -1973,7 +1974,8 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cut_pair[j];
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
 
         uint8_t mapped_phase = phase[j];
         node_data.multioutput_match[mapped_phase] = true;
@@ -2043,8 +2045,10 @@ private:
       }
     }
 
+    uint8_t iteration_phase = cut_pair[0]->data.supergates[0] == nullptr ? 1 : 0;
+
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut_pair[0]->data.supergates[0]->size(); ++i )
+    for ( auto i = 0; i < cut_pair[0]->data.supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -2056,12 +2060,13 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cut_pair[j];
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
 
         /* get the output phase and area */
         pin_phase[j] = gate.polarity;
-        phase[j] = gate.polarity >> NInputs;
+        phase[j] = ( gate.polarity >> NInputs ) ^ phase_inverted;
         area[j] = gate.area;
 
         /* compute the best exact area if only the selected phase is mapped and dereference*/
@@ -2127,7 +2132,7 @@ private:
         }
       }
 
-      /* check quality */
+      /* check quality: TODO add output inverter in the cost if necessary */
       float best_exact_area_total = 0;
       float area_exact_total = 0;
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
@@ -2164,7 +2169,8 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cut_pair[j];
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[0] ) )[i];
+        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
 
         uint8_t mapped_phase = phase[j];
 
@@ -3222,14 +3228,18 @@ private:
     std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts;
     std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts_order;
     std::array<size_t, max_multioutput_output_size> order = {};
+    std::array<uint8_t, max_multioutput_output_size> phase = { 0 };
 
     std::iota( order.begin(), order.end(), 0 );
 
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
       tts[i] = kitty::shrink_to<NInputs>( cut_tuple[i]->data.function );
-      if ( tts[i]._bits & 1 == 1 )
+      if ( ( tts[i]._bits & 1 ) == 1 )
+      {
         tts[i] = ~tts[i];
+        phase[i] = 1;
+      }
     }
 
     std::sort( order.begin(), order.end(), [&]( size_t a, size_t b ) {
@@ -3250,7 +3260,7 @@ private:
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
       std::vector<supergate<NInputs>> const* multigate = &( ( *multigates_match )[i] );
-      cut_tuple[order[i]]->data.supergates[0] = multigate;
+      cut_tuple[order[i]]->data.supergates[phase[i]] = multigate;
     }
 
     return true;

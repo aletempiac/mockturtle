@@ -702,7 +702,7 @@ private:
         for ( auto i = 0; i < tts.size(); ++i )
         {
           static_tts[i] = kitty::extend_to<NInputs>( tts[i] );
-          if ( static_tts[i]._bits & 1 == 1 )
+          if ( ( static_tts[i]._bits & 1 ) == 1 )
           {
             static_tts[i] = ~static_tts[i];
             multi_sg[i].polarity |= 1 << NInputs; /* set flipped output polarity*/
