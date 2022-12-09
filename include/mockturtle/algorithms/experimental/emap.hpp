@@ -614,7 +614,7 @@ public:
         ps( ps ),
         st( st ),
         node_match( ntk.size() ),
-        node_tuple_match( ntk.size() ),
+        node_tuple_match( ntk.size(), UINT32_MAX ),
         switch_activity( ps.eswp_rounds ? switching_activity( ntk, ps.switching_activity_patterns ) : std::vector<float>( 0 ) ),
         cuts( ntk.size() )
   {
@@ -1022,6 +1022,7 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact()
   {
+    uint32_t counter = 0;
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
@@ -1034,10 +1035,15 @@ private:
        * the two phases if in use in the cover */
       if ( node_data.same_match && node_data.map_refs[2] != 0 )
       {
-        if ( node_data.best_supergate[0] != nullptr )
-          cut_deref<SwitchActivity>( cuts[index][node_data.best_cut[0]], n, 0u );
-        else
-          cut_deref<SwitchActivity>( cuts[index][node_data.best_cut[1]], n, 1u );
+        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+        uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
+        auto const& best_cut = [&]() {
+          if ( node_data.multioutput_match[use_phase] )
+            return multi_cut_set[best_cut_index][0];
+          else
+            return cuts[index][best_cut_index];
+        }();
+        cut_deref<SwitchActivity>( best_cut, n, use_phase );
       }
 
       /* match positive phase */
@@ -1050,11 +1056,13 @@ private:
       match_drop_phase<true, true>( n, 0 );
 
       /* try a multi-output match */
-      if constexpr ( DO_AREA)
-      {
-        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
-          match_multioutput_exact<SwitchActivity>( n );
-      }
+      if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
+        match_multioutput_exact<SwitchActivity>( n );
+      
+      // if ( node_data.multioutput_match[0] )
+      //   ++counter;
+      // if ( counter > 1 )
+      //   break;
     }
 
     double area_old = area;
@@ -1455,6 +1463,12 @@ private:
     /* unmap multioutput */
     if ( node_data.multioutput_match[phase] )
     {
+      /* dereference multi-output */
+      if ( !node_data.same_match && best_supergate != nullptr && node_data.map_refs[phase] )
+      {
+        auto const& cut = multi_cut_set[node_data.best_cut[phase] & cut_index_filter][0];
+        cut_deref<SwitchActivity>( cut, n, phase );
+      }
       best_supergate = nullptr;
       node_data.multioutput_match[phase] = false;
     }
@@ -2020,10 +2034,10 @@ private:
       uint32_t node_index = tuple_data[j] >> 16;
       best_exact_area[j] = node_match[node_index].flows[2];
 
-      if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] == 0 )
+      if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
         /* match is always single output here */
-        auto const& cut = cuts[index][node_match[node_index].best_cut[0]];
+        auto const& cut = cuts[node_index][node_match[node_index].best_cut[0]];
         uint8_t use_phase = node_match[node_index].best_supergate[0] != nullptr ? 0 : 1;
         best_exact_area[j] = cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), use_phase );
       }
@@ -2091,7 +2105,7 @@ private:
         node_data.phase[phase[j]] = pin_phase[j];
         node_data.area[phase[j]] = area[j];
         area_exact[j] = cut_ref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
-        cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase );
+        cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
         node_data.phase[phase[j]] = old_phase;
         node_data.area[phase[j]] = old_area;
 
@@ -2123,7 +2137,7 @@ private:
       }
 
       /* not better than individual gates */
-      if ( !valid || area_exact_total > best_exact_area_total - epsilon )
+      if ( !valid || area_exact_total > best_exact_area_total + epsilon )
       {
         /* reference back single gates */
         for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
@@ -2215,7 +2229,7 @@ private:
     {
       uint32_t node_index = tuple_data[j] >> 16;
 
-      if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] == 0 )
+      if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
         uint8_t use_phase = node_match[node_index].best_supergate[0] != nullptr ? 0 : 1;
         uint32_t best_cut_index = node_match[node_index].best_cut[use_phase] & cut_index_filter;
@@ -2312,7 +2326,7 @@ private:
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
           auto const& best_cut = [&]() {
             if ( node_match[leaf].multioutput_match[leaf_phase] )
               return multi_cut_set[best_cut_index][0];
@@ -2327,7 +2341,7 @@ private:
         ++node_match[leaf].map_refs[2];
         if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
           auto const& best_cut = [&]() {
             if ( node_match[leaf].multioutput_match[leaf_phase] )
               return multi_cut_set[best_cut_index][0];
@@ -2395,7 +2409,7 @@ private:
         /* Recursive dereferencing */
         if ( --node_match[leaf].map_refs[2] == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
           auto const& best_cut = [&]() {
             if ( node_match[leaf].multioutput_match[leaf_phase] )
               return multi_cut_set[best_cut_index][0];
@@ -2410,7 +2424,7 @@ private:
         --node_match[leaf].map_refs[2];
         if ( --node_match[leaf].map_refs[leaf_phase] == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase];
+          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
           auto const& best_cut = [&]() {
             if ( node_match[leaf].multioutput_match[leaf_phase] )
               return multi_cut_set[best_cut_index][0];
