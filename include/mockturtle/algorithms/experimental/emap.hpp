@@ -1854,6 +1854,11 @@ private:
             valid = false;
             break;
           }
+          if ( node_data.same_match && ( arrival[j] + lib_inv_delay > node_data.required[phase[j] ^ 1] + epsilon ) )
+          {
+            valid = false;
+            break;
+          }
         }
 
         /* recompute local area flow of previous matches */
@@ -2004,6 +2009,8 @@ private:
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
         node_data.flows[mapped_phase] = flow_sum;
         node_data.flows[2] = flow_sum;
+
+        assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
       }
 
       // std::cout << "Commit";
@@ -2053,6 +2060,7 @@ private:
       /* store local validity and comparison info */
       bool valid = true;
       bool is_best = true;
+      uint32_t it_counter = 0;
 
       /* iterate for each output of the multi-output gate */
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
@@ -2063,6 +2071,7 @@ private:
         uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
         supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
+        ++it_counter;
 
         /* get the output phase and area */
         pin_phase[j] = gate.polarity;
@@ -2099,6 +2108,11 @@ private:
 
         /* check required time */
         if ( arrival[j] > node_data.required[phase[j]] + epsilon )
+        {
+          valid = false;
+          break;
+        }
+        if ( node_data.same_match && ( arrival[j] + lib_inv_delay > node_data.required[phase[j] ^ 1] + epsilon ) )
         {
           valid = false;
           break;
@@ -2145,9 +2159,10 @@ private:
       if ( !valid || area_exact_total > best_exact_area_total + epsilon )
       {
         /* reference back single gates */
-        for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
+        for ( uint32_t j = 0; j < it_counter; ++j )
         {
           uint32_t node_index = tuple_data[j] >> 16;
+          auto& node_data = node_match[node_index];
 
           if ( !node_match[node_index].same_match && node_match[node_index].map_refs[phase[j]] != 0 )
           {
@@ -2217,6 +2232,8 @@ private:
           node_data.area[mapped_phase] = area[j]; /* partial area contribution */
           node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[2];
           node_data.flows[2] = area_exact[j] / node_data.est_refs[2]; /* partial exact area contribution */
+
+          assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
           continue;
         }
         else
