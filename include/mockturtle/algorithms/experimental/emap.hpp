@@ -2034,7 +2034,7 @@ private:
     for ( auto j = 0; j < max_multioutput_output_size; ++j )
     {
       uint32_t node_index = tuple_data[j] >> 16;
-      best_exact_area[j] = node_match[node_index].flows[2];
+      best_exact_area[j] = node_match[node_index].flows[2] * node_match[node_index].est_refs[2];
 
       if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
@@ -2072,7 +2072,7 @@ private:
         /* compute the best exact area if only the selected phase is mapped and dereference*/
         if ( !node_data.same_match )
         {
-          best_exact_area[j] = node_data.flows[phase[j]];
+          best_exact_area[j] = node_data.flows[phase[j]] * node_data.est_refs[phase[j]];
 
           if ( node_data.map_refs[phase[j]] != 0 )
           {
@@ -2161,6 +2161,8 @@ private:
             cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), phase[j] );
           }
         }
+
+        continue;
       }
       
       /* commit multi-output gate */
@@ -2201,10 +2203,10 @@ private:
         node_data.phase[mapped_phase] = pin_phase[j];
         node_data.arrival[mapped_phase] = arrival[j];
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
-        node_data.flows[mapped_phase] = area_exact[j]; /* partial exact area contribution */
 
         if ( use_same_phase[j] )
         {
+          node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[2]; /* partial exact area contribution */
           /* select opposite phase */
           mapped_phase ^= 1;
           node_data.multioutput_match[mapped_phase] = true;
@@ -2213,12 +2215,13 @@ private:
           node_data.phase[mapped_phase] = pin_phase[j];
           node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
           node_data.area[mapped_phase] = area[j]; /* partial area contribution */
-          node_data.flows[mapped_phase] = area_exact[j];
-          node_data.flows[2] = area_exact[j]; /* partial exact area contribution */
+          node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[2];
+          node_data.flows[2] = area_exact[j] / node_data.est_refs[2]; /* partial exact area contribution */
           continue;
         }
         else
         {
+          node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[mapped_phase]; /* partial exact area contribution */
           node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
         }
 
@@ -2245,7 +2248,7 @@ private:
           else
             return cuts[node_index][best_cut_index];
         }();
-        best_exact_area[j] = cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
+        best_exact_area[j] = cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
       }
     }
   }
@@ -3229,6 +3232,7 @@ private:
     std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts_order;
     std::array<size_t, max_multioutput_output_size> order = {};
     std::array<uint8_t, max_multioutput_output_size> phase = { 0 };
+    std::array<uint8_t, max_multioutput_output_size> phase_order;
 
     std::iota( order.begin(), order.end(), 0 );
 
@@ -3250,6 +3254,10 @@ private:
       return tts[a];
     } );
 
+    std::transform( order.begin(), order.end(), phase_order.begin(), [&]( uint8_t a ) {
+      return phase[a];
+    } );
+
     auto const multigates_match = library.get_multi_supergates( tts_order );
 
     /* Ignore not matched cuts */
@@ -3260,7 +3268,7 @@ private:
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
       std::vector<supergate<NInputs>> const* multigate = &( ( *multigates_match )[i] );
-      cut_tuple[order[i]]->data.supergates[phase[i]] = multigate;
+      cut_tuple[order[i]]->data.supergates[phase_order[i]] = multigate;
     }
 
     return true;
