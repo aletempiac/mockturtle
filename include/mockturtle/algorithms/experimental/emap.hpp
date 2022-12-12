@@ -2042,6 +2042,7 @@ private:
     {
       uint32_t node_index = tuple_data[j] >> 16;
       best_exact_area[j] = node_match[node_index].flows[2] * node_match[node_index].est_refs[2];
+      uint8_t selected_phase = node_match[node_index].best_supergate[0] == nullptr ? 1 : 0;
 
       if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
@@ -2049,6 +2050,10 @@ private:
         auto const& cut = cuts[node_index][node_match[node_index].best_cut[0]];
         uint8_t use_phase = node_match[node_index].best_supergate[0] != nullptr ? 0 : 1;
         best_exact_area[j] = cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), use_phase );
+
+        /* mapping a non referenced phase */
+        if ( node_match[index].map_refs[selected_phase] == 0 )
+          best_exact_area[j] += lib_inv_area;
       }
     }
 
@@ -2118,15 +2123,28 @@ private:
           break;
         }
 
-        /* compute exact area for match */
-        auto old_phase = node_data.phase[phase[j]];
-        auto old_area = node_data.area[phase[j]];
-        node_data.phase[phase[j]] = pin_phase[j];
-        node_data.area[phase[j]] = area[j];
-        area_exact[j] = cut_ref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
-        cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
-        node_data.phase[phase[j]] = old_phase;
-        node_data.area[phase[j]] = old_area;
+        /* compute exact area for match: needed only for the first node (leaves are shared) */
+        if ( it_counter == 1 )
+        {
+          auto old_phase = node_data.phase[phase[j]];
+          auto old_area = node_data.area[phase[j]];
+          node_data.phase[phase[j]] = pin_phase[j];
+          node_data.area[phase[j]] = area[j];
+          area_exact[j] = cut_ref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
+          cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
+          node_data.phase[phase[j]] = old_phase;
+          node_data.area[phase[j]] = old_area;
+        }
+        else
+        {
+          area_exact[j] = area[j];
+        }
+
+        /* Add output inverter cost if mapping a non referenced phase */
+        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0)
+        {
+          area_exact[j] += lib_inv_area;
+        }
 
         /* collect mapping phases */
         if ( node_data.same_match )
@@ -2208,6 +2226,11 @@ private:
             }();
             best_exact_area[j] = cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), nphase );
           }
+        }
+
+        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0)
+        {
+          best_exact_area[j] += lib_inv_area;
         }
 
         /* write data */
