@@ -1057,11 +1057,6 @@ private:
       /* try a multi-output match */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
         match_multioutput_exact<SwitchActivity>( n );
-      
-      // if ( node_data.multioutput_match[0] )
-      //   ++counter;
-      // if ( counter > 1 )
-      //   break;
     }
 
     double area_old = area;
@@ -2037,8 +2032,8 @@ private:
     std::array<uint8_t, max_multioutput_output_size> pin_phase;
     std::array<bool, max_multioutput_output_size> use_same_phase;
 
-    /* if "same match" and used in the cover dereference the leaves */
-    for ( auto j = 0; j < max_multioutput_output_size; ++j )
+    /* if "same match" and used in the cover dereference the leaves (reverse topo order) */
+    for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
       uint32_t node_index = tuple_data[j] >> 16;
       best_exact_area[j] = node_match[node_index].flows[2] * node_match[node_index].est_refs[2];
@@ -2067,8 +2062,8 @@ private:
       bool is_best = true;
       uint32_t it_counter = 0;
 
-      /* iterate for each output of the multi-output gate */
-      for ( auto j = 0; j < max_multioutput_output_size; ++j )
+      /* iterate for each output of the multi-output gate (reverse topo order) */
+      for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
       {
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
@@ -2174,7 +2169,7 @@ private:
       }
 
       /* not better than individual gates */
-      if ( !valid || area_exact_total > best_exact_area_total + epsilon )
+      if ( !valid || area_exact_total > best_exact_area_total - epsilon )
       {
         /* reference back single gates */
         for ( uint32_t j = 0; j < it_counter; ++j )
@@ -2198,7 +2193,7 @@ private:
         continue;
       }
       
-      /* commit multi-output gate */
+      /* commit multi-output gate (topo order) */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
       {
         uint32_t node_index = tuple_data[j] >> 16;
@@ -2273,7 +2268,7 @@ private:
       }
     }
 
-    /* if "same match" and used in the cover reference the leaves */
+    /* if "same match" and used in the cover reference the leaves (topo order) */
     for ( auto j = 0; j < max_multioutput_output_size; ++j )
     {
       uint32_t node_index = tuple_data[j] >> 16;
@@ -2288,7 +2283,7 @@ private:
           else
             return cuts[node_index][best_cut_index];
         }();
-        best_exact_area[j] = cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
+        cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
       }
     }
   }
@@ -2354,10 +2349,12 @@ private:
             else
               count += lib_inv_area;
           }
+          ++node_match[leaf].map_refs[2];
         }
         else
         {
           ++node_match[leaf].map_refs[0];
+          ++node_match[leaf].map_refs[2];
         }
         continue;
       }
@@ -2437,10 +2434,12 @@ private:
             else
               count += lib_inv_area;
           }
+          --node_match[leaf].map_refs[2];
         }
         else
         {
           --node_match[leaf].map_refs[0];
+          --node_match[leaf].map_refs[2];
         }
         continue;
       }
