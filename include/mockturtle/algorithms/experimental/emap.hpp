@@ -2229,7 +2229,7 @@ private:
       if ( !valid || area_exact_total > best_exact_area_total - epsilon )
       {
         /* reference back single gates */
-        for ( uint32_t j = max_multioutput_output_size - it_counter; j < max_multioutput_cut_size; ++j )
+        for ( uint32_t j = max_multioutput_output_size - it_counter; j < max_multioutput_output_size; ++j )
         {
           uint32_t node_index = tuple_data[j] >> 16;
           auto& node_data = node_match[node_index];
