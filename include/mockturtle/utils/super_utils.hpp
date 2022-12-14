@@ -49,6 +49,9 @@ namespace mockturtle
 
 struct super_utils_params
 {
+  /*! \brief load multi-output gates in simple supergates */
+  bool load_multioutput_in_single{ false };
+
   /*! \brief reports loaded supergates */
   bool verbose{ false };
 };
@@ -188,8 +191,8 @@ public:
         /* use worst pin delay */
         pin_to_pin_delays[i++] = std::max( pin.rise_block_delay, pin.fall_block_delay );
       }
-
-      if ( multioutput_map[g.name] == 1 )
+      
+      if ( multioutput_map[g.name] == 1 || _ps.load_multioutput_in_single )
       {
         _supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
                                                           false,
@@ -200,7 +203,8 @@ public:
                                                           pin_to_pin_delays,
                                                           {} } );
       }
-      else
+
+      if ( multioutput_map[g.name] > 1 )
       {
         uint32_t idx = multioutput_idx[g.name];
         if ( _multioutput_gates.size() <= idx )

@@ -586,6 +586,7 @@ template<class Ntk, unsigned CutSize, unsigned NInputs, classification_type Conf
 class emap_impl
 {
 public:
+  static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
   static constexpr uint32_t cut_index_filter = 268435455; /* (2^28 - 1) */
   using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
@@ -1002,6 +1003,9 @@ private:
         if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
           match_multioutput<DO_AREA>( n );
       }
+
+      assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
+      assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
     }
 
     double area_old = area;
@@ -1923,29 +1927,14 @@ private:
         /* evaluate phase substitution based on delay only, */
         /* we suppose that it is always the right decision for area, TODO: check */
         uint8_t nphase = phase[j] ^ 1;
-        if constexpr ( DO_AREA )
+        if ( arrival[j] + lib_inv_delay < node_data.required[nphase] + epsilon )
         {
-          if ( arrival[j] + lib_inv_delay < node_data.required[nphase] + epsilon )
-          {
-            est_refs[j] = node_data.est_refs[2];
-            use_same_phase[j] = true;
-          }
-          else
-          {
-            est_refs[j] = node_data.est_refs[phase[j]];
-          }
+          est_refs[j] = node_data.est_refs[2];
+          use_same_phase[j] = true;
         }
         else
         {
-          if ( arrival[j] < node_data.arrival[nphase] + epsilon )
-          {
-            est_refs[j] = node_data.est_refs[2];
-            use_same_phase[j] = true;
-          }
-          else
-          {
-            est_refs[j] = node_data.est_refs[phase[j]];
-          }
+          est_refs[j] = node_data.est_refs[phase[j]];
         }
       }
 
@@ -1998,6 +1987,8 @@ private:
         node_data.arrival[mapped_phase] = arrival[j];
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
         node_data.flows[mapped_phase] = flow_sum;
+
+        assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
 
         if ( !use_same_phase[j] )
         {
@@ -3661,7 +3652,6 @@ private:
   uint32_t iteration{ 0 };       /* current mapping iteration */
   double delay{ 0.0f };          /* current delay of the mapping */
   double area{ 0.0f };           /* current area of the mapping */
-  const float epsilon{ 0.005f }; /* epsilon */
 
   /* lib inverter info */
   float lib_inv_area;

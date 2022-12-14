@@ -95,8 +95,11 @@ enum class classification_type : uint32_t
 
 struct tech_library_params
 {
-   /*! \brief Loads multioutput gates in the library */
+  /*! \brief Loads multioutput gates in the library */
   bool load_multioutput_gates{ false };
+
+  /*! \brief Loads multioutput gates in single-output library */
+  bool load_multioutput_gates_single{ false };
 
   /*! \brief reports np enumerations */
   bool verbose{ false };
@@ -192,7 +195,7 @@ public:
       : _gates( gates ),
         _supergates_spec( supergates_spec ),
         _ps( ps ),
-        _super( _gates, _supergates_spec, super_utils_params{ ps.verbose } ),
+        _super( _gates, _supergates_spec, super_utils_params{ ps.load_multioutput_gates_single, ps.verbose } ),
         _use_supergates( false ),
         _super_lib(),
         _multi_lib()
@@ -209,7 +212,7 @@ public:
       : _gates( gates ),
         _supergates_spec( supergates_spec ),
         _ps( ps ),
-        _super( _gates, _supergates_spec, super_utils_params{ ps.verbose } ),
+        _super( _gates, _supergates_spec, super_utils_params{ ps.load_multioutput_gates_single, ps.verbose } ),
         _use_supergates( true ),
         _super_lib(),
         _multi_lib()
