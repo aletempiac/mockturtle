@@ -1254,7 +1254,7 @@ private:
     double required = delay;
 
     /* relax delay constraints */
-    if ( ps.required_time == 0.0f && ps.relax_required > 0.0f )
+    if ( iteration == 1 && ps.required_time == 0.0f && ps.relax_required > 0.0f )
     {
       required *= ( 100.0 + ps.relax_required ) / 100.0;
     }
