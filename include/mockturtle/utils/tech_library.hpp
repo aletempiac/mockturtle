@@ -181,6 +181,7 @@ template<unsigned NInputs = 5u, classification_type Configuration = classificati
 class tech_library
 {
 private:
+  static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_multi_outputs = 2;
   using supergates_list_t = std::vector<supergate<NInputs>>;
   using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
@@ -304,7 +305,7 @@ private:
         if ( kitty::is_const0( kitty::cofactor1( gate.function, 0 ) ) )
         {
           /* get the smallest area inverter */
-          if ( !inv || gate.area < _inv_area )
+          if ( !inv || gate.area < _inv_area - epsilon )
           {
             _inv_area = gate.area;
             _inv_delay = compute_worst_delay( gate );
@@ -315,7 +316,7 @@ private:
         else
         {
           /* get the smallest area buffer */
-          if ( !buf || gate.area < _buf_area )
+          if ( !buf || gate.area < _buf_area - epsilon )
           {
             _buf_area = gate.area;
             _buf_delay = compute_worst_delay( gate );

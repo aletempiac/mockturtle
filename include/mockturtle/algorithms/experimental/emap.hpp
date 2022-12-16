@@ -111,6 +111,9 @@ struct emap_params
   /*! \brief Maps multi-output gates */
   bool map_multioutput{ false };
 
+  /*! \brief Doesn't allow node duplication */
+  bool allow_node_duplication{ true };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -1677,11 +1680,22 @@ private:
     if ( ( !use_zero && !use_one ) )
     {
       /* use both phases */
-      node_data.flows[0] = node_data.flows[0] / node_data.est_refs[0];
-      node_data.flows[1] = node_data.flows[1] / node_data.est_refs[1];
-      node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
-      node_data.same_match = false;
-      return;
+      if ( ps.allow_node_duplication )
+      {
+        node_data.flows[0] = node_data.flows[0] / node_data.est_refs[0];
+        node_data.flows[1] = node_data.flows[1] / node_data.est_refs[1];
+        node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
+        node_data.same_match = false;
+        return;
+      }
+
+      /* if node duplication is not allowed, pick one phase based on delay */
+      auto size_zero = cuts[index][node_data.best_cut[0]].size();
+      auto size_one = cuts[index][node_data.best_cut[1]].size();
+      if ( compare_map<false>( worst_arrival_npos, worst_arrival_nneg, node_data.flows[1], node_data.flows[0], size_one, size_zero ) )
+        use_zero = true;
+      else
+        use_one = true;
     }
 
     /* use area flow as a tiebreaker */
@@ -1746,7 +1760,7 @@ private:
     node_data.arrival[phase_n] = worst_arrival_n;
     node_data.area[phase_n] = node_data.area[phase];
     node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
-    node_data.flows[phase_n] = node_data.flows[phase];
+    node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
     node_data.flows[2] = node_data.flows[phase];
   }
 
@@ -2451,16 +2465,16 @@ private:
       // if ( node_match[leaf].same_match )
       // {
       //   if ( node_match[leaf].map_refs[2] > 0 )
-      // flow += node_match[leaf].flows[2];
+      //     flow += node_match[leaf].flows[2];
       //   else
       //     flow += node_match[leaf].flows[2] * node_match[leaf].est_refs[2];
       // }
       // else
       // {
       //   if ( node_match[leaf].map_refs[leaf_phase] > 0 )
-      flow += node_match[leaf].flows[leaf_phase];
-      //   else
-      //     flow += node_match[leaf].flows[leaf_phase] * node_match[leaf].est_refs[leaf_phase];
+          flow += node_match[leaf].flows[leaf_phase];
+        // else
+        //   flow += node_match[leaf].flows[leaf_phase] * node_match[leaf].est_refs[leaf_phase];
       // }
     }
 
@@ -3087,15 +3101,15 @@ private:
       {
         return false;
       }
-      if ( size < best_size )
+      else if ( arrival < best_arrival - epsilon )
       {
         return true;
       }
-      else if ( size > best_size )
+      else if ( arrival > best_arrival + epsilon )
       {
         return false;
       }
-      return arrival < best_arrival - epsilon;
+      return size < best_size;
     }
     else
     {
