@@ -268,13 +268,13 @@ public:
   static bool sort_delay( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
-    if ( c1->data.delay < c2->data.delay - eps )
+    if ( c1->delay < c2->delay - eps )
       return true;
-    if ( c1->data.delay > c2->data.delay + eps )
+    if ( c1->delay > c2->delay + eps )
       return false;
-    if ( c1->data.flow < c2->data.flow - eps )
+    if ( c1->flow < c2->flow - eps )
       return true;
-    if ( c1->data.flow > c2->data.flow + eps )
+    if ( c1->flow > c2->flow + eps )
       return false;
     return c1.size() < c2.size();
   }
@@ -286,25 +286,25 @@ public:
   //     return true;
   //   if ( c1.size() > c2.size() )
   //     return false;
-  //   if ( c1->data.delay < c2->data.delay - eps )
+  //   if ( c1->delay < c2->delay - eps )
   //     return true;
-  //   if ( c1->data.delay > c2->data.delay + eps )
+  //   if ( c1->delay > c2->delay + eps )
   //     return false;
-  //   return c1->data.flow < c2->data.flow - eps;
+  //   return c1->flow < c2->flow - eps;
   // }
 
   static bool sort_area( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
-    if ( c1->data.flow < c2->data.flow - eps )
+    if ( c1->flow < c2->flow - eps )
       return true;
-    if ( c1->data.flow > c2->data.flow + eps )
+    if ( c1->flow > c2->flow + eps )
       return false;
     if ( c1.size() < c2.size() )
       return true;
     if ( c1.size() > c2.size() )
       return false;
-    return c1->data.delay < c2->data.delay - eps;
+    return c1->delay < c2->delay - eps;
   }
 
   /*! \brief Compare two cuts using sorting functions.
@@ -585,7 +585,7 @@ struct node_match_flex
   /* references estimation */
   float est_refs[3];
   /* area flow */
-  float flows[3];
+  float flows[2];
 };
 
 template<class Ntk, unsigned CutSize, unsigned NInputs, classification_type Configuration>
@@ -594,7 +594,9 @@ class emap_impl
 public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
-  using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
+  static constexpr uint32_t max_cut_leaves = 6;
+  using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs, CutSize>>;
+  // using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using support_t = typename std::array<uint8_t, CutSize>;
@@ -739,7 +741,7 @@ private:
       if ( ntk.is_constant( n ) )
       {
         /* all terminals have flow 1.0 */
-        node_data.flows[0] = node_data.flows[1] = node_data.flows[2] = 0.0f;
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
         add_zero_cut( index );
         match_constants( index );
@@ -748,7 +750,7 @@ private:
       else if ( ntk.is_pi( n ) )
       {
         /* all terminals have flow 1.0 */
-        node_data.flows[0] = node_data.flows[1] = node_data.flows[2] = 0.0f;
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = 0.0f;
         /* PIs have the negative phase implemented with an inverter */
         node_data.arrival[1] = lib_inv_delay;
@@ -1348,14 +1350,14 @@ private:
     for ( auto& cut : cuts[index] )
     {
       /* trivial cuts or not matched cuts */
-      if ( ( *cut )->data.ignore )
+      if ( ( *cut )->ignore )
       {
         ++cut_index;
         continue;
       }
 
-      auto const& supergates = ( *cut )->data.supergates;
-      auto const negation = ( *cut )->data.negations[phase];
+      auto const& supergates = ( *cut )->supergates;
+      auto const negation = ( *cut )->negations[phase];
 
       if ( supergates[phase] == nullptr )
       {
@@ -1452,14 +1454,14 @@ private:
     for ( auto& cut : cuts[index] )
     {
       /* trivial cuts or not matched cuts */
-      if ( ( *cut )->data.ignore )
+      if ( ( *cut )->ignore )
       {
         ++cut_index;
         continue;
       }
 
-      auto const& supergates = ( *cut )->data.supergates;
-      auto const negation = ( *cut )->data.negations[phase];
+      auto const& supergates = ( *cut )->supergates;
+      auto const negation = ( *cut )->negations[phase];
 
       if ( supergates[phase] == nullptr )
       {
@@ -1617,7 +1619,6 @@ private:
       {
         node_data.flows[0] = node_data.flows[0] / node_data.est_refs[0];
         node_data.flows[1] = node_data.flows[1] / node_data.est_refs[1];
-        node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
         node_data.same_match = false;
         return;
       }
@@ -1694,7 +1695,6 @@ private:
     node_data.area[phase_n] = node_data.area[phase];
     node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
     node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
-    node_data.flows[2] = node_data.flows[phase];
   }
 
   void match_constants( uint32_t index )
@@ -1763,10 +1763,10 @@ private:
     std::array<uint32_t, max_multioutput_output_size> cut_index;
 
     double old_flow_sum = 0;
-    uint8_t iteration_phase = cut0->data.supergates[0] == nullptr ? 1 : 0;
+    uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut0->data.supergates[iteration_phase]->size(); ++i )
+    for ( auto i = 0; i < cut0->supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -1779,8 +1779,8 @@ private:
         cut_index[j] = tuple_data[j] & UINT16_MAX;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
-        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
+        uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
 
         /* get the output phase */
@@ -1917,8 +1917,8 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
-        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
+        uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->supergates[phase_inverted] ) )[i];
 
         uint8_t mapped_phase = phase[j];
         node_data.multioutput_match[mapped_phase] = true;
@@ -1935,7 +1935,6 @@ private:
 
         if ( !use_same_phase[j] )
         {
-          node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
           continue;
         }
 
@@ -1948,7 +1947,6 @@ private:
         node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
         node_data.flows[mapped_phase] = flow_sum;
-        node_data.flows[2] = flow_sum;
 
         assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
       }
@@ -1969,7 +1967,7 @@ private:
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
       uint32_t node_index = tuple_data[j] >> 16;
-      best_exact_area[j] = node_match[node_index].flows[2] * node_match[node_index].est_refs[2];
+      best_exact_area[j] = node_match[node_index].flows[0] * node_match[node_index].est_refs[2];
       uint8_t selected_phase = node_match[node_index].best_supergate[0] == nullptr ? 1 : 0;
 
       if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
@@ -2035,10 +2033,10 @@ private:
     std::array<bool, max_multioutput_output_size> use_same_phase;
     std::array<uint32_t, max_multioutput_output_size> cut_index;
 
-    uint8_t iteration_phase = cut0->data.supergates[0] == nullptr ? 1 : 0;
+    uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut0->data.supergates[iteration_phase]->size(); ++i )
+    for ( auto i = 0; i < cut0->supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -2052,8 +2050,8 @@ private:
         cut_index[j] = tuple_data[j] & UINT16_MAX;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
-        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
+        uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
         ++it_counter;
 
@@ -2171,8 +2169,8 @@ private:
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
-        uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
-        supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
+        uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
+        supergate<NInputs> const& gate = ( *( cut->supergates[phase_inverted] ) )[i];
 
         uint8_t mapped_phase = phase[j];
 
@@ -2215,7 +2213,6 @@ private:
           node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
           node_data.area[mapped_phase] = area[j]; /* partial area contribution */
           node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[2];
-          node_data.flows[2] = area_exact[j] / node_data.est_refs[2]; /* partial exact area contribution */
 
           assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
           continue;
@@ -2223,7 +2220,6 @@ private:
         else
         {
           node_data.flows[mapped_phase] = area_exact[j] / node_data.est_refs[mapped_phase]; /* partial exact area contribution */
-          node_data.flows[2] = node_data.flows[0] + node_data.flows[1];
         }
 
         /* recursive reference if mapped to a single phase */
@@ -2254,7 +2250,7 @@ private:
       uint32_t num_cuts_pre = rcuts.size();
 
       /* add cut */
-      cut->data.ignore = true;
+      cut->ignore = true;
       rcuts.simple_insert( cut );
 
       uint32_t num_cuts_after = rcuts.size();
@@ -2764,28 +2760,28 @@ private:
     // for ( auto leaf : cut )
     // {
     //   const auto& best_leaf_cut = cuts[leaf][0];
-    //   delay = std::max( delay, best_leaf_cut->data.delay );
-    //   flow += best_leaf_cut->data.flow;
+    //   delay = std::max( delay, best_leaf_cut->delay );
+    //   flow += best_leaf_cut->flow;
     // }
 
-    // cut->data.delay = 1 + delay;
-    // cut->data.flow = flow / ntk.fanout_size( n );
-    // cut->data.ignore = false;
+    // cut->delay = 1 + delay;
+    // cut->flow = flow / ntk.fanout_size( n );
+    // cut->ignore = false;
 
     double best_arrival = std::numeric_limits<float>::max();
     double best_area_flow = std::numeric_limits<float>::max();
-    cut->data.delay = best_arrival;
-    cut->data.flow = best_area_flow;
-    cut->data.ignore = false;
+    cut->delay = best_arrival;
+    cut->flow = best_area_flow;
+    cut->ignore = false;
 
     if ( cut.size() > NInputs )
     {
       /* Ignore cuts too big to be mapped using the library */
-      cut->data.ignore = true;
+      cut->ignore = true;
       return;
     }
 
-    const auto tt = cut->data.function;
+    const auto tt = cut->function;
     const auto fe = kitty::shrink_to<NInputs>( tt );
     auto fe_canon = fe;
 
@@ -2818,13 +2814,13 @@ private:
 
     if ( supergates_pos != nullptr || supergates_neg != nullptr )
     {
-      cut->data.supergates = { supergates_pos, supergates_neg };
-      cut->data.negations = { negations_pos, negations_neg };
+      cut->supergates = { supergates_pos, supergates_neg };
+      cut->negations = { negations_pos, negations_neg };
     }
     else
     {
       /* Ignore not matched cuts */
-      cut->data.ignore = true;
+      cut->ignore = true;
       return;
     }
 
@@ -2837,12 +2833,12 @@ private:
       for ( auto leaf : cut )
       {
         const auto& best_leaf_cut = cuts[leaf][0]; /* TODO: pick the best one? */
-        best_arrival = std::max( best_arrival, best_leaf_cut->data.delay );
-        best_area_flow += best_leaf_cut->data.flow;
+        best_arrival = std::max( best_arrival, best_leaf_cut->delay );
+        best_area_flow += best_leaf_cut->flow;
       }
 
-      cut->data.delay = best_arrival;
-      cut->data.flow = best_area_flow;
+      cut->delay = best_arrival;
+      cut->flow = best_area_flow;
       return;
     }
 
@@ -2900,8 +2896,8 @@ private:
       }
     }
 
-    cut->data.delay = best_arrival;
-    cut->data.flow = best_area_flow;
+    cut->delay = best_arrival;
+    cut->flow = best_area_flow;
   }
 
   /* compute positions of leave indices in cut `sub` (subset) with respect to
@@ -2931,15 +2927,15 @@ private:
   void add_zero_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
-    cut->data.ignore = true;
+    cut->ignore = true;
   }
 
   void add_unit_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index + 1 );
 
-    kitty::create_nth_var( cut->data.function, 0 );
-    cut->data.ignore = true;
+    kitty::create_nth_var( cut->function, 0 );
+    cut->ignore = true;
   }
 
   inline bool fast_support_minimization( TT const& tt, cut_t& res )
@@ -2978,7 +2974,7 @@ private:
     auto i = 0;
     for ( auto const& cut : vcuts )
     {
-      ltruth[i] = ( *cut )->data.function;
+      ltruth[i] = ( *cut )->function;
       compute_truth_table_support( *cut, res, ltruth[i] );
       ++i;
     }
@@ -3001,7 +2997,7 @@ private:
       res.set_leaves( leaves_after.begin(), leaves_after.end() );
     }
 
-    res->data.function = tt_res;
+    res->function = tt_res;
   }
 
   template<bool DO_AREA>
@@ -3321,8 +3317,8 @@ private:
       cut_t new_cut1, new_cut2;
       new_cut1.set_leaves( cut1.begin(), cut1.end() );
       new_cut2.set_leaves( cut2.begin(), cut2.end() );
-      new_cut1->data.function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut1 ) );
-      new_cut2->data.function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut2 ) );
+      new_cut1->function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut1 ) );
+      new_cut2->function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut2 ) );
 
       /* Multi-output Boolean matching, continue if no match */
       std::array<cut_t, max_multioutput_output_size> cut_pair = { new_cut1, new_cut2 };
@@ -3358,7 +3354,7 @@ private:
 
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
-      tts[i] = kitty::shrink_to<NInputs>( cut_tuple[i]->data.function );
+      tts[i] = kitty::shrink_to<NInputs>( cut_tuple[i]->function );
       if ( ( tts[i]._bits & 1 ) == 1 )
       {
         tts[i] = ~tts[i];
@@ -3388,7 +3384,7 @@ private:
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
       std::vector<supergate<NInputs>> const* multigate = &( ( *multigates_match )[i] );
-      cut_tuple[order[i]]->data.supergates[phase_order[i]] = multigate;
+      cut_tuple[order[i]]->supergates[phase_order[i]] = multigate;
     }
 
     return true;
@@ -3597,6 +3593,7 @@ private:
   std::vector<node_match_flex<NInputs>> node_match;
   std::vector<uint32_t> node_tuple_match;
   std::vector<float> switch_activity;
+  // std::vector<signal<Ntk>> tmp_area;
 
   /* cut computation */
   std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
