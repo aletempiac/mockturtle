@@ -1234,9 +1234,9 @@ private:
     /* blend estimated references */
     for ( auto i = 0u; i < ntk.size(); ++i )
     {
-      node_match[i].est_refs[2] = ( 1.0 * node_match[i].est_refs[2] + 2.0f * node_match[i].map_refs[2] ) / 3.0;
-      node_match[i].est_refs[1] = ( 1.0 * node_match[i].est_refs[1] + 2.0f * node_match[i].map_refs[1] ) / 3.0;
-      node_match[i].est_refs[0] = ( 1.0 * node_match[i].est_refs[0] + 2.0f * node_match[i].map_refs[0] ) / 3.0;
+      node_match[i].est_refs[2] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[2] + 2.0f * node_match[i].map_refs[2] ) / 3.0 );
+      node_match[i].est_refs[1] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[1] + 2.0f * node_match[i].map_refs[1] ) / 3.0 );
+      node_match[i].est_refs[0] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[0] + 2.0f * node_match[i].map_refs[0] ) / 3.0 );
     }
 
     ++iteration;
