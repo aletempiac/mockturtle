@@ -111,6 +111,9 @@ struct emap_params
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ false };
 
+  /*! \brief Uses matches quality for prioritizing cuts */
+  bool use_matching_prioritization{ false };
+
   /*! \brief Doesn't allow node duplication */
   bool allow_node_duplication{ true };
 
@@ -1341,27 +1344,6 @@ private:
       node_data.multioutput_match[phase] = false;
     }
 
-    /* recompute best match info */
-    if ( best_supergate != nullptr )
-    {
-      auto const& cut = cuts[index][node_data.best_cut[phase]];
-
-      best_phase = node_data.phase[phase];
-      best_arrival = 0.0f;
-      best_area_flow = best_supergate->area + cut_leaves_flow( cut, n, phase );
-      best_area = best_supergate->area;
-      best_cut = node_data.best_cut[phase];
-      best_size = cut.size();
-
-      auto ctr = 0u;
-      for ( auto l : cut )
-      {
-        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
-        best_arrival = std::max( best_arrival, arrival_pin );
-        ++ctr;
-      }
-    }
-
     /* foreach cut */
     for ( auto& cut : cuts[index] )
     {
@@ -1458,30 +1440,10 @@ private:
     /* recompute best match info */
     if ( best_supergate != nullptr )
     {
-      auto const& cut = cuts[index][node_data.best_cut[phase]];
-
-      best_phase = node_data.phase[phase];
-      best_arrival = 0.0f;
-      best_area = best_supergate->area;
-      best_cut = node_data.best_cut[phase];
-      best_size = cut.size();
-
-      auto ctr = 0u;
-      for ( auto l : cut )
-      {
-        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
-        best_arrival = std::max( best_arrival, arrival_pin );
-        ++ctr;
-      }
-
       /* if cut is implemented, remove it from the cover */
       if ( !node_data.same_match && node_data.map_refs[phase] )
       {
-        best_exact_area = cut_deref<SwitchActivity>( cut, n, phase );
-      }
-      else
-      {
-        best_exact_area = cut_ref<SwitchActivity>( cut, n, phase );
+        auto const& cut = cuts[index][node_data.best_cut[phase]];
         cut_deref<SwitchActivity>( cut, n, phase );
       }
     }
@@ -2866,7 +2828,25 @@ private:
       return;
     }
 
-    // /* compute cut cost */
+    /* compute cut cost based on LUT delay/area */
+    if ( !ps.use_matching_prioritization )
+    {
+      best_arrival = 0;
+      best_area_flow = 1;
+
+      for ( auto leaf : cut )
+      {
+        const auto& best_leaf_cut = cuts[leaf][0]; /* TODO: pick the best one? */
+        best_arrival = std::max( best_arrival, best_leaf_cut->data.delay );
+        best_area_flow += best_leaf_cut->data.flow;
+      }
+
+      cut->data.delay = best_arrival;
+      cut->data.flow = best_area_flow;
+      return;
+    }
+
+    /* compute cut cost based on matches */
     auto& node_data = node_match[ntk.node_to_index( n )];
 
     /* get best delay - area for positive phase */
