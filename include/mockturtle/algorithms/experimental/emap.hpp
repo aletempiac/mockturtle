@@ -105,11 +105,11 @@ struct emap_params
   /*! \brief Number of patterns for switching activity computation. */
   uint32_t switching_activity_patterns{ 2048u };
 
-  /*! \brief Remove the cuts that are contained in others */
-  bool remove_dominated_cuts{ false };
-
   /*! \brief Maps multi-output gates */
   bool map_multioutput{ false };
+
+  /*! \brief Remove the cuts that are contained in others */
+  bool remove_dominated_cuts{ false };
 
   /*! \brief Doesn't allow node duplication */
   bool allow_node_duplication{ true };
@@ -197,7 +197,7 @@ enum class emap_cut_sort_type
   DELAY = 0,
   DELAY2 = 1,
   AREA = 2,
-  NONE = 2
+  NONE = 3
 };
 
 template<typename CutType, int MaxCuts>
@@ -374,7 +374,7 @@ public:
     }
     else /* NONE */
     {
-      ipos == _pend;
+      ipos = _pend;
     }
 
     /* too many cuts, we need to remove one */
@@ -591,7 +591,6 @@ class emap_impl
 public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
-  static constexpr uint32_t cut_index_filter = 268435455; /* (2^28 - 1) */
   using cut_t = cut_type<false, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
@@ -774,10 +773,10 @@ private:
       match_drop_phase<DO_AREA, false>( n, 0 );
 
       /* try a multi-output match */
-      if constexpr ( DO_AREA)
+      if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
-        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
-          match_multioutput<DO_AREA>( n );
+        match_multi_add_cuts( n );
+        match_multioutput<DO_AREA>( n );
       }
     }
 
@@ -1053,13 +1052,7 @@ private:
       if ( node_data.same_match && node_data.map_refs[2] != 0 )
       {
         uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-        uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
-        auto const& best_cut = [&]() {
-          if ( node_data.multioutput_match[use_phase] )
-            return multi_cut_set[best_cut_index][0];
-          else
-            return cuts[index][best_cut_index];
-        }();
+        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
         cut_deref<SwitchActivity>( best_cut, n, use_phase );
       }
 
@@ -1176,13 +1169,7 @@ private:
       {
         if constexpr ( !ELA )
         {
-          uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_data.multioutput_match[use_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[index][best_cut_index];
-          }();
+          auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
           auto ctr = 0u;
 
           for ( auto const leaf : best_cut )
@@ -1209,13 +1196,7 @@ private:
       {
         if constexpr ( !ELA )
         {
-          uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_data.multioutput_match[use_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[index][best_cut_index];
-          }();
+          auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
 
           auto ctr = 0u;
           for ( auto const leaf : best_cut )
@@ -1313,13 +1294,7 @@ private:
       if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
       {
         auto ctr = 0u;
-        uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
-        auto const& best_cut = [&]() {
-          if ( node_data.multioutput_match[use_phase] )
-            return multi_cut_set[best_cut_index][0];
-          else
-            return cuts[index][best_cut_index];
-        }();
+        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
         auto const& supergate = node_data.best_supergate[use_phase];
         for ( auto leaf : best_cut )
         {
@@ -1332,13 +1307,7 @@ private:
       if ( !node_data.same_match && node_data.map_refs[other_phase] > 0 )
       {
         auto ctr = 0u;
-        uint32_t best_cut_index = node_data.best_cut[other_phase] & cut_index_filter;
-        auto const& best_cut = [&]() {
-          if ( node_data.multioutput_match[other_phase] )
-            return multi_cut_set[best_cut_index][0];
-          else
-            return cuts[index][best_cut_index];
-        }();
+        auto const& best_cut = cuts[index][node_data.best_cut[other_phase]];
         auto const& supergate = node_data.best_supergate[other_phase];
         for ( auto leaf : best_cut )
         {
@@ -1416,8 +1385,6 @@ private:
       for ( auto const& gate : *supergates[phase] )
       {
         uint8_t gate_polarity = gate.polarity ^ negation;
-        node_data.phase[phase] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow( *cut, n, phase );
         double worst_arrival = 0.0f;
 
         auto ctr = 0u;
@@ -1433,6 +1400,9 @@ private:
           if ( worst_arrival > node_data.required[phase] + epsilon )
             continue;
         }
+
+        node_data.phase[phase] = gate_polarity;
+        double area_local = gate.area + cut_leaves_flow( *cut, n, phase );
 
         if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
         {
@@ -1478,7 +1448,7 @@ private:
       /* dereference multi-output */
       if ( !node_data.same_match && best_supergate != nullptr && node_data.map_refs[phase] )
       {
-        auto const& cut = multi_cut_set[node_data.best_cut[phase] & cut_index_filter][0];
+        auto const& cut = multi_cut_set[node_data.best_cut[phase]][0];
         cut_deref<SwitchActivity>( cut, n, phase );
       }
       best_supergate = nullptr;
@@ -1539,10 +1509,6 @@ private:
       for ( auto const& gate : *supergates[phase] )
       {
         uint8_t gate_polarity = gate.polarity ^ negation;
-        node_data.phase[phase] = gate_polarity;
-        node_data.area[phase] = gate.area;
-        float area_exact = cut_ref<SwitchActivity>( *cut, n, phase );
-        cut_deref<SwitchActivity>( *cut, n, phase );
         double worst_arrival = 0.0f;
 
         auto ctr = 0u;
@@ -1555,6 +1521,11 @@ private:
 
         if ( worst_arrival > node_data.required[phase] + epsilon )
           continue;
+        
+        node_data.phase[phase] = gate_polarity;
+        node_data.area[phase] = gate.area;
+        float area_exact = cut_ref<SwitchActivity>( *cut, n, phase );
+        cut_deref<SwitchActivity>( *cut, n, phase );
 
         if ( compare_map<true>( worst_arrival, best_arrival, area_exact, best_exact_area, cut->size(), best_size ) )
         {
@@ -1815,9 +1786,9 @@ private:
     uint32_t index = ntk.node_to_index( n );
     multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
 
-    /* get the cuts */
-    uint32_t cut_index = tuple_data[0] & UINT16_MAX;
-    auto const& cut_pair = multi_cut_set[cut_index];
+    /* get the cut */
+    auto const& cut0 = cuts[tuple_data[0] >> 16][tuple_data[0] & UINT16_MAX];
+    // auto const& cut_pair = multi_cut_set[cut_index];
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -1827,12 +1798,13 @@ private:
     std::array<uint8_t, max_multioutput_output_size> pin_phase;
     std::array<double, max_multioutput_output_size> est_refs;
     std::array<bool, max_multioutput_output_size> use_same_phase;
+    std::array<uint32_t, max_multioutput_output_size> cut_index;
 
     double old_flow_sum = 0;
-    uint8_t iteration_phase = cut_pair[0]->data.supergates[0] == nullptr ? 1 : 0;
+    uint8_t iteration_phase = cut0->data.supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut_pair[0]->data.supergates[iteration_phase]->size(); ++i )
+    for ( auto i = 0; i < cut0->data.supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -1842,8 +1814,9 @@ private:
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
       {
         uint32_t node_index = tuple_data[j] >> 16;
+        cut_index[j] = tuple_data[j] & UINT16_MAX;
         auto& node_data = node_match[node_index];
-        auto const& cut = cut_pair[j];
+        auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
         supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
@@ -1852,13 +1825,6 @@ private:
         pin_phase[j] = gate.polarity;
         phase[j] = ( gate.polarity >> NInputs ) ^ phase_inverted;
         uint8_t old_phase = node_data.phase[phase[j]];
-
-        /* compute area flow */
-        old_flow_sum += node_data.flows[phase[j]];
-        node_data.phase[phase[j]] = gate.polarity;
-        area[j] = gate.area;
-        area_flow[j] = gate.area + cut_leaves_flow( cut, n, phase[j] );
-        node_data.phase[phase[j]] = old_phase;
 
         /* compute arrival */
         arrival[j] = 0.0;
@@ -1884,6 +1850,13 @@ private:
             break;
           }
         }
+
+        /* compute area flow */
+        old_flow_sum += node_data.flows[phase[j]];
+        node_data.phase[phase[j]] = gate.polarity;
+        area[j] = gate.area;
+        area_flow[j] = gate.area + cut_leaves_flow( cut, n, phase[j] );
+        node_data.phase[phase[j]] = old_phase;
 
         /* recompute local area flow of previous matches */
         double mapped_flow = node_data.flows[phase[j]];
@@ -1916,13 +1889,7 @@ private:
         }
 
         /* local evaluation (area flow improvement is approximated) */
-        uint32_t mapped_cut_index = node_data.best_cut[phase[j]] & cut_index_filter;
-        auto const& mapped_cut = [&]() {
-          if ( node_data.multioutput_match[phase[j]] )
-            return multi_cut_set[mapped_cut_index][0];
-          else
-            return cuts[node_index][mapped_cut_index];
-        } ();
+        auto const& mapped_cut = cuts[node_index][node_data.best_cut[phase[j]]];
         if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
         {
           is_best = false;
@@ -1987,7 +1954,7 @@ private:
       {
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
-        auto const& cut = cut_pair[j];
+        auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
         supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
 
@@ -1996,7 +1963,7 @@ private:
 
         node_data.same_match = use_same_phase[j];
         node_data.best_supergate[mapped_phase] = &gate;
-        node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+        node_data.best_cut[mapped_phase] = cut_index[j];
         node_data.phase[mapped_phase] = pin_phase[j];
         node_data.arrival[mapped_phase] = arrival[j];
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
@@ -2014,7 +1981,7 @@ private:
         mapped_phase ^= 1;
         node_data.multioutput_match[mapped_phase] = true;
         node_data.best_supergate[mapped_phase] = nullptr;
-        node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+        node_data.best_cut[mapped_phase] = cut_index[j];
         node_data.phase[mapped_phase] = pin_phase[j];
         node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
@@ -2023,8 +1990,6 @@ private:
 
         assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
       }
-
-      // std::cout << "Commit";
     }
   }
 
@@ -2087,13 +2052,7 @@ private:
       if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
         uint8_t use_phase = node_match[node_index].best_supergate[0] != nullptr ? 0 : 1;
-        uint32_t best_cut_index = node_match[node_index].best_cut[use_phase] & cut_index_filter;
-        auto const& best_cut = [&]() {
-          if ( node_match[node_index].multioutput_match[use_phase] )
-            return multi_cut_set[best_cut_index][0];
-          else
-            return cuts[node_index][best_cut_index];
-        }();
+        auto const& best_cut = cuts[node_index][node_match[node_index].best_cut[use_phase]];
         cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
       }
     }
@@ -2102,9 +2061,8 @@ private:
   template<bool SwitchActivity>
   inline void match_multioutput_exact_core( multi_match_t const& tuple_data, std::array<float, max_multioutput_output_size>& best_exact_area )
   {
-    /* get the cuts */
-    uint32_t cut_index = tuple_data[0] & UINT16_MAX;
-    auto const& cut_pair = multi_cut_set[cut_index];
+    /* get the cut representative */
+    auto const& cut0 = cuts[tuple_data[0] >> 16][tuple_data[0] & UINT16_MAX];
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -2113,11 +2071,12 @@ private:
     std::array<uint8_t, max_multioutput_output_size> phase;
     std::array<uint8_t, max_multioutput_output_size> pin_phase;
     std::array<bool, max_multioutput_output_size> use_same_phase;
+    std::array<uint32_t, max_multioutput_output_size> cut_index;
 
-    uint8_t iteration_phase = cut_pair[0]->data.supergates[0] == nullptr ? 1 : 0;
+    uint8_t iteration_phase = cut0->data.supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
-    for ( auto i = 0; i < cut_pair[0]->data.supergates[iteration_phase]->size(); ++i )
+    for ( auto i = 0; i < cut0->data.supergates[iteration_phase]->size(); ++i )
     {
       /* store local validity and comparison info */
       bool valid = true;
@@ -2128,8 +2087,9 @@ private:
       for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
       {
         uint32_t node_index = tuple_data[j] >> 16;
+        cut_index[j] = tuple_data[j] & UINT16_MAX;
         auto& node_data = node_match[node_index];
-        auto const& cut = cut_pair[j];
+        auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
         supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
@@ -2147,13 +2107,7 @@ private:
 
           if ( node_data.map_refs[phase[j]] != 0 )
           {
-            uint32_t best_cut_index = node_data.best_cut[phase[j]] & cut_index_filter;
-            auto const& best_cut = [&]() {
-              if ( node_data.multioutput_match[phase[j]] )
-                return multi_cut_set[best_cut_index][0];
-              else
-                return cuts[node_index][best_cut_index];
-            }();
+            auto const& best_cut = cuts[node_index][node_data.best_cut[phase[j]]];
             best_exact_area[j] = cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), phase[j] );
           }
         }
@@ -2241,13 +2195,7 @@ private:
 
           if ( !node_match[node_index].same_match && node_match[node_index].map_refs[phase[j]] != 0 )
           {
-            uint32_t best_cut_index = node_match[node_index].best_cut[phase[j]] & cut_index_filter;
-            auto const& best_cut = [&]() {
-              if ( node_match[node_index].multioutput_match[phase[j]] )
-                return multi_cut_set[best_cut_index][0];
-              else
-                return cuts[node_index][best_cut_index];
-            }();
+            auto const& best_cut = cuts[node_index][node_match[node_index].best_cut[phase[j]]];
             cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), phase[j] );
           }
         }
@@ -2260,7 +2208,7 @@ private:
       {
         uint32_t node_index = tuple_data[j] >> 16;
         auto& node_data = node_match[node_index];
-        auto const& cut = cut_pair[j];
+        auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->data.supergates[0] == nullptr ? 1 : 0;
         supergate<NInputs> const& gate = ( *( cut->data.supergates[phase_inverted] ) )[i];
 
@@ -2274,13 +2222,7 @@ private:
           uint8_t nphase = phase[j] ^ 1;
           if ( node_data.map_refs[nphase] != 0 )
           {
-            uint32_t best_cut_index = node_match[node_index].best_cut[nphase] & cut_index_filter;
-            auto const& best_cut = [&]() {
-              if ( node_match[node_index].multioutput_match[nphase] )
-                return multi_cut_set[best_cut_index][0];
-              else
-                return cuts[node_index][best_cut_index];
-            }();
+            auto const& best_cut = cuts[node_index][node_match[node_index].best_cut[nphase]];
             best_exact_area[j] = cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), nphase );
           }
         }
@@ -2294,7 +2236,7 @@ private:
         node_data.multioutput_match[mapped_phase] = true;
         node_data.same_match = use_same_phase[j];
         node_data.best_supergate[mapped_phase] = &gate;
-        node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+        node_data.best_cut[mapped_phase] = cut_index[j];
         node_data.phase[mapped_phase] = pin_phase[j];
         node_data.arrival[mapped_phase] = arrival[j];
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
@@ -2306,7 +2248,7 @@ private:
           mapped_phase ^= 1;
           node_data.multioutput_match[mapped_phase] = true;
           node_data.best_supergate[mapped_phase] = nullptr;
-          node_data.best_cut[mapped_phase] = cut_index | ( j << 28 );
+          node_data.best_cut[mapped_phase] = cut_index[j];
           node_data.phase[mapped_phase] = pin_phase[j];
           node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
           node_data.area[mapped_phase] = area[j]; /* partial area contribution */
@@ -2328,6 +2270,36 @@ private:
           cut_ref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
         }
       }
+    }
+  }
+
+  void match_multi_add_cuts( node<Ntk> const& n )
+  {
+    uint32_t index = ntk.node_to_index( n );
+    multi_match_t& tuple_data = multi_node_match[node_tuple_match[index]];
+
+    /* get the cuts */
+    uint32_t cut_index = tuple_data[0] & UINT16_MAX;
+    auto& cut_pair = multi_cut_set[cut_index];
+
+    /* insert multi-output cuts into the standard cut set */
+    for ( auto i = 0; i < max_multioutput_output_size; ++i )
+    {
+      uint64_t node_index = tuple_data[i] >> 16;
+      auto& cut = cut_pair[i];
+
+      auto& rcuts = cuts[node_index];
+      uint32_t num_cuts_pre = rcuts.size();
+
+      /* add cut */
+      cut->data.ignore = true;
+      rcuts.simple_insert( cut );
+
+      uint32_t num_cuts_after = rcuts.size();
+      assert( num_cuts_after == num_cuts_pre + 1 );
+
+      /* update tuple data */
+      tuple_data[i] = ( node_index << 16 ) | num_cuts_pre;
     }
   }
 
@@ -2394,13 +2366,7 @@ private:
         if ( node_data.same_match && node_data.map_refs[2] != 0 )
         {
           uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-          uint32_t best_cut_index = node_data.best_cut[use_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_data.multioutput_match[use_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[index][best_cut_index];
-          }();
+          auto const& best_cut = cuts[node_index][node_data.best_cut[use_phase]];
           cut_deref<false>( best_cut, n, use_phase );
         }
 
@@ -2537,13 +2503,7 @@ private:
         /* Recursive referencing if leaf was not referenced */
         if ( node_match[leaf].map_refs[2]++ == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_match[leaf].multioutput_match[leaf_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[leaf][best_cut_index];
-          }();
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
           count += cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
@@ -2552,13 +2512,7 @@ private:
         ++node_match[leaf].map_refs[2];
         if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_match[leaf].multioutput_match[leaf_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[leaf][best_cut_index];
-          }();
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
           count += cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
@@ -2622,13 +2576,7 @@ private:
         /* Recursive dereferencing */
         if ( --node_match[leaf].map_refs[2] == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_match[leaf].multioutput_match[leaf_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[leaf][best_cut_index];
-          }();
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
           count += cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
@@ -2637,13 +2585,7 @@ private:
         --node_match[leaf].map_refs[2];
         if ( --node_match[leaf].map_refs[leaf_phase] == 0u )
         {
-          auto best_cut_index = node_match[leaf].best_cut[leaf_phase] & cut_index_filter;
-          auto const& best_cut = [&]() {
-            if ( node_match[leaf].multioutput_match[leaf_phase] )
-              return multi_cut_set[best_cut_index][0];
-            else
-              return cuts[leaf][best_cut_index];
-          }();
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
           count += cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
         }
       }
@@ -2793,13 +2735,7 @@ private:
   void create_lut_for_gate( binding_view<klut_network>& res, klut_map& old2new, uint32_t index, unsigned phase )
   {
     auto const& node_data = node_match[index];
-    uint32_t best_cut_index = node_data.best_cut[phase] & cut_index_filter;
-    auto const& best_cut = [&]() {
-      if ( node_data.multioutput_match[phase] )
-        return multi_cut_set[best_cut_index][0];
-      else
-        return cuts[index][best_cut_index];
-    }();
+    auto const& best_cut = cuts[index][node_data.best_cut[phase]];
     auto const& gate = node_data.best_supergate[phase]->root;
 
     /* permutate and negate to obtain the matched gate truth table */
