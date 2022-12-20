@@ -628,6 +628,7 @@ public:
   {
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
+    tmp_visited.reserve( 100 );
   }
 
   explicit emap_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, std::vector<float> const& switch_activity, emap_params const& ps, emap_stats& st )
@@ -642,6 +643,7 @@ public:
   {
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
+    tmp_visited.reserve( 100 );
   }
 
   binding_view<klut_network> run()
@@ -1488,8 +1490,7 @@ private:
         
         node_data.phase[phase] = gate_polarity;
         node_data.area[phase] = gate.area;
-        float area_exact = cut_ref<SwitchActivity>( *cut, n, phase );
-        cut_deref<SwitchActivity>( *cut, n, phase );
+        float area_exact = cut_measure_mffc<SwitchActivity>( *cut, n, phase );
 
         if ( compare_map<true>( worst_arrival, best_arrival, area_exact, best_exact_area, cut->size(), best_size ) )
         {
@@ -2101,8 +2102,7 @@ private:
           auto old_area = node_data.area[phase[j]];
           node_data.phase[phase[j]] = pin_phase[j];
           node_data.area[phase[j]] = area[j];
-          area_exact[j] = cut_ref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
-          cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
+          area_exact[j] = cut_measure_mffc<SwitchActivity>( cut, ntk.index_to_node( node_index ), phase[j] );
           node_data.phase[phase[j]] = old_phase;
           node_data.area[phase[j]] = old_area;
         }
@@ -2551,6 +2551,101 @@ private:
     return count;
   }
 
+  template<bool SwitchActivity>
+  float cut_measure_mffc( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
+  {
+    tmp_visited.clear();
+
+    float count = cut_ref_visit<SwitchActivity>( cut, n, phase );
+
+    /* dereference visited */
+    for ( auto s : tmp_visited )
+    {
+      uint32_t leaf = s >> 1;
+      --node_match[leaf].map_refs[2];
+      --node_match[leaf].map_refs[s & 1];
+    }
+
+    return count;
+  }
+
+  template<bool SwitchActivity>
+  float cut_ref_visit( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
+  {
+    auto const& node_data = node_match[ntk.node_to_index( n )];
+    float count;
+
+    if constexpr ( SwitchActivity )
+      count = switch_activity[ntk.node_to_index( n )];
+    else
+      count = node_data.area[phase];
+
+    uint8_t ctr = 0;
+    for ( auto leaf : cut )
+    {
+      /* compute leaf phase using the current gate */
+      uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
+
+      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      {
+        continue;
+      }
+
+      /* add to visited */
+      tmp_visited.push_back( ( static_cast<uint64_t>( leaf ) << 1 ) | leaf_phase );
+
+      if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      {
+        /* reference PIs, add inverter cost for negative phase */
+        if ( leaf_phase == 1u )
+        {
+          if ( node_match[leaf].map_refs[1]++ == 0u )
+          {
+            if constexpr ( SwitchActivity )
+              count += switch_activity[leaf];
+            else
+              count += lib_inv_area;
+          }
+          ++node_match[leaf].map_refs[2];
+        }
+        else
+        {
+          ++node_match[leaf].map_refs[0];
+          ++node_match[leaf].map_refs[2];
+        }
+        continue;
+      }
+
+      if ( node_match[leaf].same_match )
+      {
+        /* Add inverter area if not present yet and leaf node is implemented in the opposite phase */
+        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u && node_match[leaf].best_supergate[leaf_phase] == nullptr )
+        {
+          if constexpr ( SwitchActivity )
+            count += switch_activity[leaf];
+          else
+            count += lib_inv_area;
+        }
+        /* Recursive referencing if leaf was not referenced */
+        if ( node_match[leaf].map_refs[2]++ == 0u )
+        {
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
+          count += cut_ref_visit<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
+        }
+      }
+      else
+      {
+        ++node_match[leaf].map_refs[2];
+        if ( node_match[leaf].map_refs[leaf_phase]++ == 0u )
+        {
+          auto const& best_cut = cuts[leaf][node_match[leaf].best_cut[leaf_phase]];
+          count += cut_ref_visit<SwitchActivity>( best_cut, ntk.index_to_node( leaf ), leaf_phase );
+        }
+      }
+    }
+    return count;
+  }
+
   void insert_buffers()
   {
     if ( lib_buf_id != UINT32_MAX )
@@ -2832,7 +2927,7 @@ private:
 
       for ( auto leaf : cut )
       {
-        const auto& best_leaf_cut = cuts[leaf][0]; /* TODO: pick the best one? */
+        const auto& best_leaf_cut = cuts[leaf][0];
         best_arrival = std::max( best_arrival, best_leaf_cut->delay );
         best_area_flow += best_leaf_cut->flow;
       }
@@ -3593,7 +3688,7 @@ private:
   std::vector<node_match_flex<NInputs>> node_match;
   std::vector<uint32_t> node_tuple_match;
   std::vector<float> switch_activity;
-  // std::vector<signal<Ntk>> tmp_area;
+  std::vector<uint64_t> tmp_visited;
 
   /* cut computation */
   std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
