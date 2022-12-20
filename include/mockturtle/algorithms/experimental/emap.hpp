@@ -550,6 +550,21 @@ public:
     return os;
   }
 
+  /*! \brief Returns if the cut set contains already `cut`. */
+  bool is_unique( CutType const& cut )
+  {
+    typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
+
+    while ( ipos != _pend )
+    {
+      if ( ( *ipos )->signature() == cut.signature() )
+        return true;
+      ++ipos;
+    }
+
+    return false;
+  }
+
 private:
   std::array<CutType, MaxCuts> _cuts;
   std::array<CutType*, MaxCuts> _pcuts;
@@ -798,7 +813,7 @@ private:
       /* try a multi-output match */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
-        match_multi_add_cuts( n );
+        match_multi_add_cuts<DO_AREA>( n );
         match_multioutput<DO_AREA>( n );
       }
     }
@@ -1764,6 +1779,12 @@ private:
     auto const& cut0 = cuts[tuple_data[0] >> 16][tuple_data[0] & UINT16_MAX];
     // auto const& cut_pair = multi_cut_set[cut_index];
 
+    assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
+    assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
+
+    assert( node_match[tuple_data[0] >> 16].arrival[0] < node_match[tuple_data[0] >> 16].required[0] + epsilon );
+    assert( node_match[tuple_data[0] >> 16].arrival[1] < node_match[tuple_data[0] >> 16].required[1] + epsilon );
+
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
     std::array<float, max_multioutput_output_size> area_flow;
@@ -2242,6 +2263,7 @@ private:
     }
   }
 
+  template<bool DO_AREA>
   void match_multi_add_cuts( node<Ntk> const& n )
   {
     uint32_t index = ntk.node_to_index( n );
@@ -2256,16 +2278,26 @@ private:
     {
       uint64_t node_index = tuple_data[i] >> 16;
       auto& cut = cut_pair[i];
+      auto single_cut = cut_pair[i];
 
       auto& rcuts = cuts[node_index];
-      uint32_t num_cuts_pre = rcuts.size();
 
-      /* add cut */
+      /* insert single cut if unique */
+      if ( rcuts.is_unique( single_cut ) )
+      {
+        compute_cut_data<DO_AREA>( single_cut, ntk.index_to_node( node_index ) );
+        rcuts.simple_insert( single_cut );
+      }
+
+      /* add multi-output cut */
+      uint32_t num_cuts_pre = rcuts.size();
       cut->ignore = true;
       rcuts.simple_insert( cut );
 
       uint32_t num_cuts_after = rcuts.size();
       assert( num_cuts_after == num_cuts_pre + 1 );
+
+      rcuts.limit( num_cuts_pre );
 
       /* update tuple data */
       tuple_data[i] = ( node_index << 16 ) | num_cuts_pre;
@@ -2274,6 +2306,7 @@ private:
 
   void remove_unused_multioutput()
   {
+    /* TODO: update required times */
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it  )
     {
       if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
@@ -3594,9 +3627,12 @@ private:
     /* is permanently marked? */
     if ( ntk.visited( n ) == ntk.trav_id() )
       return;
+    
+    /* get the representative (smallest index) */
+    node<Ntk> repr = choice_ntk.get_choice_representative( n );
 
     /* for all the choices */
-    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited or temporarily marked */
       assert( ntk.visited( g ) != ntk.trav_id() );
       assert( ntk.visited( g ) != ntk.trav_id() - 1 );
@@ -3612,7 +3648,7 @@ private:
       return true;
     } );
 
-    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited */
       assert( ntk.visited( g ) != ntk.trav_id() );
 
