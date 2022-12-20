@@ -268,6 +268,10 @@ public:
   static bool sort_delay( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->ignore && c2->ignore )
+      return true;
+    if ( c1->ignore && !c2->ignore )
+      return false;
     if ( c1->delay < c2->delay - eps )
       return true;
     if ( c1->delay > c2->delay + eps )
@@ -279,23 +283,31 @@ public:
     return c1.size() < c2.size();
   }
 
-  // static bool sort_delay2( CutType const& c1, CutType const& c2 )
-  // {
-  //   constexpr auto eps{ 0.005f };
-  //   if ( c1.size() < c2.size() )
-  //     return true;
-  //   if ( c1.size() > c2.size() )
-  //     return false;
-  //   if ( c1->delay < c2->delay - eps )
-  //     return true;
-  //   if ( c1->delay > c2->delay + eps )
-  //     return false;
-  //   return c1->flow < c2->flow - eps;
-  // }
+  static bool sort_delay2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( !c1->ignore && c2->ignore )
+      return true;
+    if ( c1->ignore && !c2->ignore )
+      return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    if ( c1->delay < c2->delay - eps )
+      return true;
+    if ( c1->delay > c2->delay + eps )
+      return false;
+    return c1->flow < c2->flow - eps;
+  }
 
   static bool sort_area( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->ignore && c2->ignore )
+      return true;
+    if ( c1->ignore && !c2->ignore )
+      return false;
     if ( c1->flow < c2->flow - eps )
       return true;
     if ( c1->flow > c2->flow + eps )
@@ -371,6 +383,10 @@ public:
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
     }
+    // else if ( sort == emap_cut_sort_type::DELAY2 )
+    // {
+    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
+    // }
     else if ( sort == emap_cut_sort_type::AREA )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
@@ -737,7 +753,7 @@ private:
       auto& node_data = node_match[index];
 
       node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
-      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = ntk.fanout_size( n );
+      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
       node_data.required[0] = node_data.required[1] = std::numeric_limits<double>::max();
 
       if ( ntk.is_constant( n ) )
@@ -818,7 +834,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = emap_cut_sort_type::DELAY;
+    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
 
     if constexpr ( DO_AREA )
     {
@@ -887,7 +903,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = emap_cut_sort_type::AREA;
+    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;;
     cut_t best_cut;
 
     if constexpr ( DO_AREA )
@@ -991,6 +1007,9 @@ private:
     for ( auto const& n : topo_order )
     {
       uint32_t index = ntk.node_to_index( n );
+
+      /* reset mapping */
+      node_match[index].map_refs[0] = node_match[index].map_refs[1] = node_match[index].map_refs[2] = 0u;
 
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
       {
@@ -1098,14 +1117,6 @@ private:
   template<bool ELA>
   bool set_mapping_refs()
   {
-    if constexpr ( !ELA )
-    {
-      for ( auto i = 0u; i < node_match.size(); ++i )
-      {
-        node_match[i].map_refs[0] = node_match[i].map_refs[1] = node_match[i].map_refs[2] = 0u;
-      }
-    }
-
     /* compute the current worst delay and update the mapping refs */
     delay = 0.0f;
     ntk.foreach_po( [this]( auto s ) {
@@ -2386,20 +2397,7 @@ private:
     for ( auto leaf : cut )
     {
       uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
-      // if ( node_match[leaf].same_match )
-      // {
-      //   if ( node_match[leaf].map_refs[2] > 0 )
-      //     flow += node_match[leaf].flows[2];
-      //   else
-      //     flow += node_match[leaf].flows[2] * node_match[leaf].est_refs[2];
-      // }
-      // else
-      // {
-      //   if ( node_match[leaf].map_refs[leaf_phase] > 0 )
-          flow += node_match[leaf].flows[leaf_phase];
-        // else
-        //   flow += node_match[leaf].flows[leaf_phase] * node_match[leaf].est_refs[leaf_phase];
-      // }
+      flow += node_match[leaf].flows[leaf_phase];
     }
 
     return flow;
@@ -2849,20 +2847,6 @@ private:
   template<bool DO_AREA>
   void compute_cut_data( cut_t& cut, node<Ntk> const& n )
   {
-    // double delay{ 0 };
-    // double flow = 1.0f;
-
-    // for ( auto leaf : cut )
-    // {
-    //   const auto& best_leaf_cut = cuts[leaf][0];
-    //   delay = std::max( delay, best_leaf_cut->delay );
-    //   flow += best_leaf_cut->flow;
-    // }
-
-    // cut->delay = 1 + delay;
-    // cut->flow = flow / ntk.fanout_size( n );
-    // cut->ignore = false;
-
     double best_arrival = std::numeric_limits<float>::max();
     double best_area_flow = std::numeric_limits<float>::max();
     cut->delay = best_arrival;
@@ -2919,7 +2903,7 @@ private:
       return;
     }
 
-    /* compute cut cost based on LUT delay/area */
+    /* compute cut cost based on LUT area */
     if ( !ps.use_matching_prioritization )
     {
       best_arrival = 0;
@@ -2932,8 +2916,8 @@ private:
         best_area_flow += best_leaf_cut->flow;
       }
 
-      cut->delay = best_arrival;
-      cut->flow = best_area_flow;
+      cut->delay = best_arrival + 1;
+      cut->flow = best_area_flow / ntk.fanout_size( n );
       return;
     }
 
