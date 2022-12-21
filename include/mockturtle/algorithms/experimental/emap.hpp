@@ -558,11 +558,11 @@ public:
     while ( ipos != _pend )
     {
       if ( ( *ipos )->signature() == cut.signature() )
-        return true;
+        return false;
       ++ipos;
     }
 
-    return false;
+    return true;
   }
 
 private:
@@ -1031,6 +1031,7 @@ private:
   template<bool DO_AREA>
   bool compute_mapping()
   {
+    uint32_t i = 0;
     for ( auto const& n : topo_order )
     {
       uint32_t index = ntk.node_to_index( n );
@@ -1040,8 +1041,14 @@ private:
 
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
       {
+        ++i;
         continue;
       }
+
+      // if ( n == 3550 )
+      // {
+      //   std::cout << "Here\n";
+      // }
 
       /* match positive phase */
       match_phase<DO_AREA>( n, 0u );
@@ -1056,11 +1063,18 @@ private:
       if constexpr ( DO_AREA)
       {
         if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
-          match_multioutput<DO_AREA>( n );
+        {
+          bool multi_success = match_multioutput<DO_AREA>( n );
+          if ( multi_success )
+            multi_node_update<DO_AREA>( n, i );
+        }
       }
 
+      assert( node_match[index].flows[0] < std::numeric_limits<float>::max() );
+      assert( node_match[index].flows[1] < std::numeric_limits<float>::max() );
       assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
       assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
+      ++i;
     }
 
     double area_old = area;
@@ -1092,10 +1106,14 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact( bool last_round )
   {
+    uint32_t i = 0;
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+      {
+        ++i;
         continue;
+      }
 
       auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
@@ -1120,7 +1138,13 @@ private:
 
       /* try a multi-output match */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
-        match_multioutput_exact<SwitchActivity>( n, last_round );
+      {
+        bool multi_success = match_multioutput_exact<SwitchActivity>( n, last_round );
+        if ( multi_success )
+            multi_node_update_exact<SwitchActivity>( n, i );
+      }
+
+      ++i;
     }
 
     double area_old = area;
@@ -1784,7 +1808,7 @@ private:
   }
 
   template<bool DO_AREA>
-  void match_multioutput( node<Ntk> const& n )
+  bool match_multioutput( node<Ntk> const& n )
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
@@ -1794,11 +1818,11 @@ private:
     auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
     // auto const& cut_pair = multi_cut_set[cut_index];
 
-    assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
-    assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
+    // assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
+    // assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
 
-    assert( node_match[tuple_data[0].node_index].arrival[0] < node_match[tuple_data[0].node_index].required[0] + epsilon );
-    assert( node_match[tuple_data[0].node_index].arrival[1] < node_match[tuple_data[0].node_index].required[1] + epsilon );
+    // assert( node_match[tuple_data[0].node_index].arrival[0] < node_match[tuple_data[0].node_index].required[0] + epsilon );
+    // assert( node_match[tuple_data[0].node_index].arrival[1] < node_match[tuple_data[0].node_index].required[1] + epsilon );
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -1809,6 +1833,7 @@ private:
     std::array<double, max_multioutput_output_size> est_refs;
     std::array<bool, max_multioutput_output_size> use_same_phase;
     std::array<uint32_t, max_multioutput_output_size> cut_index;
+    bool mapped_multioutput = false;
 
     double old_flow_sum = 0;
     uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
@@ -1819,6 +1844,7 @@ private:
       /* store local validity and comparison info */
       bool valid = true;
       bool is_best = true;
+      bool respects_required = true;
 
       /* iterate for each output of the multi-output gate */
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
@@ -1860,6 +1886,12 @@ private:
             break;
           }
         }
+
+        /* check required time of current solution */
+        if ( node_data.arrival[phase[j]] > node_data.required[phase[j]] )
+          respects_required = false;
+        if ( node_data.same_match && node_data.arrival[phase[j] ^ 1] > node_data.required[phase[j] ^ 1] )
+          respects_required = false;
 
         /* compute area flow */
         old_flow_sum += node_data.flows[phase[j]];
@@ -1953,7 +1985,7 @@ private:
       flow_sum = flow_sum / combined_est_refs;
 
       /* not better than individual gates */
-      if ( flow_sum > old_flow_sum + epsilon )
+      if ( respects_required && ( flow_sum > old_flow_sum + epsilon ) )
         continue;
 
       /* evaluate phase substitution */
@@ -1961,6 +1993,8 @@ private:
       // {
 
       // }
+
+      mapped_multioutput = true;
       
       /* commit multi-output gate */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
@@ -2002,10 +2036,12 @@ private:
         assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
       }
     }
+
+    return mapped_multioutput;    
   }
 
   template<bool SwitchActivity>
-  void match_multioutput_exact( node<Ntk> const& n,  bool last_round )
+  bool match_multioutput_exact( node<Ntk> const& n,  bool last_round )
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
@@ -2049,10 +2085,12 @@ private:
       }
     }
 
+    bool mapped_multioutput = false;
+
     /* perform mapping */
     if ( !skip )
     {
-      match_multioutput_exact_core<SwitchActivity>( tuple_data, best_exact_area );
+      mapped_multioutput = match_multioutput_exact_core<SwitchActivity>( tuple_data, best_exact_area );
     }
 
     /* if "same match" and used in the cover reference the leaves (topo order) */
@@ -2067,10 +2105,12 @@ private:
         cut_ref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), use_phase );
       }
     }
+
+    return mapped_multioutput;
   }
 
   template<bool SwitchActivity>
-  inline void match_multioutput_exact_core( multi_match_t const& tuple_data, std::array<float, max_multioutput_output_size>& best_exact_area )
+  inline bool match_multioutput_exact_core( multi_match_t const& tuple_data, std::array<float, max_multioutput_output_size>& best_exact_area )
   {
     /* get the cut representative */
     auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
@@ -2085,6 +2125,8 @@ private:
     std::array<uint32_t, max_multioutput_output_size> cut_index;
 
     uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
+
+    bool mapped_multioutput = false;
 
     /* iterate for each possible match */
     for ( auto i = 0; i < cut0->supergates[iteration_phase]->size(); ++i )
@@ -2212,7 +2254,9 @@ private:
 
         continue;
       }
-      
+
+      mapped_multioutput = true;
+
       /* commit multi-output gate (topo order) */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
       {
@@ -2279,6 +2323,122 @@ private:
         }
       }
     }
+
+    return mapped_multioutput;
+  }
+
+  template<bool DO_AREA>
+  void multi_node_update( node<Ntk> const& n, uint32_t topo_root )
+  {
+    uint32_t check_index = ntk.node_to_index( n );
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
+    uint64_t signature = 0;
+
+    /* check if a node is in TFI: there is a path of length > 1 */
+    bool in_tfi = false;
+    node<Ntk> min_node = n;
+    for ( auto j = 0; j < max_multioutput_output_size - 1; ++j )
+    {
+      if ( tuple_data[j].in_tfi )
+      {
+        min_node = ntk.index_to_node( tuple_data[j].node_index );
+        in_tfi = true;
+        signature |= UINT64_C( 1 ) << ( tuple_data[j].node_index & 0x3f );
+      }
+    }
+
+    if ( !in_tfi )
+      return;
+
+    /* get nodes among the root and TFI */
+    uint32_t topo_left = topo_root - 1;
+    while( topo_order[topo_left] != min_node )
+      --topo_left;
+    
+    /* recompute data for nodes in the middle if current cut uses modified TFI nodes as a leaf */
+    for ( auto i = topo_left + 1; i < topo_root; ++i )
+    {
+      node<Ntk> g = topo_order[i];
+      uint32_t index = ntk.node_to_index( g );
+      auto& node_data = node_match[index];
+
+      /* check cuts based on signature */
+      bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
+
+      if ( !node_data.same_match )
+        leaf_used |= multi_node_update_cut_check( index, signature, 1 );
+
+      if ( !leaf_used )
+        continue;
+
+      signature |= UINT64_C( 1 ) << ( index & 0x3f );
+
+      /* match positive phase */
+      match_phase<DO_AREA>( g, 0u );
+
+      /* match negative phase */
+      match_phase<DO_AREA>( g, 1u );
+
+      /* try to drop one phase */
+      match_drop_phase<DO_AREA, false>( g, 0 );
+    }
+  }
+
+  template<bool SwitchActivity>
+  void multi_node_update_exact( node<Ntk> const& n, uint32_t topo_root )
+  {
+    uint32_t check_index = ntk.node_to_index( n );
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
+    uint64_t signature = 0;
+
+    /* check if a node is in TFI: there is a path of length > 1 */
+    bool in_tfi = false;
+    node<Ntk> min_node = n;
+    for ( auto j = 0; j < max_multioutput_output_size - 1; ++j )
+    {
+      if ( tuple_data[j].in_tfi )
+      {
+        min_node = ntk.index_to_node( tuple_data[j].node_index );
+        in_tfi = true;
+        signature |= UINT64_C( 1 ) << ( tuple_data[j].node_index & 0x3f );
+      }
+    }
+
+    if ( !in_tfi )
+      return;
+
+    /* get nodes among the root and TFI */
+    uint32_t topo_left = topo_root - 1;
+    while( topo_order[topo_left] != min_node )
+      --topo_left;
+    
+    /* recompute data for nodes in the middle if current cut uses modified TFI nodes as a leaf */
+    for ( auto i = topo_left + 1; i < topo_root; ++i )
+    {
+      node<Ntk> g = topo_order[i];
+      uint32_t index = ntk.node_to_index( g );
+      auto& node_data = node_match[index];
+
+      /* check cuts */
+      bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
+
+      if ( !node_data.same_match )
+        leaf_used |= multi_node_update_cut_check( index, signature, 1 );
+
+      if ( !leaf_used )
+        continue;
+
+      signature |= UINT64_C( 1 ) << ( index & 0x3f );
+
+      /* match positive phase */
+      match_phase_exact<SwitchActivity>( g, 0u );
+
+      /* match negative phase */
+      match_phase_exact<SwitchActivity>( g, 1u );
+
+      /* try to drop one phase */
+      match_drop_phase<true, true>( g, 0 );
+    }
   }
 
   template<bool DO_AREA>
@@ -2320,6 +2480,16 @@ private:
       /* update tuple data */
       tuple_data[i].cut_index = num_cuts_pre;
     }
+  }
+
+  inline bool multi_node_update_cut_check( uint32_t index, uint64_t signature, uint8_t phase )
+  {
+    auto const& cut = cuts[index][node_match[index].best_cut[phase]];
+
+    if ( ( signature & cut.signature() ) > 0 )
+      return true;
+
+    return false;
   }
 
   void remove_unused_multioutput()
@@ -3637,6 +3807,7 @@ private:
       /* don't add choice if in TFI, set TFI bit */
       if ( multi_is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
       {
+        /* if there is a path of length > 1 linking node 1 and 2, save as TFI node */
         pair[0].in_tfi = 1;
         // pair[1].in_tfi = 1;
         continue;
@@ -3705,6 +3876,18 @@ private:
     {
       ntk.decr_value( ntk.index_to_node( leaf ) );
     }
+
+    return contained;
+  }
+
+  inline bool multi_is_in_direct_tfi( node<Ntk> const& root, node<Ntk> const& n )
+  {
+    bool contained = false;
+
+    ntk.foreach_fanin( root, [&]( auto const& f ) {
+      if ( ntk.get_node( f ) == n )
+        contained = true;
+    } );
 
     return contained;
   }
