@@ -95,6 +95,9 @@ enum class classification_type : uint32_t
 
 struct tech_library_params
 {
+  /*! \brief Remove dominated gates (larger sizes) */
+  bool remove_dominated_gates{ true };
+
   /*! \brief Loads multioutput gates in the library */
   bool load_multioutput_gates{ false };
 
@@ -330,11 +333,25 @@ private:
     auto const& supergates = _super.get_super_library();
     uint32_t const standard_gate_size = _super.get_standard_library_size();
 
+    std::vector<bool> skip_gates( supergates.size(), false );
+
+    if ( _ps.remove_dominated_gates )
+    {
+      select_dominated_gates( supergates, skip_gates );
+    }
+
     /* generate the configurations for the standard gates */
     uint32_t i = 0u;
+    uint32_t skip_count = 0;
     for ( auto const& gate : supergates )
     {
       uint32_t np_count = 0;
+
+      if ( skip_gates[skip_count++] )
+      {
+        /* exclude gate */
+        continue;
+      }
 
       if ( gate.root == nullptr )
       {
@@ -881,6 +898,59 @@ private:
       worst_delay = std::max( worst_delay, worst_pin_delay );
     }
     return worst_delay;
+  }
+
+  void select_dominated_gates( std::deque<composed_gate<NInputs>> const& supergates, std::vector<bool>& skip_gates )
+  {
+    for ( uint32_t i = 0; i < skip_gates.size() - 1; ++i )
+    {
+      if ( supergates[i].root == nullptr )
+        continue;
+
+      if ( skip_gates[i] )
+        continue;
+
+      auto const& tti = supergates[i].function;
+      for ( uint32_t j = i + 1; j < skip_gates.size(); ++j )
+      {
+        auto const& ttj = supergates[j].function;
+
+        /* get the same functionality */
+        if ( tti != ttj )
+          continue;
+        
+        /* is i smaller than j */
+        bool smaller = supergates[i].area < supergates[j].area;
+
+        /* is i faster for every pin */
+        bool faster = true;
+        for ( uint32_t k = 0; k < tti.num_vars(); ++k )
+        {
+          if ( supergates[i].tdelay[k] > supergates[j].tdelay[k] )
+            faster = false;
+        }
+
+        if ( smaller && faster )
+        {
+          skip_gates[j] = true;
+          continue;
+        }
+
+        /* is j faster for every pin */
+        faster = true;
+        for ( uint32_t k = 0; k < tti.num_vars(); ++k )
+        {
+          if ( supergates[j].tdelay[k] > supergates[i].tdelay[k] )
+            faster = false;
+        }
+
+        if ( !smaller && faster )
+        {
+          skip_gates[i] = true;
+          break;
+        }
+      }
+    }
   }
 
 private:
