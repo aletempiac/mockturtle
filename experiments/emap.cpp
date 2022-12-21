@@ -69,15 +69,16 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, double, uint32_t, double, float> exp(
-      "emap", "benchmark", "size", "area_after", "depth", "delay_after", "runtime" );
+  experiment<std::string, uint32_t, double, uint32_t, double, float, bool> exp(
+      "emap", "benchmark", "size", "area_after", "depth", "delay_after", "runtime", "cec" );
 
   fmt::print( "[i] processing technology library\n" );
 
   /* library to map to technology */
   std::vector<gate> gates;
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
   // std::ifstream in( "../../../asap7_lib/asap.genlib" );
-  std::stringstream in( mcnc_library );
+  // std::stringstream in( mcnc_library );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -85,10 +86,14 @@ int main()
   }
 
   tech_library_params tps;
-  tech_library<5, classification_type::np_configurations> tech_lib( gates, tps );
+  tps.verbose = true;
+  tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
+    // if ( benchmark != "bar" )
+    //   continue;
+
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -105,12 +110,18 @@ int main()
     ps.cut_enumeration_ps.cut_limit = 16;
     ps.area_oriented_mapping = false;
     ps.remove_dominated_cuts = false;
-    ps.verbose = true;
+    ps.allow_node_duplication = true;
+    ps.use_matching_prioritization = false;
+    // ps.relax_required = 1;
+    ps.verbose = false;
     emap_stats st;
 
-    binding_view<klut_network> res = emap<aig_network, 5>( aig, tech_lib, ps, &st );
+    binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
+    // res.report_gates_usage();
 
-    exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ) );
+    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+
+    exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
 
   exp.save();

@@ -28,10 +28,17 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
-#include <mockturtle/algorithms/map_adders.hpp>
+#include <lorina/genlib.hpp>
+#include <mockturtle/algorithms/experimental/emap.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
+#include <mockturtle/io/genlib_reader.hpp>
+#include <mockturtle/io/write_blif.hpp>
+#include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/networks/aig.hpp>
-#include <mockturtle/views/mapping_view.hpp>
+#include <mockturtle/networks/klut.hpp>
+#include <mockturtle/utils/tech_library.hpp>
+#include <mockturtle/views/binding_view.hpp>
+#include <mockturtle/views/depth_view.hpp>
 
 #include <experiments.hpp>
 
@@ -40,11 +47,31 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, float> exp(
-      "FA", "benchmark", "size", "adders", "runtime" );
+  experiment<std::string, uint32_t, double, uint32_t, double, float, bool> exp(
+      "emap", "benchmark", "size", "area_after", "depth", "delay_after", "runtime", "cec" );
+  
+  /* library to map to technology */
+  std::vector<gate> gates;
+  std::ifstream in( "asap7.genlib" );
+
+  if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
+  {
+    return 1;
+  }
+
+  tech_library_params tps;
+  tps.verbose = true;
+  tps.load_multioutput_gates = true;
+  tps.load_multioutput_gates_single = false;
+  tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
+
+  std::vector<std::string> test_benchmarks = { "mult4.aig" };
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
+    // if ( benchmark != "sin" )
+    //   continue;
+
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -54,14 +81,30 @@ int main()
     }
 
     const uint32_t size_before = aig.num_gates();
+    const uint32_t depth_before = depth_view( aig ).depth();
 
-    mapping_view<aig_network, false> mapped_aig{aig};
-    map_adders_params ps;
-    map_adders_stats st;
+    emap_params ps;
+    ps.cut_enumeration_ps.minimize_truth_table = true;
+    ps.cut_enumeration_ps.cut_limit = 16;
+    ps.area_oriented_mapping = true;
+    ps.remove_dominated_cuts = false;
+    ps.area_flow_rounds = 2;
+    ps.ela_rounds = 2;
+    ps.map_multioutput = true;
+    ps.relax_required = 0;
     ps.verbose = true;
-    map_adders( mapped_aig, ps, &st );
+    emap_stats st;
 
-    exp( benchmark, size_before, st.mapped_fa + st.mapped_ha, to_seconds( st.time_total ) );
+    binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
+    // res.report_gates_usage();
+    // res.report_stats();
+
+    // write_verilog_with_binding( res, "res.v" );
+    // write_blif( res, "res.blif" );
+    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    // bool const cec = true;
+
+    exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
 
   exp.save();
