@@ -591,7 +591,7 @@ struct emap_triple_hash
 #pragma endregion
 
 template<unsigned NInputs>
-struct node_match_flex
+struct node_match_emap
 {
   /* best gate match for positive and negative output phases */
   supergate<NInputs> const* best_supergate[2] = { nullptr, nullptr };
@@ -619,6 +619,17 @@ struct node_match_flex
   float flows[2];
 };
 
+union multi_match_data
+{
+  uint64_t data{ 0 };
+  struct
+  {
+    uint64_t in_tfi     :  1;
+    uint64_t cut_index  : 31;
+    uint64_t node_index : 32;
+  };
+};
+
 template<class Ntk, unsigned CutSize, unsigned NInputs, classification_type Configuration>
 class emap_impl
 {
@@ -640,9 +651,9 @@ public:
   using multi_cuts_t = fast_network_cuts<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>;
   using multi_cut_t = typename multi_cuts_t::cut_t;
   using multi_leaves_set_t = std::array<uint32_t, max_multioutput_cut_size>;
-  using multi_output_set_t = std::vector<uint64_t>;
+  using multi_output_set_t = std::vector<multi_match_data>;
   using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash>;
-  using multi_match_t = std::array<uint64_t, max_multioutput_output_size>;
+  using multi_match_t = std::array<multi_match_data, max_multioutput_output_size>;
   using multi_cut_set_t = std::vector<std::array<cut_t, max_multioutput_output_size>>;
   using multi_matches_t = std::vector<multi_match_t>;
 
@@ -814,7 +825,8 @@ private:
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
         match_multi_add_cuts<DO_AREA>( n );
-        match_multioutput<DO_AREA>( n );
+        if constexpr ( DO_AREA )
+          match_multioutput<DO_AREA>( n );
       }
     }
 
@@ -1324,6 +1336,9 @@ private:
         node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[other_phase] - lib_inv_delay );
       }
 
+      assert( node_data.arrival[0] < node_data.required[0] + epsilon );
+      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
+
       if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
       {
         auto ctr = 0u;
@@ -1776,14 +1791,14 @@ private:
     multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
 
     /* get the cut */
-    auto const& cut0 = cuts[tuple_data[0] >> 16][tuple_data[0] & UINT16_MAX];
+    auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
     // auto const& cut_pair = multi_cut_set[cut_index];
 
     assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
     assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
 
-    assert( node_match[tuple_data[0] >> 16].arrival[0] < node_match[tuple_data[0] >> 16].required[0] + epsilon );
-    assert( node_match[tuple_data[0] >> 16].arrival[1] < node_match[tuple_data[0] >> 16].required[1] + epsilon );
+    assert( node_match[tuple_data[0].node_index].arrival[0] < node_match[tuple_data[0].node_index].required[0] + epsilon );
+    assert( node_match[tuple_data[0].node_index].arrival[1] < node_match[tuple_data[0].node_index].required[1] + epsilon );
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -1808,8 +1823,8 @@ private:
       /* iterate for each output of the multi-output gate */
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
-        cut_index[j] = tuple_data[j] & UINT16_MAX;
+        uint32_t node_index = tuple_data[j].node_index;
+        cut_index[j] = tuple_data[j].cut_index;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
@@ -1862,7 +1877,7 @@ private:
           float k_est = 0;
           for ( auto k = 0; k < max_multioutput_output_size; ++k )
           {
-            uint32_t index_k = tuple_data[k] >> 16;
+            uint32_t index_k = tuple_data[k].node_index;
             if ( node_match[index_k].same_match )
               k_est += node_match[index_k].est_refs[2];
             else
@@ -1884,10 +1899,13 @@ private:
         }
 
         /* local evaluation (area flow improvement is approximated) */
-        auto const& mapped_cut = cuts[node_index][node_data.best_cut[phase[j]]];
-        if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
+        if constexpr ( !DO_AREA )
         {
-          is_best = false;
+          auto const& mapped_cut = cuts[node_index][node_data.best_cut[phase[j]]];
+          if ( !compare_map<DO_AREA>( arrival[j], node_data.arrival[phase[j]], area_flow[j], mapped_flow, cut.size(), mapped_cut.size() ) )
+          {
+            is_best = false;
+          }
         }
 
         /* collect fanout estimations and mapping phases */
@@ -1947,7 +1965,7 @@ private:
       /* commit multi-output gate */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
+        uint32_t node_index = tuple_data[j].node_index;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
@@ -1999,7 +2017,7 @@ private:
     /* if "same match" and used in the cover dereference the leaves (reverse topo order) */
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
-      uint32_t node_index = tuple_data[j] >> 16;
+      uint32_t node_index = tuple_data[j].node_index;
       best_exact_area[j] = node_match[node_index].flows[0] * node_match[node_index].est_refs[2];
       uint8_t selected_phase = node_match[node_index].best_supergate[0] == nullptr ? 1 : 0;
 
@@ -2022,7 +2040,7 @@ private:
     {
       for ( uint32_t j = 0; j < max_multioutput_output_size - 1; ++j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
+        uint32_t node_index = tuple_data[j].node_index;
         if ( node_match[node_index].map_refs[2] == 0 )
         {
           skip = true;
@@ -2040,7 +2058,7 @@ private:
     /* if "same match" and used in the cover reference the leaves (topo order) */
     for ( auto j = 0; j < max_multioutput_output_size; ++j )
     {
-      uint32_t node_index = tuple_data[j] >> 16;
+      uint32_t node_index = tuple_data[j].node_index;
 
       if ( node_match[node_index].same_match && node_match[node_index].map_refs[2] != 0 )
       {
@@ -2055,7 +2073,7 @@ private:
   inline void match_multioutput_exact_core( multi_match_t const& tuple_data, std::array<float, max_multioutput_output_size>& best_exact_area )
   {
     /* get the cut representative */
-    auto const& cut0 = cuts[tuple_data[0] >> 16][tuple_data[0] & UINT16_MAX];
+    auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -2079,8 +2097,8 @@ private:
       /* iterate for each output of the multi-output gate (reverse topo order) */
       for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
-        cut_index[j] = tuple_data[j] & UINT16_MAX;
+        uint32_t node_index = tuple_data[j].node_index;
+        cut_index[j] = tuple_data[j].cut_index;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
@@ -2182,7 +2200,7 @@ private:
         /* reference back single gates */
         for ( uint32_t j = max_multioutput_output_size - it_counter; j < max_multioutput_output_size; ++j )
         {
-          uint32_t node_index = tuple_data[j] >> 16;
+          uint32_t node_index = tuple_data[j].node_index;
           auto& node_data = node_match[node_index];
 
           if ( !node_match[node_index].same_match && node_match[node_index].map_refs[phase[j]] != 0 )
@@ -2198,7 +2216,7 @@ private:
       /* commit multi-output gate (topo order) */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
+        uint32_t node_index = tuple_data[j].node_index;
         auto& node_data = node_match[node_index];
         auto const& cut = cuts[node_index][cut_index[j]];
         uint8_t phase_inverted = cut->supergates[0] == nullptr ? 1 : 0;
@@ -2270,13 +2288,13 @@ private:
     multi_match_t& tuple_data = multi_node_match[node_tuple_match[index]];
 
     /* get the cuts */
-    uint32_t cut_index = tuple_data[0] & UINT16_MAX;
+    uint32_t cut_index = tuple_data[0].cut_index;
     auto& cut_pair = multi_cut_set[cut_index];
 
     /* insert multi-output cuts into the standard cut set */
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
-      uint64_t node_index = tuple_data[i] >> 16;
+      uint64_t node_index = tuple_data[i].node_index;
       auto& cut = cut_pair[i];
       auto single_cut = cut_pair[i];
 
@@ -2300,7 +2318,7 @@ private:
       rcuts.limit( num_cuts_pre );
 
       /* update tuple data */
-      tuple_data[i] = ( node_index << 16 ) | num_cuts_pre;
+      tuple_data[i].cut_index = num_cuts_pre;
     }
   }
 
@@ -2331,7 +2349,7 @@ private:
       bool unused = false;
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
+        uint32_t node_index = tuple_data[j].node_index;
         auto& node_data = node_match[node_index];
 
         if ( node_data.best_supergate[0] != nullptr && node_data.multioutput_match[0] )
@@ -2356,7 +2374,7 @@ private:
       /* remap connected outputs (reverse topo order)*/
       for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
       {
-        uint32_t node_index = tuple_data[j] >> 16;
+        uint32_t node_index = tuple_data[j].node_index;
         auto& node_data = node_match[node_index];
         auto const n = ntk.index_to_node( node_index );
 
@@ -3331,7 +3349,9 @@ private:
           continue;
         }
         
-        uint64_t data = ( static_cast<uint64_t>( ntk.node_to_index( n ) ) << 16 ) | cut_index;
+        multi_match_data data;
+        data.node_index = ntk.node_to_index( n );
+        data.cut_index = cut_index;
         leaves[2] = 0;
         uint32_t i = 0;
         for ( auto l : *cut )
@@ -3373,16 +3393,16 @@ private:
       /* try half adder and full adder */
       for ( uint32_t i = 0; i < it.second.size() - 1; ++i )
       {
-        uint64_t data_i = it.second[i];
-        uint32_t index_i = data_i >> 16;
-        uint32_t cut_index_i = data_i & UINT16_MAX;
+        multi_match_data data_i = it.second[i];
+        uint32_t index_i = data_i.node_index;
+        uint32_t cut_index_i = data_i.cut_index;
         auto const& cut_i = multi_cuts.cuts( index_i )[cut_index_i];
 
         for ( uint32_t j = i + 1; j < it.second.size(); ++j )
         {
-          uint64_t data_j = it.second[j];
-          uint32_t index_j = data_j >> 16;
-          uint32_t cut_index_j = data_j & UINT16_MAX;
+          multi_match_data data_j = it.second[j];
+          uint32_t index_j = data_j.node_index;
+          uint32_t cut_index_j = data_j.cut_index;
           auto const& cut_j = multi_cuts.cuts( index_j )[cut_index_j];
 
           /* not compatible */
@@ -3414,10 +3434,10 @@ private:
 
     for ( auto& pair : multi_node_match )
     {
-      uint32_t index1 = pair[0] >> 16;
-      uint32_t index2 = pair[1] >> 16;
-      uint32_t cut_index1 = pair[0] & UINT16_MAX;
-      uint32_t cut_index2 = pair[1] & UINT16_MAX;
+      uint32_t index1 = pair[0].node_index;
+      uint32_t index2 = pair[1].node_index;
+      uint32_t cut_index1 = pair[0].cut_index;
+      uint32_t cut_index2 = pair[1].cut_index;
       multi_cut_t const& cut1 = multi_cuts.cuts( index1 )[cut_index1];
       multi_cut_t const& cut2 = multi_cuts.cuts( index2 )[cut_index2];
 
@@ -3441,9 +3461,11 @@ private:
       multi_cut_set.push_back( cut_pair );
 
       /* re-index data */
-      uint64_t new_data1, new_data2;
-      new_data1 = ( static_cast<uint64_t>( index1 ) << 16 ) | ( multi_cut_set.size() - 1 );
-      new_data2 = ( static_cast<uint64_t>( index2 ) << 16 ) | ( multi_cut_set.size() - 1 );
+      multi_match_data new_data1, new_data2;
+      new_data1.node_index = index1;
+      new_data1.cut_index = multi_cut_set.size() - 1;
+      new_data2.node_index = index2;
+      new_data2.cut_index = multi_cut_set.size() - 1;
       multi_match_t p = { new_data1, new_data2 };
 
       multi_node_match_tmp.push_back( p );
@@ -3604,17 +3626,21 @@ private:
   {
     for ( auto& pair : multi_node_match )
     {
-      uint32_t index1 = pair[0] >> 16;
-      uint32_t index2 = pair[1] >> 16;
-      uint32_t cut_index1 = pair[0] & UINT16_MAX;
+      uint32_t index1 = pair[0].node_index;
+      uint32_t index2 = pair[1].node_index;
+      uint32_t cut_index1 = pair[0].cut_index;
       cut_t const& cut = multi_cut_set[cut_index1][0];
 
       if ( index1 > index2 )
         std::swap( index1, index2 );
 
-      /* don't add choice if in TFI */
+      /* don't add choice if in TFI, set TFI bit */
       if ( multi_is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
+      {
+        pair[0].in_tfi = 1;
+        // pair[1].in_tfi = 1;
         continue;
+      }
 
       choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
 
@@ -3705,7 +3731,7 @@ private:
   uint32_t lib_buf_id;
 
   std::vector<node<Ntk>> topo_order;
-  std::vector<node_match_flex<NInputs>> node_match;
+  std::vector<node_match_emap<NInputs>> node_match;
   std::vector<uint32_t> node_tuple_match;
   std::vector<float> switch_activity;
   std::vector<uint64_t> tmp_visited;
