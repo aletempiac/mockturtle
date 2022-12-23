@@ -234,6 +234,30 @@ private:
     }
   }
 
+  // void solve_iteratively()
+  // {
+  //   bool solved = false;
+  //   bool timeout = false;
+
+  //   while( !( timeout || solved ) )
+  //   {
+
+  //   }
+
+  //   if ( ps.verbose )
+  //   {
+  //     if ( res )
+  //       std::cout << fmt::format( "Best optimal solution with cost {}\n", best_cost );
+  //     else
+  //       std::cout << fmt::format( "Best sub-optimal solution with cost {}\n", best_cost );
+  //   }
+  //   if ( ps.debug )
+  //   {
+  //     kitty::print_binary( best_solution );
+  //     std::cout << "\n";
+  //   }
+  // }
+ 
 #pragma region Solver
   bool solve_rec( uint32_t row_index, int col_index, int cache_index )
   {
@@ -248,8 +272,6 @@ private:
     /* bound branching */
     if ( current_cost >= best_cost - 1 )
       return is_not_timeout();
-    // if ( current_cost >= best_cost + rows_covered - num_rows )
-    //   return is_not_timeout();
 
     /* get current step choices */
     int cut_size = cuts.cuts( row_index + offset ).size() - 1;
@@ -275,7 +297,7 @@ private:
     }
 
     /* select current bit in current selection */
-    solution_add_bit( row_index );
+    solution_flip_bit( row_index );
 
     /* select a column and recur */
     for ( int i = col_index; i > col_index - cut_size; --i )
@@ -298,7 +320,7 @@ private:
     }
 
     /* remove bit from solution */
-    solution_remove_bit( row_index );
+    solution_flip_bit( row_index );
 
     return true;
   }
@@ -418,15 +440,14 @@ private:
   inline void cov_table_add_bit( uint32_t r, uint32_t c ) { cov[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void cov_t_table_add_bit( uint32_t r, uint32_t c ) { cov_t[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void constraints_table_add_bit( uint32_t r, uint32_t c ) { constraints[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
-  inline void solution_add_bit( uint32_t c ) { current_solution._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void constraints_add_bit( uint32_t c ) { current_constraints._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
-  inline void solution_remove_bit( uint32_t c ) { current_solution._bits[c >> 6] ^= UINT64_C( 1 ) << ( c & 0x3f ); }
+  inline void solution_flip_bit( uint32_t c ) { current_solution._bits[c >> 6] ^= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline bool solution_has_bit( uint32_t c ) { return ( current_solution._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline bool coverage_has_bit( uint32_t c ) {  return ( current_coverage._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline bool constraints_has_bit( uint32_t c ) {  return ( current_constraints._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline bool best_solution_has_bit( uint32_t c ) { return ( best_solution._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
-  inline void coverage_add_column( uint32_t r ) { current_coverage |= cov_t[r]; }
-  inline void constraints_add_column( uint32_t r ) { current_constraints |= constraints[r]; }
+  inline void coverage_add_column( uint32_t r ) { for ( uint32_t j = 0; j < current_coverage._bits.size(); ++j ) { current_coverage._bits[j] |= cov_t[r]._bits[j]; } }
+  inline void constraints_add_column( uint32_t r ) { for ( uint32_t j = 0; j < current_constraints._bits.size(); ++j ) { current_constraints._bits[j] |= constraints[r]._bits[j]; } }
   inline bool is_not_timeout() { return std::chrono::duration_cast<std::chrono::duration<float>>( clock::now() - time_begin ).count() < ps.timeout; }
 
 private:
