@@ -169,6 +169,16 @@ private:
     current_constraints = kitty::partial_truth_table( num_rows );
     best_solution = kitty::partial_truth_table( num_rows );
 
+    /* allocate cache */
+    cache_coverage = covering_matrix_t( num_rows );
+    cache_constraints = covering_matrix_t( num_rows );
+
+    for ( uint32_t i = 0; i < num_rows / 2; ++i )
+    {
+      cache_coverage[i] = kitty::partial_truth_table( num_rows );
+      cache_constraints[i] = kitty::partial_truth_table( num_rows );
+    }
+
     /* get initial bounds */
     best_cost = ps.bound;
     if ( best_cost >= UINT32_MAX - num_rows )
@@ -208,7 +218,7 @@ private:
 
   void solve()
   {
-    bool res = solve_rec( num_rows - 1, num_columns - 1 );
+    bool res = solve_rec( num_rows - 1, num_columns - 1, 0 );
 
     if ( ps.verbose )
     {
@@ -225,7 +235,7 @@ private:
   }
 
 #pragma region Solver
-  bool solve_rec( uint32_t row_index, int col_index )
+  bool solve_rec( uint32_t row_index, int col_index, int cache_index )
   {
     /* solution found */
     uint32_t rows_covered = kitty::count_ones( current_coverage );
@@ -253,8 +263,16 @@ private:
     }
   
     /* save current solution; TODO: find alternative for efficiency */
-    auto cov_step = current_coverage;
-    auto constraints_step = current_constraints;
+    if ( cache_coverage.size() <= cache_index )
+    {
+      cache_coverage.emplace_back( current_coverage );
+      cache_constraints.emplace_back( current_constraints );
+    }
+    else
+    {
+      cache_coverage[cache_index] = current_coverage;
+      cache_constraints[cache_index] = current_constraints;
+    }
 
     /* select current bit in current selection */
     solution_add_bit( row_index );
@@ -270,13 +288,13 @@ private:
       evaluate_step();
 
       /* branch */
-      if ( !solve_rec( row_index - 1, col_index - cut_size ) )
+      if ( !solve_rec( row_index - 1, col_index - cut_size, cache_index + 1 ) )
         return false;
 
       /* remove column from solution */
       undo_step();
-      current_coverage = cov_step;
-      current_constraints = constraints_step;
+      current_coverage = cache_coverage[cache_index];
+      current_constraints = cache_constraints[cache_index];
     }
 
     /* remove bit from solution */
@@ -434,6 +452,9 @@ private:
   covering_matrix_t cov;            /* covering matrix */
   covering_matrix_t cov_t;          /* covering matrix transposed */
   covering_matrix_t constraints;    /* constrain matrix */
+  
+  covering_matrix_t cache_coverage;     /* cache to store temporary coverage */
+  covering_matrix_t cache_constraints;  /* cache to store temporary constraints to satisfy */
 
   network_cuts_t cuts;
 };
