@@ -239,8 +239,6 @@ private:
         uint32_t i = 0;
         for ( auto l : *cut )
           leaves[i++] = l;
-        
-        std::sort( leaves.begin(), leaves.begin() + i );
 
         /* add to hash table */
         auto &v = cuts_classes[leaves];
