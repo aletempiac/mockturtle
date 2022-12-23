@@ -44,8 +44,11 @@ int main()
 
   experiment<std::string, uint32_t, double, bool> exp( "binate_covering", "benchmark", "luts", "runtime", "equivalent" );
 
-  for ( auto const& benchmark : iscas_benchmarks( c17 | c432 ) )
+  for ( auto const& benchmark : iscas_benchmarks( c432 | c499 ) )
   {
+    if ( benchmark == "c5315" )
+      break;
+
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
     if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
@@ -56,17 +59,18 @@ int main()
     binate_covering_params ps;
     binate_covering_stats st;
     ps.cut_enumeration_ps.cut_size = 6;
-    ps.cut_enumeration_ps.cut_limit = 8;
-    // ps.bound = 48;
+    ps.cut_enumeration_ps.cut_limit = 3;
+    ps.timeout = 10;
+    ps.verbose = true;
     ps.debug = true;
 
     mapping_view<aig_network, false> mapped_aig{ aig };
     binate_covering<decltype( mapped_aig ), false>( mapped_aig, ps, &st );
-    // const auto klut = *collapse_mapped_network<klut_network>( mapped_aig );
+    const auto klut = *collapse_mapped_network<klut_network>( mapped_aig );
 
-    bool const cec = true;
+    bool const cec = abc_cec( klut, benchmark );
 
-    exp( benchmark, 0, to_seconds( st.time_total ), cec );
+    exp( benchmark, klut.num_gates(), to_seconds( st.time_total ), cec );
   }
 
   exp.save();

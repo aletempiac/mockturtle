@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 #include <fmt/format.h>
@@ -68,6 +69,9 @@ struct binate_covering_params
   /*! \brief Initial bound for the search. */
   uint32_t bound{ UINT32_MAX };
 
+  /*! \brief Timeout limit (seconds) */
+  float timeout{ 10.0 };
+
   /*! \brief Debug mode. */
   bool debug{ false };
 
@@ -98,6 +102,8 @@ template<class Ntk, bool StoreFunction, typename CutData>
 class binate_covering_impl
 {
 public:
+  using clock = typename std::chrono::steady_clock;
+  using time_point = typename clock::time_point;
   using network_cuts_t = network_cuts<Ntk, StoreFunction, CutData>;
   using cut_t = typename network_cuts_t::cut_t;
   using covering_matrix_t = std::vector<kitty::partial_truth_table>;
@@ -109,8 +115,8 @@ public:
         st( st ),
         cov(),
         cov_t(),
-        map_refs( ntk.size(), 0 ),
-        cuts( cut_enumeration<Ntk, StoreFunction, CutData>( ntk, ps.cut_enumeration_ps ) )
+        cuts( cut_enumeration<Ntk, StoreFunction, CutData>( ntk, ps.cut_enumeration_ps ) ),
+        time_begin( clock::now() )
   {
   }
 
@@ -142,6 +148,7 @@ private:
     /* allocate matrix */
     cov = covering_matrix_t( num_rows );
     cov_t = covering_matrix_t( num_columns );
+    constraints = covering_matrix_t( num_columns );
 
     /* allocate columns */
     for ( uint32_t i = 0; i < num_rows; ++i )
@@ -153,11 +160,13 @@ private:
     for ( uint32_t i = 0; i < num_columns; ++i )
     {
       cov_t[i] = kitty::partial_truth_table( num_rows );
+      constraints[i] = kitty::partial_truth_table( num_rows );
     }
 
     /* allocate solution */
     current_solution = kitty::partial_truth_table( num_rows );
     current_coverage = kitty::partial_truth_table( num_rows );
+    current_constraints = kitty::partial_truth_table( num_rows );
     best_solution = kitty::partial_truth_table( num_rows );
 
     /* get initial bounds */
@@ -170,6 +179,8 @@ private:
   void populate()
   {
     uint32_t pcol = 0;
+
+    /* add cuts */
     ntk.foreach_gate( [&]( auto const& n ) {
       uint32_t index = ntk.node_to_index( n );
       for ( cut_t const* cut : cuts.cuts( index ) )
@@ -182,6 +193,13 @@ private:
       }
     } );
 
+    /* add constraints */
+    ntk.foreach_po( [&]( auto const& f ) {
+      uint32_t index = ntk.node_to_index( ntk.get_node( f ) );
+      if ( index >= offset )
+        constraints_add_bit( ntk.node_to_index( ntk.get_node( f ) ) - offset );
+    } );
+
     // if ( ps.debug )
     // {
     //   print_cov();
@@ -190,38 +208,44 @@ private:
 
   void solve()
   {
-    solve_rec( num_rows - 1, num_columns - 1 );
+    bool res = solve_rec( num_rows - 1, num_columns - 1 );
 
+    if ( ps.verbose )
+    {
+      if ( res )
+        std::cout << fmt::format( "Best optimal solution with cost {}\n", best_cost );
+      else
+        std::cout << fmt::format( "Best sub-optimal solution with cost {}\n", best_cost );
+    }
     if ( ps.debug )
     {
-      std::cout << fmt::format( "Best solution with cost {}\n", best_cost );
       kitty::print_binary( best_solution );
       std::cout << "\n";
     }
   }
 
 #pragma region Solver
-  void solve_rec( uint32_t row_index, int col_index )
+  bool solve_rec( uint32_t row_index, int col_index )
   {
     /* solution found */
     uint32_t rows_covered = kitty::count_ones( current_coverage );
     if ( rows_covered == num_rows )
     {
       evaluate_solution();
-      return;
+      return is_not_timeout();
     }
 
     /* bound branching */
     if ( current_cost >= best_cost - 1 )
-      return;
+      return is_not_timeout();
     // if ( current_cost >= best_cost + rows_covered - num_rows )
-    //   return;
+    //   return is_not_timeout();
 
     /* get current step choices */
     int cut_size = cuts.cuts( row_index + offset ).size() - 1;
 
-    /* if the row is covered go to the next uncovered row */
-    while ( coverage_has_bit( row_index ) )
+    /* find row to cover */
+    while ( !constraints_has_bit( row_index ) )
     {
       --row_index;
       col_index -= cut_size;
@@ -230,6 +254,7 @@ private:
   
     /* save current solution; TODO: find alternative for efficiency */
     auto cov_step = current_coverage;
+    auto constraints_step = current_constraints;
 
     /* select current bit in current selection */
     solution_add_bit( row_index );
@@ -239,20 +264,25 @@ private:
     {
       /* add selection and column to the solution */
       coverage_add_column( i );
+      constraints_add_column( i );
 
       /* step evaluation */
       evaluate_step();
 
       /* branch */
-      solve_rec( row_index - 1, col_index - cut_size );
+      if ( !solve_rec( row_index - 1, col_index - cut_size ) )
+        return false;
 
       /* remove column from solution */
       undo_step();
       current_coverage = cov_step;
+      current_constraints = constraints_step;
     }
 
     /* remove bit from solution */
     solution_remove_bit( row_index );
+
+    return true;
   }
 
   inline void evaluate_step()
@@ -284,11 +314,12 @@ private:
   void add_cut( node<Ntk> const& n, cut_t const& cut, uint32_t pcol )
   {
     /* add the volume of the cut */
-
     ntk.incr_trav_id();
     for ( auto l : cut )
     {
       ntk.set_visited( ntk.index_to_node( l ), ntk.trav_id() );
+      if ( l >= offset )
+        constraints_table_add_bit( pcol, l - offset );
     }
 
     add_cut_volume_rec( n, pcol );
@@ -322,21 +353,37 @@ private:
 
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
-      if ( map_refs[index] == 0 )
+      if ( !best_solution_has_bit( index - offset ) )
         return true;
 
+      ntk.incr_trav_id();
       std::vector<node<Ntk>> nodes;
-      for ( auto const& l : cuts.cuts( index ).best() )
-      {
-        nodes.push_back( ntk.index_to_node( l ) );
-      }
-      ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        collect_leaves_rec( ntk.get_node( f ), nodes );
+      } );
 
-      if constexpr ( StoreFunction )
-      {
-        ntk.set_cell_function( n, cuts.truth_table( cuts.cuts( index ).best() ) );
-      }
+      ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
       return true;
+    } );
+  }
+
+  void collect_leaves_rec( node<Ntk> const& n, std::vector<node<Ntk>>& leaves )
+  {
+    const auto index = ntk.node_to_index( n );
+
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+    
+    ntk.set_visited( n, ntk.trav_id() );
+
+    if ( ntk.is_pi( n ) || best_solution_has_bit( index - offset ) )
+    {
+      leaves.push_back( n );
+      return;
+    }
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      collect_leaves_rec( ntk.get_node( f ), leaves );
     } );
   }
 
@@ -348,14 +395,21 @@ private:
       std::cout << "\n";
     } );
   }
+
 private:
   inline void cov_table_add_bit( uint32_t r, uint32_t c ) { cov[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void cov_t_table_add_bit( uint32_t r, uint32_t c ) { cov_t[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
+  inline void constraints_table_add_bit( uint32_t r, uint32_t c ) { constraints[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void solution_add_bit( uint32_t c ) { current_solution._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
+  inline void constraints_add_bit( uint32_t c ) { current_constraints._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void solution_remove_bit( uint32_t c ) { current_solution._bits[c >> 6] ^= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline bool solution_has_bit( uint32_t c ) { return ( current_solution._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline bool coverage_has_bit( uint32_t c ) {  return ( current_coverage._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
+  inline bool constraints_has_bit( uint32_t c ) {  return ( current_constraints._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
+  inline bool best_solution_has_bit( uint32_t c ) { return ( best_solution._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline void coverage_add_column( uint32_t r ) { current_coverage |= cov_t[r]; }
+  inline void constraints_add_column( uint32_t r ) { current_constraints |= constraints[r]; }
+  inline bool is_not_timeout() { return std::chrono::duration_cast<std::chrono::duration<float>>( clock::now() - time_begin ).count() < ps.timeout; }
 
 private:
   Ntk& ntk;
@@ -367,22 +421,24 @@ private:
   uint32_t offset{ 0 };       /* access offset */
   uint32_t area{ 0 };         /* current area of the mapping */
 
-  uint32_t upper_bound{ UINT32_MAX };           /* upper bound */
-  uint32_t best_cost{ UINT32_MAX };             /* tracks the cost of the best solution */
-  kitty::partial_truth_table best_solution;     /* tracks the best solution: set of columns */
-  uint32_t current_cost{ 0 };                   /* tracks the current cost */
-  kitty::partial_truth_table current_solution;  /* tracks the current solution */
-  kitty::partial_truth_table current_coverage;  /* tracks the current solution node coverage */
+  time_point time_begin;      /* tracks time */
 
-  covering_matrix_t cov;      /* covering matrix */
-  covering_matrix_t cov_t;    /* covering matrix transposed */
-  std::vector<uint32_t> map_refs;
-  
+  uint32_t upper_bound{ UINT32_MAX };             /* upper bound */
+  uint32_t best_cost{ UINT32_MAX };               /* tracks the cost of the best solution */
+  kitty::partial_truth_table best_solution;       /* tracks the best solution: set of rows */
+  uint32_t current_cost{ 0 };                     /* tracks the current cost */
+  kitty::partial_truth_table current_solution;    /* tracks the current solution */
+  kitty::partial_truth_table current_coverage;    /* tracks the current solution node coverage */
+  kitty::partial_truth_table current_constraints; /* tracks the current solution node coverage */
+
+  covering_matrix_t cov;            /* covering matrix */
+  covering_matrix_t cov_t;          /* covering matrix transposed */
+  covering_matrix_t constraints;    /* constrain matrix */
+
   network_cuts_t cuts;
 };
 
 }; /* namespace detail */
-
 
 template<class Ntk, bool StoreFunction = false, typename CutData = cut_enumeration_mf_cut>
 void binate_covering( Ntk& ntk, binate_covering_params const& ps = {}, binate_covering_stats* pst = nullptr )
