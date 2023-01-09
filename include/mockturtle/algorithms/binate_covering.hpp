@@ -167,6 +167,8 @@ private:
     current_constraints = kitty::partial_truth_table( num_rows );
     best_solution = kitty::partial_truth_table( num_rows );
 
+    constraint_number.reserve( num_rows );
+
     /* allocate cache */
     cache_coverage = covering_matrix_t( num_rows / 2 );
     cache_constraints = covering_matrix_t( num_rows / 2 );
@@ -195,6 +197,8 @@ private:
     /* add cuts */
     ntk.foreach_gate( [&]( auto const& n ) {
       uint32_t index = ntk.node_to_index( n );
+
+      uint32_t added_cuts = 0;
       for ( cut_t const* cut : cuts.cuts( index ) )
       {
         /* exclude trivial cut */
@@ -202,7 +206,9 @@ private:
           continue;
 
         add_cut( n, *cut, pcol++ );
+        ++added_cuts;
       }
+      constraint_number.push_back( added_cuts );
     } );
 
     /* add constraints */
@@ -215,6 +221,8 @@ private:
     // if ( ps.debug )
     // {
     //   print_cov();
+    //   std::cout << "\n";
+    //   print_constraints();
     // }
   }
 
@@ -272,14 +280,14 @@ private:
     }
 
     /* get current step choices */
-    int cut_size = cuts.cuts( row_index + offset ).size() - 1;
+    int cut_size = constraint_number[row_index];
 
     /* find row to cover */
     while ( !constraints_has_bit( row_index ) )
     {
       --row_index;
       col_index -= cut_size;
-      cut_size = cuts.cuts( row_index + offset ).size() - 1;
+      cut_size = constraint_number[row_index];
     }
 
     /* lower bound + restore MIS coverage */
@@ -292,7 +300,8 @@ private:
     solution_flip_bit( row_index );
 
     /* select a column and recur */
-    for ( int i = col_index; i > col_index - cut_size; --i )
+    // for ( int i = col_index; i > col_index - cut_size; --i )
+    for ( int i = col_index - cut_size + 1; i < col_index + 1; ++i )
     {
       // if ( column_is_dominated( i ) )
       //   continue;
@@ -594,6 +603,16 @@ private:
     } );
   }
 
+  void print_constraints()
+  {
+    for( uint32_t i = 0; i < num_columns; ++i )
+    {
+      std::cout << fmt::format( "c{}\t : ", i );
+      kitty::print_binary( constraints[i] );
+      std::cout << "\n";
+    }
+  }
+
 private:
   inline void cov_table_add_bit( uint32_t r, uint32_t c ) { cov[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void cov_trans_table_add_bit( uint32_t r, uint32_t c ) { cov_trans[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
@@ -632,10 +651,12 @@ private:
   kitty::partial_truth_table current_constraints; /* tracks the current solution node coverage */
   kitty::partial_truth_table mis_coverage;        /* tracks the coverage during MIS computation */
 
+  std::vector<uint32_t> constraint_number;      /* stores the number of constraints per row */
+
   covering_matrix_t cov;            /* covering matrix */
   covering_matrix_t cov_trans;      /* covering matrix transposed */
   covering_matrix_t constraints;    /* constrain matrix */
-  
+
   covering_matrix_t cache_coverage;     /* cache to store temporary coverage */
   covering_matrix_t cache_constraints;  /* cache to store temporary constraints to satisfy */
   covering_matrix_t cache_mis;          /* cache to store temporary MIS coverage */
