@@ -144,15 +144,15 @@ private:
     offset = ntk.size() - ntk.num_gates();
 
     /* allocate matrix */
-    // cov = covering_matrix_t( num_rows );
+    cov = covering_matrix_t( num_rows );
     cov_trans = covering_matrix_t( num_columns );
     constraints = covering_matrix_t( num_columns );
 
     /* allocate columns */
-    // for ( uint32_t i = 0; i < num_rows; ++i )
-    // {
-    //   cov[i] = kitty::partial_truth_table( num_columns );
-    // }
+    for ( uint32_t i = 0; i < num_rows; ++i )
+    {
+      cov[i] = kitty::partial_truth_table( num_columns );
+    }
 
     /* allocate columns */
     for ( uint32_t i = 0; i < num_columns; ++i )
@@ -168,13 +168,18 @@ private:
     best_solution = kitty::partial_truth_table( num_rows );
 
     /* allocate cache */
-    cache_coverage = covering_matrix_t( num_rows );
-    cache_constraints = covering_matrix_t( num_rows );
+    cache_coverage = covering_matrix_t( num_rows / 2 );
+    cache_constraints = covering_matrix_t( num_rows / 2 );
+    cache_mis = covering_matrix_t( num_rows / 2 );
+
+    /* allocate MIS */
+    mis_coverage = kitty::partial_truth_table( num_columns );
 
     for ( uint32_t i = 0; i < num_rows / 2; ++i )
     {
       cache_coverage[i] = kitty::partial_truth_table( num_rows );
       cache_constraints[i] = kitty::partial_truth_table( num_rows );
+      cache_mis[i] = kitty::partial_truth_table( num_columns );
     }
 
     /* get initial bounds */
@@ -215,6 +220,12 @@ private:
 
   void solve()
   {
+    if ( ps.verbose )
+    {
+      std::cout << fmt::format( "MIS: {}\n", maximum_indipendent_set( num_rows - 1 ) );
+      mis_coverage = cache_mis[0];
+    }
+
     bool res = solve_rec( num_rows - 1, num_columns - 1, 0 );
 
     if ( ps.verbose )
@@ -230,30 +241,6 @@ private:
       std::cout << "\n";
     }
   }
-
-  // void solve_iteratively()
-  // {
-  //   bool solved = false;
-  //   bool timeout = false;
-
-  //   while( !( timeout || solved ) )
-  //   {
-
-  //   }
-
-  //   if ( ps.verbose )
-  //   {
-  //     if ( res )
-  //       std::cout << fmt::format( "Best optimal solution with cost {}\n", best_cost );
-  //     else
-  //       std::cout << fmt::format( "Best sub-optimal solution with cost {}\n", best_cost );
-  //   }
-  //   if ( ps.debug )
-  //   {
-  //     kitty::print_binary( best_solution );
-  //     std::cout << "\n";
-  //   }
-  // }
  
 #pragma region Solver
   bool solve_rec( uint32_t row_index, int col_index, int cache_index )
@@ -266,9 +253,23 @@ private:
       return is_not_timeout();
     }
 
-    /* bound branching */
+    /* upper bound */
     if ( current_cost >= best_cost - 1 )
       return is_not_timeout();
+
+    /* save current solution; TODO: find alternative for efficiency */
+    if ( cache_coverage.size() <= cache_index )
+    {
+      cache_coverage.emplace_back( current_coverage );
+      cache_constraints.emplace_back( current_constraints );
+      cache_mis.emplace_back( mis_coverage );
+    }
+    else
+    {
+      cache_coverage[cache_index] = current_coverage;
+      cache_constraints[cache_index] = current_constraints;
+      cache_mis[cache_index] = mis_coverage;
+    }
 
     /* get current step choices */
     int cut_size = cuts.cuts( row_index + offset ).size() - 1;
@@ -280,18 +281,12 @@ private:
       col_index -= cut_size;
       cut_size = cuts.cuts( row_index + offset ).size() - 1;
     }
-  
-    /* save current solution; TODO: find alternative for efficiency */
-    if ( cache_coverage.size() <= cache_index )
-    {
-      cache_coverage.emplace_back( current_coverage );
-      cache_constraints.emplace_back( current_constraints );
-    }
-    else
-    {
-      cache_coverage[cache_index] = current_coverage;
-      cache_constraints[cache_index] = current_constraints;
-    }
+
+    /* lower bound + restore MIS coverage */
+    uint32_t lower_bound = maximum_indipendent_set( row_index );
+    mis_coverage = cache_mis[cache_index];
+    if ( current_cost + lower_bound >= best_cost )
+      return is_not_timeout();
 
     /* select current bit in current selection */
     solution_flip_bit( row_index );
@@ -299,9 +294,13 @@ private:
     /* select a column and recur */
     for ( int i = col_index; i > col_index - cut_size; --i )
     {
+      // if ( column_is_dominated( i ) )
+      //   continue;
+
       /* add selection and column to the solution */
       coverage_add_column( i );
       constraints_add_column( i );
+      mis_coverage_add_row( row_index );
 
       /* step evaluation */
       evaluate_step();
@@ -314,6 +313,10 @@ private:
       undo_step();
       current_coverage = cache_coverage[cache_index];
       current_constraints = cache_constraints[cache_index];
+      mis_coverage = cache_mis[cache_index];
+
+      if ( current_cost + lower_bound >= best_cost )
+        break;
     }
 
     /* remove bit from solution */
@@ -321,6 +324,164 @@ private:
 
     return true;
   }
+
+  inline uint32_t maximum_indipendent_set( uint32_t r )
+  {
+    uint32_t count = 0;
+
+    // for ( uint32_t i = 0; i < mis_coverage._bits.size(); ++i )
+    //   mis_coverage._bits[i] = 0;
+
+    /* compute current MIS coverage */
+    // for ( int32_t i = static_cast<int32_t>( num_rows - 1 ); i > r; --i )
+    // {
+    //   if ( solution_has_bit( i ) )
+    //     mis_coverage_add_row( i );
+    // }
+
+    // while( true )
+    // {
+    //   uint32_t best_row = 0;
+    //   uint32_t min_col = num_columns + 1;
+    //   /* find shortest non-intersecting row */
+    //   for ( int32_t i = static_cast<int32_t>( r ); i >= 0; --i )
+    //   {
+    //     if ( !mis_row_is_intersecting( i ) )
+    //     {
+    //       /* TODO: precomputation */
+    //       uint32_t col_count = kitty::count_ones( cov[i] );
+
+    //       if ( col_count < min_col )
+    //       {
+    //         best_row = i;
+    //         min_col = col_count;
+    //       }
+    //     }
+    //   }
+
+    //   if ( min_col == num_columns + 1 )
+    //     break;
+
+    //   mis_coverage_add_row( best_row );
+    //   ++count;
+    // }
+
+    /* find shortest non-intersecting row */
+    for ( int32_t i = static_cast<int32_t>( r ); i >= 0; --i )
+    {
+      if ( !mis_row_is_intersecting( i ) )
+      {
+        mis_coverage_add_row( i );
+        ++count;
+      }
+    }
+
+    return count;
+  }
+
+  // void solve_iteratively()
+  // {
+  //   bool solved = false;
+  //   bool timeout = false;
+  //   uint32_t row_index = num_rows - 1;
+  //   uint32_t col_index = num_columns - 1;
+  //   uint32_t cache_index = 0;
+  //   uint32_t rows_covered = 0;
+
+  //   /* allocate stack */
+  //   std::vector<uint32_t> loop_stack( num_rows, 0 );
+
+  //   while ( !( timeout || solved ) )
+  //   {
+  //     /* add new solution */
+  //     while ( true )
+  //     {
+  //       uint32_t rows_covered = kitty::count_ones( current_coverage );
+  //       if ( rows_covered == num_rows )
+  //       {
+  //         evaluate_solution();
+  //         break;
+  //       }
+
+  //       /* bound branching */
+  //       if ( current_cost >= best_cost - 1 )
+  //         break;
+
+  //       /* get current step choices */
+  //       int cut_size = cuts.cuts( row_index + offset ).size() - 1;
+
+  //       /* find row to cover */
+  //       while ( !constraints_has_bit( row_index ) )
+  //       {
+  //         --row_index;
+  //         col_index -= cut_size;
+  //         cut_size = cuts.cuts( row_index + offset ).size() - 1;
+  //       }
+
+  //       /* save current solution */
+  //       if ( cache_coverage.size() <= cache_index )
+  //       {
+  //         cache_coverage.emplace_back( current_coverage );
+  //         cache_constraints.emplace_back( current_constraints );
+  //       }
+  //       else
+  //       {
+  //         cache_coverage[cache_index] = current_coverage;
+  //         cache_constraints[cache_index] = current_constraints;
+  //       }
+
+  //       /* select current bit in current selection */
+  //       solution_flip_bit( row_index );
+
+  //       /* select a column */
+  //       uint32_t i = col_index - loop_stack[cache_index];
+  //       if ( ++loop_stack[cache_index] == cuts.cuts( row_index + offset ).size() - 1 )
+  //       {
+  //         loop_stack[cache_index] = 0;
+  //       }
+  //       else
+  //       {
+  //         solved = false;
+  //       }
+
+  //       /* add selection and column to the solution */
+  //       coverage_add_column( i );
+  //       constraints_add_column( i );
+
+  //       /* step evaluation */
+  //       evaluate_step();
+
+  //       /* branch */
+  //       row_index -= 1;
+  //       col_index -= cut_size;
+  //       cache_index += 1;
+  //     }
+
+  //     /* backtracking */
+  //     undo_step();
+  //     cache_index -= 1;
+  //     col_index += cuts.cuts( row_index + offset ).size() - 1;
+  //     current_coverage = cache_coverage[cache_index];
+  //     current_constraints = cache_constraints[cache_index];
+
+  //     /* restore solved? */
+  //     if ( cache_index == 0 )
+  //       solved = true;
+  //   }
+
+  //   if ( ps.verbose )
+  //   {
+  //     // if ( res )
+  //     //   std::cout << fmt::format( "Best optimal solution with cost {}\n", best_cost );
+  //     // else
+  //       std::cout << fmt::format( "Best sub-optimal solution with cost {}\n", best_cost );
+  //   }
+  //   if ( ps.debug )
+  //   {
+  //     kitty::print_binary( best_solution );
+  //     std::cout << "\n";
+  //   }
+  // }
 
   inline void evaluate_step()
   {
@@ -374,7 +535,7 @@ private:
     ntk.set_visited( n, ntk.trav_id() );
 
     /* add to volume */
-    // cov_table_add_bit( ntk.node_to_index( n ) - offset, pcol );
+    cov_table_add_bit( ntk.node_to_index( n ) - offset, pcol );
     cov_trans_table_add_bit( pcol, ntk.node_to_index( n ) - offset );
 
     /* recur */
@@ -424,17 +585,17 @@ private:
     } );
   }
 
-  // void print_cov()
-  // {
-  //   ntk.foreach_gate( [&]( auto const& n, uint32_t i ) {
-  //     std::cout << fmt::format( "n{}\t : ", ntk.node_to_index( n ) );
-  //     kitty::print_binary( cov[i] );
-  //     std::cout << "\n";
-  //   } );
-  // }
+  void print_cov()
+  {
+    ntk.foreach_gate( [&]( auto const& n, uint32_t i ) {
+      std::cout << fmt::format( "n{}\t : ", ntk.node_to_index( n ) );
+      kitty::print_binary( cov[i] );
+      std::cout << "\n";
+    } );
+  }
 
 private:
-  // inline void cov_transable_add_bit( uint32_t r, uint32_t c ) { cov[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
+  inline void cov_table_add_bit( uint32_t r, uint32_t c ) { cov[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void cov_trans_table_add_bit( uint32_t r, uint32_t c ) { cov_trans[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void constraints_table_add_bit( uint32_t r, uint32_t c ) { constraints[r]._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
   inline void constraints_add_bit( uint32_t c ) { current_constraints._bits[c >> 6] |= UINT64_C( 1 ) << ( c & 0x3f ); }
@@ -445,6 +606,9 @@ private:
   inline bool best_solution_has_bit( uint32_t c ) { return ( best_solution._bits[c >> 6] & ( UINT64_C( 1 ) << ( c & 0x3f ) ) ) > 0; }
   inline void coverage_add_column( uint32_t r ) { for ( uint32_t j = 0; j < current_coverage._bits.size(); ++j ) { current_coverage._bits[j] |= cov_trans[r]._bits[j]; } }
   inline void constraints_add_column( uint32_t r ) { for ( uint32_t j = 0; j < current_constraints._bits.size(); ++j ) { current_constraints._bits[j] |= constraints[r]._bits[j]; } }
+  inline bool column_is_dominated( uint32_t r ) { for ( uint32_t j = 0; j < current_coverage._bits.size(); ++j ) { if ( ( current_coverage._bits[j] & cov_trans[r]._bits[j] ) != cov_trans[r]._bits[j] ) return false; } return true; }
+  inline bool mis_row_is_intersecting( uint32_t r ) { for ( uint32_t j = 0; j < mis_coverage._bits.size(); ++j ) { if ( ( mis_coverage._bits[j] & cov[r]._bits[j] ) != 0 ) return true; } return false; }
+  inline void mis_coverage_add_row( uint32_t r ) { for ( uint32_t j = 0; j < mis_coverage._bits.size(); ++j ) { mis_coverage._bits[j] |= cov[r]._bits[j]; } }
   inline bool is_not_timeout() { return std::chrono::duration_cast<std::chrono::duration<float>>( clock::now() - time_begin ).count() < ps.timeout; }
 
 private:
@@ -466,13 +630,15 @@ private:
   kitty::partial_truth_table current_solution;    /* tracks the current solution */
   kitty::partial_truth_table current_coverage;    /* tracks the current solution node coverage */
   kitty::partial_truth_table current_constraints; /* tracks the current solution node coverage */
+  kitty::partial_truth_table mis_coverage;        /* tracks the coverage during MIS computation */
 
-  // covering_matrix_t cov;            /* covering matrix */
+  covering_matrix_t cov;            /* covering matrix */
   covering_matrix_t cov_trans;      /* covering matrix transposed */
   covering_matrix_t constraints;    /* constrain matrix */
   
   covering_matrix_t cache_coverage;     /* cache to store temporary coverage */
   covering_matrix_t cache_constraints;  /* cache to store temporary constraints to satisfy */
+  covering_matrix_t cache_mis;          /* cache to store temporary MIS coverage */
 
   network_cuts_t cuts;
 };
