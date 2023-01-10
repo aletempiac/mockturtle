@@ -128,6 +128,9 @@ public:
     /* add cuts to the covering matrix */
     populate();
 
+    /* reduce the covering matrix */
+    reduce();
+
     /* solve the binate covering problem */
     solve();
 
@@ -218,12 +221,20 @@ private:
         constraints_add_bit( ntk.node_to_index( ntk.get_node( f ) ) - offset );
     } );
 
-    // if ( ps.debug )
-    // {
-    //   print_cov();
-    //   std::cout << "\n";
-    //   print_constraints();
-    // }
+    if ( ps.debug )
+    {
+      print_cov();
+      std::cout << "\n";
+      print_constraints();
+    }
+  }
+
+  void reduce()
+  {
+    /* remove dominated columns */
+    reduce_columns();
+
+    /* remove dominated rows */
   }
 
   void solve()
@@ -515,7 +526,36 @@ private:
       std::cout << fmt::format( "New solution with cost {}\n", best_cost );
     }
   }
-#pragma endregion;
+#pragma endregion
+
+#pragma region Reduce
+  void reduce_columns()
+  {
+    for ( auto i = 0; i < num_columns; ++i )
+    {
+      for ( auto j = i + 1; j < num_columns; ++j )
+      {
+        /* check if then column is dominated */
+        bool is_dominated = true;
+        for ( uint32_t k = 0; k < cov_trans[i]._bits.size(); ++k )
+        {
+          if ( ( cov_trans[i]._bits[k] & cov_trans[j]._bits[k] ) != cov_trans[i]._bits[k] )
+          {
+            is_dominated = false;
+            break;
+          }
+        }
+
+        if ( is_dominated )
+        {
+          /* TODO: remove the column */
+          std::cout << fmt::format( "Remove column {}\n", i );
+          break;
+        }
+      }
+    }
+  }
+#pragma endregion
 
 #pragma region Initialization routines
   void add_cut( node<Ntk> const& n, cut_t const& cut, uint32_t pcol )

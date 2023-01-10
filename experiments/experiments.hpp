@@ -509,6 +509,15 @@ std::string benchmark_path( std::string const& benchmark_name )
 #endif
 }
 
+std::string benchmark_path_verilog( std::string const& benchmark_name )
+{
+#ifndef EXPERIMENTS_PATH
+  return fmt::format( "{}.v", benchmark_name );
+#else
+  return fmt::format( "{}benchmarks/{}.v", EXPERIMENTS_PATH, benchmark_name );
+#endif
+}
+
 template<class Ntk>
 inline bool abc_cec_impl( Ntk const& ntk, std::string const& benchmark_fullpath )
 {
@@ -545,6 +554,12 @@ template<class Ntk>
 inline bool abc_cec( Ntk const& ntk, std::string const& benchmark )
 {
   return abc_cec_impl( ntk, benchmark_path( benchmark ) );
+}
+
+template<class Ntk>
+inline bool abc_cec_verilog( Ntk const& ntk, std::string const& benchmark )
+{
+  return abc_cec_impl( ntk, benchmark_path_verilog( benchmark ) );
 }
 
 } // namespace experiments
