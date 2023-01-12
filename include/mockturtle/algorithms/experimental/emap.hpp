@@ -105,6 +105,9 @@ struct emap_params
   /*! \brief Number of patterns for switching activity computation. */
   uint32_t switching_activity_patterns{ 2048u };
 
+  /*! \brief Fast area recovery */
+  bool use_fast_area_recovery{ true };
+
   /*! \brief Maps multi-output gates */
   bool map_multioutput{ false };
 
@@ -730,22 +733,45 @@ public:
     }
 
     /* compute mapping using exact area */
-    while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
+    if ( ps.use_fast_area_recovery )
     {
-      compute_required_time();
-      if ( !compute_mapping_exact<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
+      compute_required_time( true );
+      while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
       {
-        return res;
+        if ( !compute_mapping_exact_reversed<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
+        {
+          return res;
+        }
+      }
+
+      /* compute mapping using exact switching activity estimation */
+      while ( iteration < ps.eswp_rounds + ps.ela_rounds + ps.area_flow_rounds + 1 )
+      {
+        if ( !compute_mapping_exact_reversed<true>( true ) )
+        {
+          return res;
+        }
       }
     }
-
-    /* compute mapping using exact switching activity estimation */
-    while ( iteration < ps.eswp_rounds + ps.ela_rounds + ps.area_flow_rounds + 1 )
+    else
     {
-      compute_required_time();
-      if ( !compute_mapping_exact<true>( true ) )
+      while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
       {
-        return res;
+        compute_required_time();
+        if ( !compute_mapping_exact<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
+        {
+          return res;
+        }
+      }
+
+      /* compute mapping using exact switching activity estimation */
+      while ( iteration < ps.eswp_rounds + ps.ela_rounds + ps.area_flow_rounds + 1 )
+      {
+        compute_required_time();
+        if ( !compute_mapping_exact<true>( true ) )
+        {
+          return res;
+        }
       }
     }
 
@@ -1165,6 +1191,123 @@ private:
     return success;
   }
 
+  template<bool SwitchActivity>
+  bool compute_mapping_exact_reversed( bool last_round )
+  {
+    uint32_t i = 0;
+    /* this method works in reverse topological order: less nodes to update (faster, less quality) */
+    /* instead of propagating arrival times forward, it propagates required times backwards */
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
+    {
+      if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
+      {
+        ++i;
+        continue;
+      }
+
+      const auto index = ntk.node_to_index( *it );
+      auto& node_data = node_match[index];
+
+      /* skip not mapped nodes */
+      if ( node_match[index].map_refs[2] == 0 )
+      {
+        continue;
+      }
+
+      /* recursively deselect the best cut shared between
+       * the two phases if in use in the cover */
+      if ( node_data.same_match )
+      {
+        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
+        cut_deref<SwitchActivity>( best_cut, *it, use_phase );
+
+        /* propagate required time over the output inverter if present */
+        if ( node_data.map_refs[use_phase ^ 1] > 0 )
+        {
+          node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[use_phase ^ 1] - lib_inv_delay );
+        }
+      }
+
+      /* match positive phase */
+      match_phase_exact<SwitchActivity>( *it, 0u );
+
+      /* match negative phase */
+      match_phase_exact<SwitchActivity>( *it, 1u );
+
+      /* try to drop one phase */
+      match_drop_phase<true, true>( *it, 0 );
+
+      /* TODO: propagate required time through the leaves */
+      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
+      unsigned other_phase = use_phase ^ 1;
+
+      if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
+      {
+        node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[other_phase] - lib_inv_delay );
+      }
+
+      if ( node_data.map_refs[0] )
+        assert( node_data.arrival[0] < node_data.required[0] + epsilon );
+      if ( node_data.map_refs[1] )
+      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
+
+      if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
+      {
+        auto ctr = 0u;
+        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
+        auto const& supergate = node_data.best_supergate[use_phase];
+        for ( auto leaf : best_cut )
+        {
+          auto phase = ( node_data.phase[use_phase] >> ctr ) & 1;
+          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[ctr] );
+          ++ctr;
+        }
+      }
+
+      if ( !node_data.same_match && node_data.map_refs[other_phase] > 0 )
+      {
+        auto ctr = 0u;
+        auto const& best_cut = cuts[index][node_data.best_cut[other_phase]];
+        auto const& supergate = node_data.best_supergate[other_phase];
+        for ( auto leaf : best_cut )
+        {
+          auto phase = ( node_data.phase[other_phase] >> ctr ) & 1;
+          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[ctr] );
+          ++ctr;
+        }
+      }
+
+      // /* try a multi-output match */
+      // if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
+      // {
+      //   bool multi_success = match_multioutput_exact<SwitchActivity>( n, last_round );
+      //   if ( multi_success )
+      //       multi_node_update_exact<SwitchActivity>( n, i );
+      // }
+
+      ++i;
+    }
+
+    double area_old = area;
+
+    propagate_arrival_times();
+
+    /* round stats */
+    if ( ps.verbose )
+    {
+      float area_gain = float( ( area_old - area ) / area_old * 100 );
+      std::stringstream stats{};
+      if constexpr ( SwitchActivity )
+        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+      else
+        stats << fmt::format( "[i] Area Rev : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+      st.round_stats.push_back( stats.str() );
+    }
+
+    return true;
+  }
+
   template<bool ELA>
   bool set_mapping_refs()
   {
@@ -1281,6 +1424,13 @@ private:
       }
     }
 
+    ++iteration;
+
+    if constexpr ( ELA )
+    {
+      return true;
+    }
+
     /* blend estimated references */
     for ( auto i = 0u; i < ntk.size(); ++i )
     {
@@ -1289,11 +1439,10 @@ private:
       node_match[i].est_refs[0] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[0] + 2.0f * node_match[i].map_refs[0] ) / 3.0 );
     }
 
-    ++iteration;
     return true;
   }
 
-  void compute_required_time()
+  void compute_required_time( bool exit_early = false )
   {
     for ( auto i = 0u; i < node_match.size(); ++i )
     {
@@ -1334,6 +1483,9 @@ private:
       else
         node_match[index].required[0] = required;
     } );
+
+    if ( exit_early )
+      return;
 
     /* propagate required time to the PIs */
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
@@ -1389,6 +1541,111 @@ private:
         }
       }
     }
+  }
+
+  void propagate_arrival_times()
+  {
+    area = 0.0f;
+    for ( auto const& n : topo_order )
+    {
+      auto index = ntk.node_to_index( n );
+      auto& node_data = node_match[index];
+
+      /* measure area */
+      if ( ntk.is_constant( n ) )
+      {
+        continue;
+      }
+      else if ( ntk.is_pi( n ) )
+      {
+        if ( node_data.map_refs[1] > 0u )
+        {
+          /* Add inverter area over the negated fanins */
+          area += lib_inv_area;
+        }
+        continue;
+      }
+
+      /* reset required time */
+      node_data.required[0] = std::numeric_limits<double>::max();
+      node_data.required[1] = std::numeric_limits<double>::max();
+
+      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+      
+      /* compute arrival of use_phase */
+      supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
+      double worst_arrival = 0;
+      uint8_t best_phase = node_data.phase[use_phase];
+      auto ctr = 0u;
+      for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
+      {
+        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
+        worst_arrival = std::max( worst_arrival, arrival_pin );
+        ++ctr;
+      }
+
+      node_data.arrival[use_phase] = worst_arrival;
+
+      /* compute area */
+      if ( ( node_data.map_refs[2] && node_data.same_match ) || node_data.map_refs[use_phase] > 0 )
+      {
+        area += node_data.area[use_phase];
+        if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
+        {
+          area += lib_inv_area;
+        }
+      }
+
+      /* compute arrival of the other phase */
+      use_phase ^= 1;
+      if ( node_data.same_match )
+      {
+        node_data.arrival[use_phase] = worst_arrival + lib_inv_delay;
+        continue;
+      }
+
+      assert( node_data.best_supergate[0] != nullptr );
+
+      best_supergate = node_data.best_supergate[use_phase];
+      worst_arrival = 0;
+      best_phase = node_data.phase[use_phase];
+      ctr = 0u;
+      for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
+      {
+        double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
+        worst_arrival = std::max( worst_arrival, arrival_pin );
+        ++ctr;
+      }
+
+      node_data.arrival[use_phase] = worst_arrival;
+
+      if ( node_data.map_refs[use_phase] > 0 )
+      {
+        area += node_data.area[use_phase];
+      }
+    }
+
+    /* compute the current worst delay */
+    delay = 0.0f;
+    ntk.foreach_po( [this]( auto s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+
+      if ( ntk.is_complemented( s ) )
+        delay = std::max( delay, node_match[index].arrival[1] );
+      else
+        delay = std::max( delay, node_match[index].arrival[0] );
+    } );
+
+    /* set the required time at POs */
+    ntk.foreach_po( [&]( auto const& s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+      if ( ntk.is_complemented( s ) )
+        node_match[index].required[1] = delay;
+      else
+        node_match[index].required[0] = delay;
+    } );
+
+    ++iteration;
   }
 
   template<bool DO_AREA>
