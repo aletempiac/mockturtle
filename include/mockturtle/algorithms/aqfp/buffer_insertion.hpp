@@ -51,6 +51,8 @@
 namespace mockturtle
 {
 
+bool is_ALAP = true;
+
 /*! \brief Parameters for (AQFP) buffer insertion.
  */
 struct buffer_insertion_params
@@ -224,6 +226,7 @@ public:
   template<class BufNtk>
   uint32_t run( BufNtk& bufntk, node_map<uint32_t, Ntk>* pLevels = nullptr )
   {
+    stopwatch t( time_total );
     dry_run( pLevels );
     dump_buffered_network( bufntk );
     return num_buffers();
@@ -249,7 +252,6 @@ public:
    */
   uint32_t dry_run( node_map<uint32_t, Ntk>* pLevels = nullptr )
   {
-    stopwatch t( time_total );
     schedule();
     optimize();
     count_buffers();
@@ -782,6 +784,11 @@ public:
       //   _levels[n] = levels_ALAP[n];
       // } );
       ALAP2( f_ntk );
+      is_ALAP = true;
+    }
+    else
+    {
+      is_ALAP = false;
     }
     // if ( num_buf_ASAP2_balanced < num_buf_ASAP2 && num_buf_ASAP2_balanced < num_buf_ALAP2 )
     // {
@@ -893,7 +900,7 @@ private:
       {
         /* update splitters */
         for ( auto i = 0; ( i < last_level - l ) && ( nodes_in_level != 1 ); ++i )
-          nodes_in_level = std::ceil( float( nodes_in_level ) / float(  _ps.assume.splitter_capacity ) );
+            nodes_in_level = std::ceil( float( nodes_in_level ) / float(  _ps.assume.splitter_capacity ) );
 
         ++nodes_in_level;
         last_level = l;

@@ -2339,6 +2339,13 @@ Ntk aqfp_optimize_depth( Ntk const& ntk, aqfp_optimize_depth_params const& ps = 
   return res;
 }
 
+struct aqfp_reconstruct_splitter_trees_params
+{
+  buffer_insertion_params buffer_insertion_ps{};
+  bool det_randomization{false};
+  std::default_random_engine::result_type seed{1};
+};
+
 namespace detail
 {
 
@@ -2349,7 +2356,7 @@ public:
   using signal = typename aqfp_network::signal;
 
 public:
-  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps, uint32_t& num_buffers, double& runtime )
+  explicit aqfp_reconstruct_splitter_trees_impl( buffered_aqfp_network const& ntk, aqfp_reconstruct_splitter_trees_params const& ps, uint32_t& num_buffers, double& runtime )
       : _ntk( ntk ), _ps( ps ), _num_buffers( num_buffers ), _runtime( runtime )
   {
   }
@@ -2367,7 +2374,7 @@ public:
     /* compute the node level on the new network */
     node_map<uint32_t, aqfp_network> levels( clean_ntk );
 
-    if ( _ps.assume.branch_pis )
+    if ( _ps.buffer_insertion_ps.assume.branch_pis )
     {
       /* gates are in a fixed position */
       _ntk.foreach_gate( [&]( auto const& n ) {
@@ -2380,7 +2387,7 @@ public:
       /* gates are scheduled ALAP */
 
       /* if not balance POs, POs are scheduled ASAP */
-      auto const levels_guess = schedule_buffered_network( _ntk, _ps.assume );
+      auto const levels_guess = schedule_buffered_network( _ntk, _ps.buffer_insertion_ps.assume );
       _ntk.foreach_gate( [&]( auto const& n ) {
         levels[old2new[n]] = levels_guess[n];
       } );
@@ -2388,7 +2395,7 @@ public:
 
     /* recompute splitter trees and return the new buffered network */
     buffered_aqfp_network res;
-    buffer_insertion buf_inst( clean_ntk, levels, _ps );
+    buffer_insertion buf_inst( clean_ntk, levels, _ps.buffer_insertion_ps );
     _num_buffers = buf_inst.run( res );
     _runtime = buf_inst.get_runtime();
     return res;
@@ -2397,7 +2404,10 @@ public:
 private:
   void remove_splitter_trees( aqfp_network& res, node_map<signal, buffered_aqfp_network>& old2new )
   {
-    topo_view topo{ _ntk };
+    topo_view_params tps;
+    tps.deterministic_randomization = _ps.det_randomization;
+    tps.seed = _ps.seed;
+    topo_view topo{ _ntk, tps };
 
     old2new[_ntk.get_constant( false )] = res.get_constant( false );
  
@@ -2435,7 +2445,7 @@ private:
 
 private:
   buffered_aqfp_network const& _ntk;
-  buffer_insertion_params const& _ps;
+  aqfp_reconstruct_splitter_trees_params const& _ps;
   uint32_t& _num_buffers;
   double& _runtime;
 };
@@ -2448,7 +2458,7 @@ private:
  *
  * \param ntk Buffered AQFP network
  */
-buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, buffer_insertion_params const& ps = {}, uint32_t* pnum_buffers = nullptr, double* pruntime = nullptr )
+buffered_aqfp_network aqfp_reconstruct_splitter_trees( buffered_aqfp_network const& ntk, aqfp_reconstruct_splitter_trees_params const& ps = {}, uint32_t* pnum_buffers = nullptr, double* pruntime = nullptr )
 {
   uint32_t num_buffers;
   double runtime;

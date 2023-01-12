@@ -99,6 +99,7 @@ class retime_impl
 public:
   using node = typename Ntk::node;
   using signal = typename Ntk::signal;
+  static constexpr uint32_t sink_node = UINT32_MAX;
 
 public:
   explicit retime_impl( Ntk& ntk, retime_params const& ps, retime_stats& st )
@@ -1073,7 +1074,6 @@ private:
   retime_stats& _st;
 
   node_map<uint32_t, Ntk> _flow_path;
-  uint32_t const sink_node{UINT32_MAX};
 };
 
 } /* namespace detail */

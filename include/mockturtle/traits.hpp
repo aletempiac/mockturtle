@@ -31,6 +31,7 @@
   \author Mathias Soeken
   \author Max Austin
   \author Siang-Yun (Sonia) Lee
+  \author Alessandro Tempia Calvino
 */
 
 #pragma once
@@ -843,6 +844,21 @@ struct has_incr_fanout_size<Ntk, std::void_t<decltype( std::declval<Ntk>().incr_
 
 template<class Ntk>
 inline constexpr bool has_incr_fanout_size_v = has_incr_fanout_size<Ntk>::value;
+#pragma endregion
+
+#pragma region has_slack
+template<class Ntk, class = void>
+struct has_slack : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_slack<Ntk, std::void_t<decltype( std::declval<Ntk>().required( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_slack_v = has_slack<Ntk>::value;
 #pragma endregion
 
 #pragma region has_decr_fanout_size

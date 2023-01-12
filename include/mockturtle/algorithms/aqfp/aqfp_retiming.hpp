@@ -79,6 +79,9 @@ struct aqfp_retiming_params
   /*! \brief Random seed. */
   std::default_random_engine::result_type seed{ 1 };
 
+  /*! \brief Randomize the network. */
+  bool det_randomization{ false };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -119,7 +122,7 @@ public:
 
 public:
   explicit aqfp_retiming_impl( Ntk& ntk, aqfp_retiming_params const& ps, aqfp_retiming_stats& st )
-      : _ntk( ntk ) , _ps( ps ), _st( st )
+      : _ntk( ntk ), _ps( ps ), _st( st )
   {
   }
 
@@ -143,6 +146,9 @@ public:
     buf_ps.assume = _ps.aqfp_assumptions_ps;
     buf_ps.scheduling = buffer_insertion_params::provided;
     buf_ps.optimization_effort = buffer_insertion_params::none;
+    aqfp_reconstruct_splitter_trees_params reconstruct_ps;
+    reconstruct_ps.buffer_insertion_ps = buf_ps;
+    reconstruct_ps.det_randomization = _ps.det_randomization;
 
     /* retiming first direction pass */
     rps.forward_only = !_ps.backwards_first;
@@ -204,7 +210,7 @@ public:
       }
     }
 
-    return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
+    return aqfp_reconstruct_splitter_trees( ntk, reconstruct_ps, &_st.buffers_post );
   }
 
 private:
@@ -371,7 +377,7 @@ private:
           int free_spots;
           if ( ntk.value( n ) > 0 )
           {
-            free_spots = rec_fetch_root( ntk, n );
+            free_spots = rec_fetch_root( ntk, n ); /* aparently useless */
             if ( free_spots == 0 )
               return true;
           }
