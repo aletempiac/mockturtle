@@ -138,8 +138,8 @@ struct emap_stats
   /*! \brief Power result. */
   double power{ 0 };
 
-  /*! \brief Mapped adders. */
-  double adders{ 0 };
+  /*! \brief Mapped multi-output gates. */
+  uint32_t multioutput_gates{ 0 };
 
   /*! \brief Runtime for multi-output matching. */
   stopwatch<>::duration time_multioutput{ 0 };
@@ -166,7 +166,11 @@ struct emap_stats
       std::cout << fmt::format( " Power = {:>5.2f};\n", power );
     else
       std::cout << "\n";
-    std::cout << fmt::format( "[i] Multi-output runtime = {:>5.2f} secs\n", to_seconds( time_multioutput ) );
+    if ( multioutput_gates )
+    {
+      std::cout << fmt::format( "[i] Multi-output gates   = {:>5}\n", multioutput_gates );
+      std::cout << fmt::format( "[i] Multi-output runtime = {:>5.2f} secs\n", to_seconds( time_multioutput ) );
+    }
     std::cout << fmt::format( "[i] Total runtime        = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
 };
@@ -3184,6 +3188,8 @@ private:
 
   void finalize_cover( binding_view<klut_network>& res, klut_map& old2new )
   {
+    uint32_t multioutput_count = 0;
+
     for ( auto const& n : topo_order )
     {
       auto index = ntk.node_to_index( n );
@@ -3222,6 +3228,12 @@ private:
           old2new[index][phase ^ 1] = res.create_not( old2new[index][phase] );
           res.add_binding( res.get_node( old2new[index][phase ^ 1] ), lib_inv_id );
         }
+
+        /* count multioutput gates */
+        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX && node_data.multioutput_match[phase] )
+        {
+          ++multioutput_count;
+        }
       }
 
       phase = phase ^ 1;
@@ -3229,7 +3241,15 @@ private:
       if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
       {
         create_lut_for_gate( res, old2new, index, phase );
+
+        /* count multioutput gates */
+        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX && node_data.multioutput_match[phase] )
+        {
+          ++multioutput_count;
+        }
       }
+      
+      st.multioutput_gates = multioutput_count;
     }
 
     /* create POs */
@@ -3842,8 +3862,6 @@ private:
         }
       }
     }
-
-    st.adders = multi_node_match.size();
   }
 
   /* Experimental code */
@@ -3898,7 +3916,6 @@ private:
     }
 
     multi_node_match = multi_node_match_tmp;
-    st.adders = multi_node_match.size();
   }
 
   bool multi_compute_cut_data( std::array<cut_t, max_multioutput_output_size>& cut_tuple )
