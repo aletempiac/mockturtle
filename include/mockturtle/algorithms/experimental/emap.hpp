@@ -1174,6 +1174,8 @@ private:
             multi_node_update_exact<SwitchActivity>( n, i );
       }
 
+      // assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
+      // assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
       ++i;
     }
 
@@ -2118,6 +2120,10 @@ private:
         supergate<NInputs> const& gate = ( *( cut->supergates[phase_inverted] ) )[i];
         use_same_phase[j] = false;
 
+        /* TODO: protection on complicated duplicated nodes to remap to multioutput */
+        if ( !node_data.same_match )
+          return false;
+
         /* get the output phase */
         pin_phase[j] = gate.polarity;
         phase[j] = ( gate.polarity >> NInputs ) ^ phase_inverted;
@@ -2310,6 +2316,13 @@ private:
 
     /* local values storage */
     std::array<float, max_multioutput_output_size> best_exact_area;
+
+    for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
+    {
+     /* TODO: protection on complicated duplicated nodes to remap to multioutput */
+      if ( !node_match[tuple_data[j].node_index].same_match )
+        return false;
+    }
 
     /* if "same match" and used in the cover dereference the leaves (reverse topo order) */
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
