@@ -558,18 +558,18 @@ public:
   }
 
   /*! \brief Returns if the cut set contains already `cut`. */
-  bool is_unique( CutType const& cut )
+  bool is_contained( CutType const& cut )
   {
     typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
 
     while ( ipos != _pend )
     {
       if ( ( *ipos )->signature() == cut.signature() )
-        return false;
+        return true;
       ++ipos;
     }
 
-    return true;
+    return false;
   }
 
 private:
@@ -810,7 +810,7 @@ private:
 
       node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
       node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
-      node_data.required[0] = node_data.required[1] = std::numeric_limits<double>::max();
+      node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
 
       if ( ntk.is_constant( n ) )
       {
@@ -1172,10 +1172,17 @@ private:
         bool multi_success = match_multioutput_exact<SwitchActivity>( n, last_round );
         if ( multi_success )
             multi_node_update_exact<SwitchActivity>( n, i );
+
+        if ( node_match[index].map_refs[0] )        
+          assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
+        
+        if ( node_match[index].map_refs[1] )  
+          assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
       }
 
-      // assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
-      // assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
+      assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
+      assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
+
       ++i;
     }
 
@@ -1452,7 +1459,7 @@ private:
   {
     for ( auto i = 0u; i < node_match.size(); ++i )
     {
-      node_match[i].required[0] = node_match[i].required[1] = std::numeric_limits<double>::max();
+      node_match[i].required[0] = node_match[i].required[1] = std::numeric_limits<float>::max();
     }
 
     /* return if mapping is area oriented */
@@ -1573,8 +1580,8 @@ private:
       }
 
       /* reset required time */
-      node_data.required[0] = std::numeric_limits<double>::max();
-      node_data.required[1] = std::numeric_limits<double>::max();
+      node_data.required[0] = std::numeric_limits<float>::max();
+      node_data.required[1] = std::numeric_limits<float>::max();
 
       uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
       
@@ -1657,8 +1664,8 @@ private:
   template<bool DO_AREA>
   void match_phase( node<Ntk> const& n, uint8_t phase )
   {
-    double best_arrival = std::numeric_limits<double>::max();
-    double best_area_flow = std::numeric_limits<double>::max();
+    double best_arrival = std::numeric_limits<float>::max();
+    double best_area_flow = std::numeric_limits<float>::max();
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
@@ -1711,7 +1718,7 @@ private:
 
         if constexpr ( DO_AREA )
         {
-          if ( worst_arrival > node_data.required[phase] + epsilon )
+          if ( worst_arrival > node_data.required[phase] + epsilon || worst_arrival >= std::numeric_limits<float>::max() )
             continue;
         }
 
@@ -1744,7 +1751,7 @@ private:
   template<bool SwitchActivity>
   void match_phase_exact( node<Ntk> const& n, uint8_t phase )
   {
-    double best_arrival = std::numeric_limits<double>::max();
+    double best_arrival = std::numeric_limits<float>::max();
     float best_exact_area = std::numeric_limits<float>::max();
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
@@ -1813,7 +1820,7 @@ private:
           ++ctr;
         }
 
-        if ( worst_arrival > node_data.required[phase] + epsilon )
+        if ( worst_arrival > node_data.required[phase] + epsilon || worst_arrival >= std::numeric_limits<float>::max() )
           continue;
         
         node_data.phase[phase] = gate_polarity;
@@ -2255,12 +2262,6 @@ private:
       if ( respects_required && ( flow_sum > old_flow_sum + epsilon ) )
         continue;
 
-      /* evaluate phase substitution */
-      // if ( !have_same_match )
-      // {
-
-      // }
-
       mapped_multioutput = true;
       
       /* commit multi-output gate */
@@ -2408,6 +2409,7 @@ private:
       /* store local validity and comparison info */
       bool valid = true;
       bool is_best = true;
+      bool respects_required = true;
       uint32_t it_counter = 0;
 
       /* iterate for each output of the multi-output gate (reverse topo order) */
@@ -2461,6 +2463,12 @@ private:
           break;
         }
 
+        /* check required time of current solution */
+        if ( node_data.arrival[phase[j]] > node_data.required[phase[j]] )
+          respects_required = false;
+        if ( node_data.same_match && node_data.arrival[phase[j] ^ 1] > node_data.required[phase[j] ^ 1] )
+          respects_required = false;
+
         /* compute exact area for match: needed only for the first node (leaves are shared) */
         if ( it_counter == 1 )
         {
@@ -2511,7 +2519,7 @@ private:
       }
 
       /* not better than individual gates */
-      if ( !valid || area_exact_total > best_exact_area_total - epsilon )
+      if ( !valid || ( area_exact_total > best_exact_area_total - epsilon && respects_required ) )
       {
         /* reference back single gates */
         for ( uint32_t j = max_multioutput_output_size - it_counter; j < max_multioutput_output_size; ++j )
@@ -2704,6 +2712,15 @@ private:
 
       signature |= UINT64_C( 1 ) << ( index & 0x3f );
 
+      /* recursively deselect the best cut shared between
+       * the two phases if in use in the cover */
+      if ( node_data.same_match && node_data.map_refs[2] != 0 )
+      {
+        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
+        cut_deref<SwitchActivity>( best_cut, n, use_phase );
+      }
+
       /* match positive phase */
       match_phase_exact<SwitchActivity>( g, 0u );
 
@@ -2712,6 +2729,9 @@ private:
 
       /* try to drop one phase */
       match_drop_phase<true, true>( g, 0 );
+
+      assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
+      assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
     }
   }
 
@@ -2735,7 +2755,7 @@ private:
       auto& rcuts = cuts[node_index];
 
       /* insert single cut if unique */
-      if ( rcuts.is_unique( single_cut ) )
+      if ( !rcuts.is_contained( single_cut ) )
       {
         compute_cut_data<DO_AREA>( single_cut, ntk.index_to_node( node_index ) );
         rcuts.simple_insert( single_cut );
