@@ -2632,38 +2632,46 @@ private:
     if ( !in_tfi )
       return;
 
-    /* get nodes among the root and TFI */
-    uint32_t topo_left = topo_root - 1;
-    while( topo_order[topo_left] != min_node )
-      --topo_left;
-    
-    /* recompute data for nodes in the middle if current cut uses modified TFI nodes as a leaf */
-    for ( auto i = topo_left + 1; i < topo_root; ++i )
-    {
-      node<Ntk> g = topo_order[i];
-      uint32_t index = ntk.node_to_index( g );
-      auto& node_data = node_match[index];
+    /* recompute data in between: should I mark the leaves? (not necessary under some assumptions) */
+    ntk.incr_trav_id();
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      /* TODO: this recursion works as it is for a maximum multioutput value of 2 */
+      multi_node_update_rec<DO_AREA>( ntk.get_node( f ), min_node + 1, signature );
+    } );
+  }
 
-      /* check cuts based on signature */
-      bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
+  template<bool DO_AREA>
+  void multi_node_update_rec( node<Ntk> const& n, uint32_t min_index, uint64_t& signature )
+  {
+    uint32_t index = ntk.node_to_index( n );
 
-      if ( !node_data.same_match )
-        leaf_used |= multi_node_update_cut_check( index, signature, 1 );
+    if ( index < min_index )
+      return;
 
-      if ( !leaf_used )
-        continue;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      multi_node_update_rec<DO_AREA>( ntk.get_node( f ), min_index, signature );
+    } );
 
-      signature |= UINT64_C( 1 ) << ( index & 0x3f );
+    /* update the node if uses an updated leaf */
+    auto& node_data = node_match[index];
+    bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
 
-      /* match positive phase */
-      match_phase<DO_AREA>( g, 0u );
+    if ( !node_data.same_match )
+      leaf_used |= multi_node_update_cut_check( index, signature, 1 );
 
-      /* match negative phase */
-      match_phase<DO_AREA>( g, 1u );
+    if ( !leaf_used )
+      return;
 
-      /* try to drop one phase */
-      match_drop_phase<DO_AREA, false>( g, 0 );
-    }
+    signature |= UINT64_C( 1 ) << ( index & 0x3f );
+
+    /* match positive phase */
+    match_phase<DO_AREA>( n, 0u );
+
+    /* match negative phase */
+    match_phase<DO_AREA>( n, 1u );
+
+    /* try to drop one phase */
+    match_drop_phase<DO_AREA, false>( n, 0 );
   }
 
   template<bool SwitchActivity>
@@ -2688,51 +2696,57 @@ private:
 
     if ( !in_tfi )
       return;
-
-    /* get nodes among the root and TFI */
-    uint32_t topo_left = topo_root - 1;
-    while( topo_order[topo_left] != min_node )
-      --topo_left;
     
-    /* recompute data for nodes in the middle if current cut uses modified TFI nodes as a leaf */
-    for ( auto i = topo_left + 1; i < topo_root; ++i )
+    /* recompute data in between: should I mark the leaves? (not necessary under some assumptions) */
+    ntk.incr_trav_id();
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      /* TODO: this recursion works as it is for a maximum multioutput value of 2 */
+      multi_node_update_exact_rec<SwitchActivity>( ntk.get_node( f ), min_node + 1, signature );
+    } );
+  }
+
+  template<bool SwitchActivity>
+  void multi_node_update_exact_rec( node<Ntk> const& n, uint32_t min_index, uint64_t& signature )
+  {
+    uint32_t index = ntk.node_to_index( n );
+
+    if ( index < min_index )
+      return;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      multi_node_update_exact_rec<SwitchActivity>( ntk.get_node( f ), min_index, signature );
+    } );
+
+    /* update the node if uses an updated leaf */
+    auto& node_data = node_match[index];
+    bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
+
+    if ( !node_data.same_match )
+      leaf_used |= multi_node_update_cut_check( index, signature, 1 );
+
+    if ( !leaf_used )
+      return;
+
+    signature |= UINT64_C( 1 ) << ( index & 0x3f );
+
+    if ( node_data.same_match && node_data.map_refs[2] != 0 )
     {
-      node<Ntk> g = topo_order[i];
-      uint32_t index = ntk.node_to_index( g );
-      auto& node_data = node_match[index];
-
-      /* check cuts */
-      bool leaf_used = multi_node_update_cut_check( index, signature, 0 );
-
-      if ( !node_data.same_match )
-        leaf_used |= multi_node_update_cut_check( index, signature, 1 );
-
-      if ( !leaf_used )
-        continue;
-
-      signature |= UINT64_C( 1 ) << ( index & 0x3f );
-
-      /* recursively deselect the best cut shared between
-       * the two phases if in use in the cover */
-      if ( node_data.same_match && node_data.map_refs[2] != 0 )
-      {
-        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
-        cut_deref<SwitchActivity>( best_cut, n, use_phase );
-      }
-
-      /* match positive phase */
-      match_phase_exact<SwitchActivity>( g, 0u );
-
-      /* match negative phase */
-      match_phase_exact<SwitchActivity>( g, 1u );
-
-      /* try to drop one phase */
-      match_drop_phase<true, true>( g, 0 );
-
-      assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
-      assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
+      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+      auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
+      cut_deref<SwitchActivity>( best_cut, n, use_phase );
     }
+
+    /* match positive phase */
+    match_phase_exact<SwitchActivity>( n, 0u );
+
+    /* match negative phase */
+    match_phase_exact<SwitchActivity>( n, 1u );
+
+    /* try to drop one phase */
+    match_drop_phase<true, true>( n, 0 );
+
+    assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
+    assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
   }
 
   template<bool DO_AREA>
