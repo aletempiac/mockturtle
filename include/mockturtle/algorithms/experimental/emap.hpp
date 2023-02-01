@@ -631,8 +631,8 @@ union multi_match_data
   uint64_t data{ 0 };
   struct
   {
-    uint64_t in_tfi     :  1;
-    uint64_t cut_index  : 31;
+    uint64_t in_tfi : 1;
+    uint64_t cut_index : 31;
     uint64_t node_index : 32;
   };
 };
@@ -856,7 +856,11 @@ private:
       {
         match_multi_add_cuts<DO_AREA>( n );
         if constexpr ( DO_AREA )
-          match_multioutput<DO_AREA>( n );
+        {
+          bool multi_success = match_multioutput<DO_AREA>( n );
+          if ( multi_success )
+            multi_node_update<DO_AREA>( n );
+        }
       }
     }
 
@@ -960,7 +964,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;;
+    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
     cut_t best_cut;
 
     if constexpr ( DO_AREA )
@@ -1061,7 +1065,6 @@ private:
   template<bool DO_AREA>
   bool compute_mapping()
   {
-    uint32_t i = 0;
     for ( auto const& n : topo_order )
     {
       uint32_t index = ntk.node_to_index( n );
@@ -1070,15 +1073,7 @@ private:
       node_match[index].map_refs[0] = node_match[index].map_refs[1] = node_match[index].map_refs[2] = 0u;
 
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
-      {
-        ++i;
         continue;
-      }
-
-      // if ( n == 3550 )
-      // {
-      //   std::cout << "Here\n";
-      // }
 
       /* match positive phase */
       match_phase<DO_AREA>( n, 0u );
@@ -1090,21 +1085,20 @@ private:
       match_drop_phase<DO_AREA, false>( n, 0 );
 
       /* try a multi-output match */
-      if constexpr ( DO_AREA)
+      if constexpr ( DO_AREA )
       {
         if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
         {
           bool multi_success = match_multioutput<DO_AREA>( n );
           if ( multi_success )
-            multi_node_update<DO_AREA>( n, i );
+            multi_node_update<DO_AREA>( n );
         }
       }
 
       assert( node_match[index].flows[0] < std::numeric_limits<float>::max() );
       assert( node_match[index].flows[1] < std::numeric_limits<float>::max() );
-      assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
-      assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
-      ++i;
+      assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
+      assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
     }
 
     double area_old = area;
@@ -1136,14 +1130,10 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact( bool last_round )
   {
-    uint32_t i = 0;
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
-      {
-        ++i;
         continue;
-      }
 
       auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
@@ -1171,19 +1161,16 @@ private:
       {
         bool multi_success = match_multioutput_exact<SwitchActivity>( n, last_round );
         if ( multi_success )
-            multi_node_update_exact<SwitchActivity>( n, i );
-
-        if ( node_match[index].map_refs[0] )        
-          assert( node_match[index].arrival[0] <  node_match[index].required[0] + epsilon );
-        
-        if ( node_match[index].map_refs[1] )  
-          assert( node_match[index].arrival[1] <  node_match[index].required[1] + epsilon );
+          multi_node_update_exact<SwitchActivity>( n );
       }
 
-      assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
-      assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
+      assert( node_data.arrival[0] < std::numeric_limits<float>::max() );
+      assert( node_data.arrival[1] < std::numeric_limits<float>::max() );
 
-      ++i;
+      if ( node_match[index].map_refs[0] )
+        assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
+      if ( node_match[index].map_refs[1] )
+        assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
     }
 
     double area_old = area;
@@ -1263,7 +1250,7 @@ private:
       if ( node_data.map_refs[0] )
         assert( node_data.arrival[0] < node_data.required[0] + epsilon );
       if ( node_data.map_refs[1] )
-      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
+        assert( node_data.arrival[1] < node_data.required[1] + epsilon );
 
       if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
       {
@@ -1584,7 +1571,7 @@ private:
       node_data.required[1] = std::numeric_limits<float>::max();
 
       uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-      
+
       /* compute arrival of use_phase */
       supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
       double worst_arrival = 0;
@@ -1822,7 +1809,7 @@ private:
 
         if ( worst_arrival > node_data.required[phase] + epsilon || worst_arrival >= std::numeric_limits<float>::max() )
           continue;
-        
+
         node_data.phase[phase] = gate_polarity;
         node_data.area[phase] = gate.area;
         float area_exact = cut_measure_mffc<SwitchActivity>( *cut, n, phase );
@@ -2086,13 +2073,6 @@ private:
 
     /* get the cut */
     auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
-    // auto const& cut_pair = multi_cut_set[cut_index];
-
-    // assert( node_match[index].arrival[0] < node_match[index].required[0] + epsilon );
-    // assert( node_match[index].arrival[1] < node_match[index].required[1] + epsilon );
-
-    // assert( node_match[tuple_data[0].node_index].arrival[0] < node_match[tuple_data[0].node_index].required[0] + epsilon );
-    // assert( node_match[tuple_data[0].node_index].arrival[1] < node_match[tuple_data[0].node_index].required[1] + epsilon );
 
     /* local values storage */
     std::array<double, max_multioutput_output_size> arrival;
@@ -2263,7 +2243,7 @@ private:
         continue;
 
       mapped_multioutput = true;
-      
+
       /* commit multi-output gate */
       for ( uint32_t j = 0; j < max_multioutput_output_size; ++j )
       {
@@ -2305,11 +2285,11 @@ private:
       }
     }
 
-    return mapped_multioutput;    
+    return mapped_multioutput;
   }
 
   template<bool SwitchActivity>
-  bool match_multioutput_exact( node<Ntk> const& n,  bool last_round )
+  bool match_multioutput_exact( node<Ntk> const& n, bool last_round )
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
@@ -2320,7 +2300,7 @@ private:
 
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
-     /* TODO: protection on complicated duplicated nodes to remap to multioutput */
+      /* TODO: protection on complicated duplicated nodes to remap to multioutput */
       if ( !node_match[tuple_data[j].node_index].same_match )
         return false;
     }
@@ -2340,7 +2320,7 @@ private:
         best_exact_area[j] = cut_deref<SwitchActivity>( cut, ntk.index_to_node( node_index ), use_phase );
 
         /* mapping a non referenced phase */
-        if ( node_match[node_index].map_refs[selected_phase] == 0  )
+        if ( node_match[node_index].map_refs[selected_phase] == 0 )
           best_exact_area[j] += lib_inv_area;
       }
     }
@@ -2486,7 +2466,7 @@ private:
         }
 
         /* Add output inverter cost if mapping a non referenced phase */
-        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0)
+        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0 )
         {
           area_exact[j] += lib_inv_area;
         }
@@ -2563,7 +2543,7 @@ private:
           }
         }
 
-        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0)
+        if ( node_data.map_refs[phase[j]] == 0 && node_data.map_refs[phase[j] ^ 1] > 0 )
         {
           best_exact_area[j] += lib_inv_area;
         }
@@ -2610,7 +2590,7 @@ private:
   }
 
   template<bool DO_AREA>
-  void multi_node_update( node<Ntk> const& n, uint32_t topo_root )
+  void multi_node_update( node<Ntk> const& n )
   {
     uint32_t check_index = ntk.node_to_index( n );
     multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
@@ -2647,7 +2627,10 @@ private:
 
     if ( index < min_index )
       return;
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
 
+    ntk.set_visited( n, ntk.trav_id() );
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       multi_node_update_rec<DO_AREA>( ntk.get_node( f ), min_index, signature );
     } );
@@ -2664,6 +2647,9 @@ private:
 
     signature |= UINT64_C( 1 ) << ( index & 0x3f );
 
+    assert( !node_data.multioutput_match[0] );
+    assert( !node_data.multioutput_match[1] );
+
     /* match positive phase */
     match_phase<DO_AREA>( n, 0u );
 
@@ -2672,10 +2658,13 @@ private:
 
     /* try to drop one phase */
     match_drop_phase<DO_AREA, false>( n, 0 );
+
+    assert( node_data.arrival[0] < node_data.required[0] + epsilon );
+    assert( node_data.arrival[1] < node_data.required[1] + epsilon );
   }
 
   template<bool SwitchActivity>
-  void multi_node_update_exact( node<Ntk> const& n, uint32_t topo_root )
+  void multi_node_update_exact( node<Ntk> const& n )
   {
     uint32_t check_index = ntk.node_to_index( n );
     multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
@@ -2696,7 +2685,7 @@ private:
 
     if ( !in_tfi )
       return;
-    
+
     /* recompute data in between: should I mark the leaves? (not necessary under some assumptions) */
     ntk.incr_trav_id();
     ntk.foreach_fanin( n, [&]( auto const& f ) {
@@ -2712,7 +2701,10 @@ private:
 
     if ( index < min_index )
       return;
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
 
+    ntk.set_visited( n, ntk.trav_id() );
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       multi_node_update_exact_rec<SwitchActivity>( ntk.get_node( f ), min_index, signature );
     } );
@@ -2728,6 +2720,9 @@ private:
       return;
 
     signature |= UINT64_C( 1 ) << ( index & 0x3f );
+
+    assert( !node_data.multioutput_match[0] );
+    assert( !node_data.multioutput_match[1] );
 
     if ( node_data.same_match && node_data.map_refs[2] != 0 )
     {
@@ -2745,8 +2740,8 @@ private:
     /* try to drop one phase */
     match_drop_phase<true, true>( n, 0 );
 
-    assert( node_data.arrival[0] <  std::numeric_limits<float>::max() );
-    assert( node_data.arrival[1] <  std::numeric_limits<float>::max() );
+    assert( node_data.arrival[0] < std::numeric_limits<float>::max() );
+    assert( node_data.arrival[1] < std::numeric_limits<float>::max() );
   }
 
   template<bool DO_AREA>
@@ -2803,7 +2798,7 @@ private:
   void remove_unused_multioutput()
   {
     /* TODO: update required times */
-    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it  )
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
         continue;
@@ -2860,7 +2855,7 @@ private:
           continue;
 
         /* recursively deselect the best cut shared between
-        * the two phases if in use in the cover */
+         * the two phases if in use in the cover */
         if ( node_data.same_match && node_data.map_refs[2] != 0 )
         {
           uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
@@ -3295,7 +3290,7 @@ private:
           ++multioutput_count;
         }
       }
-      
+
       st.multioutput_gates = multioutput_count;
     }
 
@@ -3842,7 +3837,7 @@ private:
           ++cut_index;
           continue;
         }
-        
+
         multi_match_data data;
         data.node_index = ntk.node_to_index( n );
         data.cut_index = cut_index;
@@ -3852,7 +3847,7 @@ private:
           leaves[i++] = l;
 
         /* add to hash table */
-        auto &v = multi_cuts_classes[leaves];
+        auto& v = multi_cuts_classes[leaves];
         v.push_back( data );
 
         ++cut_index;
@@ -3930,6 +3925,8 @@ private:
       uint32_t cut_index2 = pair[1].cut_index;
       multi_cut_t const& cut1 = multi_cuts.cuts( index1 )[cut_index1];
       multi_cut_t const& cut2 = multi_cuts.cuts( index2 )[cut_index2];
+
+      assert( index1 < index2 );
 
       /* remove contained multi-output gates */
       if ( !multi_gate_mark( index1, index2, cut1 ) )
@@ -4023,7 +4020,7 @@ private:
     {
       std::swap( index1, index2 );
     }
-    
+
     ntk.foreach_fanin( ntk.index_to_node( index2 ), [&]( auto const& f ) {
       auto g = ntk.get_node( f );
       if ( ntk.node_to_index( g ) == index1 && ntk.fanout_size( g ) == 1 )
@@ -4120,15 +4117,13 @@ private:
       uint32_t cut_index1 = pair[0].cut_index;
       cut_t const& cut = multi_cut_set[cut_index1][0];
 
-      if ( index1 > index2 )
-        std::swap( index1, index2 );
-
       /* don't add choice if in TFI, set TFI bit */
       if ( multi_is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
       {
         /* if there is a path of length > 1 linking node 1 and 2, save as TFI node */
-        pair[0].in_tfi = 1;
-        // pair[1].in_tfi = 1;
+        pair[0].in_tfi = multi_is_in_direct_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ) ) ? 0 : 1;
+        /* add a TFI dependency */
+        ntk.set_value( ntk.index_to_node( index1 ), index2 );
         continue;
       }
 
@@ -4143,7 +4138,16 @@ private:
     /* is permanently marked? */
     if ( ntk.visited( n ) == ntk.trav_id() )
       return;
-    
+
+    /* solve the TFI dependency first */
+    node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
+    if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
+    {
+      multi_topo_sort_rec( choice_ntk, dependency_node );
+      assert( ntk.visited( n ) == ntk.trav_id() );
+      return;
+    }
+
     /* get the representative (smallest index) */
     node<Ntk> repr = choice_ntk.get_choice_representative( n );
 
@@ -4218,9 +4222,9 @@ private:
   emap_params const& ps;
   emap_stats& st;
 
-  uint32_t iteration{ 0 };       /* current mapping iteration */
-  double delay{ 0.0f };          /* current delay of the mapping */
-  double area{ 0.0f };           /* current area of the mapping */
+  uint32_t iteration{ 0 }; /* current mapping iteration */
+  double delay{ 0.0f };    /* current delay of the mapping */
+  double area{ 0.0f };     /* current area of the mapping */
 
   /* lib inverter info */
   float lib_inv_area;
@@ -4239,11 +4243,11 @@ private:
   std::vector<uint64_t> tmp_visited;
 
   /* cut computation */
-  std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
-  cut_merge_t lcuts;            /* cut merger container */
-  truth_compute_t ltruth;       /* truth table merger container */
-  support_t lsupport;           /* support merger container */
-  uint32_t cuts_total{ 0 };     /* current computed cuts */
+  std::vector<cut_set_t> cuts; /* compressed representation of cuts */
+  cut_merge_t lcuts;           /* cut merger container */
+  truth_compute_t ltruth;      /* truth table merger container */
+  support_t lsupport;          /* support merger container */
+  uint32_t cuts_total{ 0 };    /* current computed cuts */
 
   /* multi-output matching */
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */
