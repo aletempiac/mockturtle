@@ -69,9 +69,6 @@ int main()
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
-    if ( benchmark != "multiplier" )
-      continue;
-
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -85,25 +82,13 @@ int main()
 
     emap_params ps;
     ps.cut_enumeration_ps.minimize_truth_table = true;
-    ps.cut_enumeration_ps.cut_limit = 16;
-    ps.area_oriented_mapping = false;
-    ps.remove_dominated_cuts = false;
-    ps.area_flow_rounds = 2;
-    ps.ela_rounds = 2;
     ps.map_multioutput = true;
-    ps.relax_required = 0;
     ps.use_fast_area_recovery = false;
-    ps.verbose = true;
     emap_stats st;
 
     binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
-    // res.report_gates_usage();
-    // res.report_stats();
 
-    // write_verilog_with_binding( res, "res.v" );
-    // write_blif( res, "res.blif" );
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
-    // bool const cec = true;
 
     exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
