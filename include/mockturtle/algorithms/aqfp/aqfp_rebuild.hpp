@@ -140,10 +140,7 @@ public:
 private:
   void remove_splitter_trees( aqfp_network& res, node_map<signal, buffered_aqfp_network>& old2new )
   {
-    topo_view_params tps;
-    tps.deterministic_randomization = _ps.det_randomization;
-    tps.seed = _ps.seed;
-    topo_view topo{ _ntk, tps };
+    topo_view topo{ _ntk };
 
     old2new[_ntk.get_constant( false )] = res.get_constant( false );
 
