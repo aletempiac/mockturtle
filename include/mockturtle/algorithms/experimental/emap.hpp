@@ -725,13 +725,69 @@ public:
       }
     }
 
+    /* run area recovery */
+    if ( !improve_mapping() )
+      return res;
+
+    /* insert buffers for POs driven by PIs */
+    insert_buffers();
+
+    /* generate the output network */
+    finalize_cover( res, old2new );
+
+    return res;
+  }
+
+  binding_view<klut_network> run_node_map()
+  {
+    stopwatch t( st.time_total );
+
+    auto [res, old2new] = initialize_map_network();
+
+    /* TODO: multi-output support is currently not implemented */
+
+    /* compute and save topological order */
+    init_topo_order();
+
+    /* compute cuts, matches, and initial mapping */
+    if ( !ps.area_oriented_mapping )
+    {
+      if ( !compute_mapping_match_node<false>() )
+      {
+        return res;
+      }
+    }
+    else
+    {
+      if ( !compute_mapping_match_node<true>() )
+      {
+        return res;
+      }
+    }
+
+    /* run area recovery */
+    if ( !improve_mapping() )
+      return res;
+
+    /* insert buffers for POs driven by PIs */
+    insert_buffers();
+
+    /* generate the output network */
+    finalize_cover( res, old2new );
+
+    return res;
+  }
+
+private:
+  bool improve_mapping()
+  {
     /* compute mapping using global area flow */
     while ( iteration < ps.area_flow_rounds + 1 )
     {
       compute_required_time();
       if ( !compute_mapping<true>() )
       {
-        return res;
+        return false;
       }
     }
 
@@ -743,7 +799,7 @@ public:
       {
         if ( !compute_mapping_exact_reversed<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
         {
-          return res;
+          return false;
         }
       }
 
@@ -752,7 +808,7 @@ public:
       {
         if ( !compute_mapping_exact_reversed<true>( true ) )
         {
-          return res;
+          return false;
         }
       }
     }
@@ -763,7 +819,7 @@ public:
         compute_required_time();
         if ( !compute_mapping_exact<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
         {
-          return res;
+          return false;
         }
       }
 
@@ -773,7 +829,7 @@ public:
         compute_required_time();
         if ( !compute_mapping_exact<true>( true ) )
         {
-          return res;
+          return false;
         }
       }
 
@@ -789,16 +845,9 @@ public:
     //   check_unused_multioutput();
     // }
 
-    /* insert buffers for POs driven by PIs */
-    insert_buffers();
-
-    /* generate the output network */
-    finalize_cover( res, old2new );
-
-    return res;
+    return true;
   }
 
-private:
   template<bool DO_AREA>
   bool compute_mapping_match()
   {
@@ -1059,6 +1108,101 @@ private:
     cuts_total += rcuts.size();
 
     add_unit_cut( index );
+  }
+
+  template<bool DO_AREA>
+  bool compute_mapping_match_node()
+  {
+    for ( auto const& n : topo_order )
+    {
+      auto const index = ntk.node_to_index( n );
+      auto& node_data = node_match[index];
+
+      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
+      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
+      node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
+
+      if ( ntk.is_constant( n ) )
+      {
+        /* all terminals have flow 1.0 */
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
+        node_data.arrival[0] = node_data.arrival[1] = 0.0f;
+        add_zero_cut( index );
+        match_constants( index );
+        continue;
+      }
+      else if ( ntk.is_pi( n ) )
+      {
+        /* all terminals have flow 1.0 */
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
+        node_data.arrival[0] = 0.0f;
+        /* PIs have the negative phase implemented with an inverter */
+        node_data.arrival[1] = lib_inv_delay;
+        add_unit_cut( index );
+        continue;
+      }
+
+      /* compute the node mapping */
+      add_node_cut<DO_AREA>( n );
+
+      /* match positive phase */
+      match_phase<DO_AREA>( n, 0u );
+
+      /* match negative phase */
+      match_phase<DO_AREA>( n, 1u );
+
+      /* try to drop one phase */
+      match_drop_phase<DO_AREA, false>( n, 0 );
+    }
+    double area_old = area;
+    bool success = set_mapping_refs<false>();
+
+    /* round stats */
+    if ( ps.verbose )
+    {
+      std::stringstream stats{};
+      float area_gain = 0.0f;
+
+      if ( iteration != 1 )
+        area_gain = float( ( area_old - area ) / area_old * 100 );
+
+      if constexpr ( DO_AREA )
+      {
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+      }
+      else
+      {
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+      }
+      st.round_stats.push_back( stats.str() );
+    }
+
+    return success;
+  }
+
+  template<bool DO_AREA>
+  void add_node_cut( node<Ntk> const& n )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    auto& rcuts = &cuts[index];
+
+    std::vector<uint32_t> fanin_indexes;
+    fanin_indexes.reserve( Ntk::max_fanin_size );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      fanin_indexes.push_back( ntk.node_to_index( ntk.get_node( f ) ) );
+    } );
+
+    assert( fanin_indexes.size() <= CutSize );
+
+    cut_t new_cut = rcuts.add_cut( fanin_indexes.begin(), fanin_indexes.end() );
+    new_cut->function = kitty::extend_to<CutSize>( ntk.node_function( n ) );
+
+    /* match cut and compute data */
+    compute_cut_data<DO_AREA>( new_cut, n );
+
+    ++cuts_total;
   }
 
   template<bool DO_AREA>
@@ -4220,6 +4364,56 @@ binding_view<klut_network> emap( Ntk const& ntk, tech_library<NInputs, Configura
 /*! \brief Technology node mapping.
  *
  * This function implements a simple technology mapping algorithm.
+ * The algorithm maps each node to the best implementation in the technology library.
+ *
+ * **Required network functions:**
+ * - `size`
+ * - `is_pi`
+ * - `is_constant`
+ * - `node_to_index`
+ * - `index_to_node`
+ * - `get_node`
+ * - `foreach_po`
+ * - `foreach_node`
+ * - `fanout_size`
+ * - `has_binding`
+ *
+ * \param ntk Network
+ *
+ */
+template<class Ntk, unsigned CutSize = 5u, unsigned NInputs, classification_type Configuration>
+binding_view<klut_network> emap_node_map( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps = {}, emap_stats* pst = nullptr )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_has_binding_v<Ntk>, "Ntk does not implement the has_binding method" );
+
+  emap_stats st;
+  detail::emap_impl<Ntk, CutSize, NInputs, Configuration> p( ntk, library, ps, st );
+  auto res = p.run_node_map();
+
+  if ( ps.verbose && !st.mapping_error )
+  {
+    st.report();
+  }
+
+  if ( pst )
+  {
+    *pst = st;
+  }
+  return res;
+}
+
+/*! \brief Technology node mapping.
+ *
+ * This function implements a simple technology mapping algorithm.
  * The algorithm maps each node to the first implementation in the technology library.
  *
  * The input must be a binding_view with the gates correctly loaded.
@@ -4240,7 +4434,7 @@ binding_view<klut_network> emap( Ntk const& ntk, tech_library<NInputs, Configura
  *
  */
 template<class Ntk>
-void emap_node_map( Ntk& ntk )
+void emap_load_mapping( Ntk& ntk )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
