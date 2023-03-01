@@ -83,7 +83,6 @@ int main()
     emap_params ps;
     ps.cut_enumeration_ps.minimize_truth_table = true;
     ps.map_multioutput = true;
-    ps.use_fast_area_recovery = false;
     emap_stats st;
 
     binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
