@@ -848,6 +848,7 @@ private:
     return true;
   }
 
+#pragma region Core
   template<bool DO_AREA>
   bool compute_mapping_match()
   {
@@ -1332,16 +1333,28 @@ private:
   template<bool SwitchActivity>
   bool compute_mapping_exact_reversed( bool last_round )
   {
-    uint32_t i = 0;
     /* this method works in reverse topological order: less nodes to update (faster) */
     /* instead of propagating arrival times forward, it propagates required times backwards */
+
+    /* re-index the multioutput list using the lowest index output instead of the greatest one */
+    if ( ps.map_multioutput )
+    {
+      for ( auto i = ntk.num_pis(); i < topo_order.size(); ++i )
+      {
+        uint32_t tuple_index = node_tuple_match[i];
+        if ( tuple_index >= UINT32_MAX - 1 )
+          continue;
+
+        multi_match_t const& tuple_data = multi_node_match[tuple_index];
+        node_tuple_match[i] = UINT32_MAX - 1; /* arbitrary value to skip the required time propagation */
+        node_tuple_match[tuple_data[0].node_index] = tuple_index;
+      }
+    }
+
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
-      {
-        ++i;
         continue;
-      }
 
       const auto index = ntk.node_to_index( *it );
       auto& node_data = node_match[index];
@@ -1374,55 +1387,18 @@ private:
       /* try to drop one phase */
       match_drop_phase<true, true>( *it, 0 );
 
-      /* propagate required time through the leaves */
-      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
-      unsigned other_phase = use_phase ^ 1;
-
-      if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
+      /* try a multi-output match */
+      if ( ps.map_multioutput && node_tuple_match[index] < UINT32_MAX - 1 )
       {
-        node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[other_phase] - lib_inv_delay );
+        match_multioutput_exact<SwitchActivity>( *it, true );
+
+        /* propagate required time for the selected gates */
+        match_multioutput_propagate_required( *it );
       }
-
-      if ( node_data.map_refs[0] )
-        assert( node_data.arrival[0] < node_data.required[0] + epsilon );
-      if ( node_data.map_refs[1] )
-        assert( node_data.arrival[1] < node_data.required[1] + epsilon );
-
-      if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
+      else
       {
-        auto ctr = 0u;
-        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
-        auto const& supergate = node_data.best_supergate[use_phase];
-        for ( auto leaf : best_cut )
-        {
-          auto phase = ( node_data.phase[use_phase] >> ctr ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[ctr] );
-          ++ctr;
-        }
+        match_propagate_required( index );
       }
-
-      if ( !node_data.same_match && node_data.map_refs[other_phase] > 0 )
-      {
-        auto ctr = 0u;
-        auto const& best_cut = cuts[index][node_data.best_cut[other_phase]];
-        auto const& supergate = node_data.best_supergate[other_phase];
-        for ( auto leaf : best_cut )
-        {
-          auto phase = ( node_data.phase[other_phase] >> ctr ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[ctr] );
-          ++ctr;
-        }
-      }
-
-      // /* try a multi-output match */
-      // if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
-      // {
-      //   bool multi_success = match_multioutput_exact<SwitchActivity>( n, last_round );
-      //   if ( multi_success )
-      //       multi_node_update_exact<SwitchActivity>( n, i );
-      // }
-
-      ++i;
     }
 
     double area_old = area;
@@ -1442,6 +1418,55 @@ private:
     }
 
     return true;
+  }
+
+  inline void match_propagate_required( uint32_t index )
+  {
+    auto& node_data = node_match[index];
+
+    /* propagate required time through the leaves */
+    unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
+    unsigned other_phase = use_phase ^ 1;
+
+    assert( node_data.best_supergate[0] != nullptr || node_data.best_supergate[1] != nullptr );
+    assert( node_data.map_refs[0] || node_data.map_refs[1] );
+
+    /* propagate required time over the output inverter if present */
+    if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
+    {
+      node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[other_phase] - lib_inv_delay );
+    }
+
+    if ( node_data.map_refs[0] )
+      assert( node_data.arrival[0] < node_data.required[0] + epsilon );
+    if ( node_data.map_refs[1] )
+      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
+
+    if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
+    {
+      auto ctr = 0u;
+      auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
+      auto const& supergate = node_data.best_supergate[use_phase];
+      for ( auto leaf : best_cut )
+      {
+        auto phase = ( node_data.phase[use_phase] >> ctr ) & 1;
+        node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[ctr] );
+        ++ctr;
+      }
+    }
+
+    if ( !node_data.same_match && node_data.map_refs[other_phase] > 0 )
+    {
+      auto ctr = 0u;
+      auto const& best_cut = cuts[index][node_data.best_cut[other_phase]];
+      auto const& supergate = node_data.best_supergate[other_phase];
+      for ( auto leaf : best_cut )
+      {
+        auto phase = ( node_data.phase[other_phase] >> ctr ) & 1;
+        node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[ctr] );
+        ++ctr;
+      }
+    }
   }
 
   template<bool ELA>
@@ -1634,48 +1659,7 @@ private:
       if ( node_match[index].map_refs[2] == 0 )
         continue;
 
-      auto& node_data = node_match[index];
-
-      unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
-      unsigned other_phase = use_phase ^ 1;
-
-      assert( node_data.best_supergate[0] != nullptr || node_data.best_supergate[1] != nullptr );
-      assert( node_data.map_refs[0] || node_data.map_refs[1] );
-
-      /* propagate required time over the output inverter if present */
-      if ( node_data.same_match && node_data.map_refs[other_phase] > 0 )
-      {
-        node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[other_phase] - lib_inv_delay );
-      }
-
-      assert( node_data.arrival[0] < node_data.required[0] + epsilon );
-      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
-
-      if ( node_data.same_match || node_data.map_refs[use_phase] > 0 )
-      {
-        auto ctr = 0u;
-        auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
-        auto const& supergate = node_data.best_supergate[use_phase];
-        for ( auto leaf : best_cut )
-        {
-          auto phase = ( node_data.phase[use_phase] >> ctr ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[ctr] );
-          ++ctr;
-        }
-      }
-
-      if ( !node_data.same_match && node_data.map_refs[other_phase] > 0 )
-      {
-        auto ctr = 0u;
-        auto const& best_cut = cuts[index][node_data.best_cut[other_phase]];
-        auto const& supergate = node_data.best_supergate[other_phase];
-        for ( auto leaf : best_cut )
-        {
-          auto phase = ( node_data.phase[other_phase] >> ctr ) & 1;
-          node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[ctr] );
-          ++ctr;
-        }
-      }
+      match_propagate_required( index );
     }
   }
 
@@ -2787,6 +2771,19 @@ private:
     assert( node_data.arrival[1] < std::numeric_limits<float>::max() );
   }
 
+  inline void match_multioutput_propagate_required( node<Ntk> const& n )
+  {
+    /* extract outputs tuple */
+    uint32_t index = ntk.node_to_index( n );
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+
+    for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
+    {
+      const auto node_index = tuple_data[j].node_index;
+      match_propagate_required( node_index );
+    }
+  }
+
   template<bool DO_AREA>
   void match_multi_add_cuts( node<Ntk> const& n )
   {
@@ -2954,7 +2951,9 @@ private:
   //       std::cout << fmt::format( "Node {} not referenced\n", index );
   //   }
   // }
+#pragma endregion
 
+#pragma region Mapping utils
   inline double cut_leaves_flow( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
   {
     double flow{ 0.0f };
@@ -3210,6 +3209,7 @@ private:
     }
     return count;
   }
+#pragma endregion
 
   void insert_buffers()
   {
@@ -3427,6 +3427,7 @@ private:
     return f;
   }
 
+#pragma region Cuts and matching utils
   template<bool DO_AREA>
   void compute_cut_data( cut_t& cut, node<Ntk> const& n )
   {
@@ -3661,6 +3662,7 @@ private:
 
     res->function = tt_res;
   }
+#pragma endregion
 
   template<bool DO_AREA>
   inline bool compare_map( double arrival, double best_arrival, double area_flow, double best_area_flow, uint32_t size, uint32_t best_size )
