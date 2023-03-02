@@ -199,7 +199,8 @@ struct cut_enumeration_emap_cut
 struct cut_enumeration_emap_multi_cut
 {
   /* stats */
-  bool is_xor{ false };
+  // bool is_xor{ false };
+  uint64_t id{ 0 };
 };
 
 enum class emap_cut_sort_type
@@ -3827,61 +3828,16 @@ private:
       uint32_t cut_index = 0;
       for ( auto& cut : multi_cuts.cuts( ntk.node_to_index( n ) ) )
       {
-        kitty::static_truth_table<max_multioutput_cut_size> tt = multi_cuts.truth_table( *cut );
+        kitty::static_truth_table<max_multioutput_cut_size> tt = multi_cuts.truth_table( *cut );\
+        uint64_t id = library.get_multi_function_id( tt._bits );
 
-        bool to_add = false;
-        if ( cut->size() == 2 )
-        {
-          /* check for and2 */
-          for ( uint32_t func : and2func )
-          {
-            if ( tt._bits == func )
-            {
-              to_add = true;
-              break;
-            }
-          }
-
-          /* check for xor2 */
-          for ( uint32_t func : xor2func )
-          {
-            if ( tt._bits == func )
-            {
-              ( *cut )->data.is_xor = true;
-              to_add = true;
-              break;
-            }
-          }
-        }
-        else if ( cut->size() == 3 )
-        {
-          /* check for maj3 */
-          for ( uint32_t func : maj3func )
-          {
-            if ( tt._bits == func )
-            {
-              to_add = true;
-              break;
-            }
-          }
-
-          /* check xor3 */
-          for ( uint32_t func : xor3func )
-          {
-            if ( tt._bits == func )
-            {
-              ( *cut )->data.is_xor = true;
-              to_add = true;
-              break;
-            }
-          }
-        }
-
-        if ( !to_add )
+        if ( !id )
         {
           ++cut_index;
           continue;
         }
+
+        ( *cut )->data.id = id;
 
         multi_match_data data;
         data.node_index = ntk.node_to_index( n );
@@ -3892,8 +3848,7 @@ private:
           leaves[i++] = l;
 
         /* add to hash table */
-        auto& v = multi_cuts_classes[leaves];
-        v.push_back( data );
+        multi_cuts_classes[leaves].push_back( data );
 
         ++cut_index;
       }
@@ -3919,7 +3874,7 @@ private:
       return a.first[2] > b.first[2];
     } );
 
-    /* combine and match */
+    /* combine and match: specific code for adders */
     for ( auto it : class_list )
     {
       /* try half adder and full adder */
@@ -3938,7 +3893,7 @@ private:
           auto const& cut_j = multi_cuts.cuts( index_j )[cut_index_j];
 
           /* not compatible */
-          if ( cut_i->data.is_xor == cut_j->data.is_xor )
+          if ( cut_i->data.id == cut_j->data.id )
             continue;
 
           /* check compatibility */
@@ -4309,12 +4264,6 @@ private:
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */
   multi_cut_set_t multi_cut_set;    /* set of multi-output cuts */
   multi_matches_t multi_node_match; /* matched multi-output gates */
-
-  /* multioutput HA and FA functions */
-  const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
-  const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x17, 0x2b, 0x4d, 0x8e };
-  const std::array<uint64_t, 2> xor2func = { 0x66, 0x99 };
-  const std::array<uint64_t, 2> xor3func = { 0x69, 0x96 };
 };
 
 } /* namespace detail */

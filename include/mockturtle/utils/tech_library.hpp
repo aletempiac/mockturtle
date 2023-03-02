@@ -193,6 +193,7 @@ private:
   using multi_relation_t = std::array<kitty::static_truth_table<NInputs>, max_multi_outputs>;
   using multi_supergates_list_t = std::array<std::vector<supergate<NInputs>>, max_multi_outputs>;
   using multi_lib_t = phmap::flat_hash_map<multi_relation_t, multi_supergates_list_t, multi_tt_hash>;
+  using multi_func_t = phmap::flat_hash_map<uint64_t, uint64_t>;
 
 public:
   explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, super_lib const& supergates_spec = {} )
@@ -253,6 +254,19 @@ public:
     if ( match != _multi_lib.end() )
       return &match->second;
     return nullptr;
+  }
+
+  /*! \brief Get the multi-output gate function ID for a single output.
+   *
+   * Returns the function ID of a multi-output gate output if matched. This function
+   * supports up to 6 inputs. Returns a constant false in case of no match.
+   */
+  uint64_t get_multi_function_id( uint64_t const& tt ) const
+  {
+    auto match = _multi_funcs.find( tt );
+    if ( match != _multi_funcs.end() )
+      return match->second;
+    return 0;
   }
 
   /*! \brief Get inverter information.
@@ -809,6 +823,16 @@ private:
       for ( auto gate : multi_gate )
         tts.push_back( gate.function );
       kitty::exact_multi_np_enumeration( tts, on_np );
+
+      /* NPN enumeration of the single outputs */
+      for ( auto const& gate : multi_gate )
+      {
+        exact_npn_enumeration( gate.function, [&]( auto const& tts, auto neg, auto const& perm ) {
+          ( void ) neg;
+          ( void ) perm;
+          _multi_funcs[tts._bits[0]] = gate.function._bits[0];
+        } );
+      }
     }
 
     /* update area based on the single output contribution */
@@ -971,10 +995,12 @@ private:
   std::vector<gate> const _gates;    /* collection of gates */
   super_lib const& _supergates_spec; /* collection of supergates declarations */
   tech_library_params const _ps;
-  super_utils<NInputs> _super; /* supergates generation */
-  lib_t _super_lib;            /* library of enumerated gates */
-  multi_lib_t _multi_lib;      /* library of enumerated multioutput gates */
-};                             /* class tech_library */
+
+  super_utils<NInputs> _super;  /* supergates generation */
+  lib_t _super_lib;             /* library of enumerated gates */
+  multi_lib_t _multi_lib;       /* library of enumerated multioutput gates */
+  multi_func_t _multi_funcs;    /* enumerated functions for multioutput gates */
+};  /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>
 struct exact_supergate

@@ -688,6 +688,94 @@ std::tuple<TT, uint32_t, std::vector<uint8_t>> sifting_p_canonization( const TT&
   return std::make_tuple( npn, phase, perm );
 }
 
+/*! \brief Exact NPN enumeration
+
+  Given a truth table, this function enumerates all the functions in its
+  NPN class. Two functions are in the same NP class, if one can be obtained
+  from the other by input negation, input permutation, and output negation.
+
+  The function takes a callback as second parameter which is called for
+  every enumerated function. The callback should take as parameters:
+  - NPN-enumerated truth table
+  - input and output negations
+  - input permutation to apply
+
+  \param tt Truth table
+  \param fn Callback for each enumerated truth table in the NP class
+*/
+template<typename TT, typename Callback>
+void exact_npn_enumeration( const TT& tt, Callback&& fn )
+{
+  static_assert( is_complete_truth_table<TT>::value, "Can only be applied on complete truth tables." );
+
+  const auto num_vars = tt.num_vars();
+
+  /* Special case for n = 0 */
+  if ( num_vars == 0 )
+  {
+    fn( tt, 0u, std::vector<uint8_t>{} );
+    fn( ~tt, 1u, std::vector<uint8_t>{} );
+    return;
+  }
+
+  /* Special case for n = 1 */
+  if ( num_vars == 1 )
+  {
+    fn( tt, 0u, std::vector<uint8_t>{ 0 } );
+    fn( ~tt, 2u, std::vector<uint8_t>{ 0 } );
+    return;
+  }
+
+  assert( num_vars >= 2 && num_vars <= 6 );
+
+  auto t1 = tt;
+
+  std::vector<uint8_t> perm( num_vars );
+  std::iota( perm.begin(), perm.end(), 0u );
+
+  uint32_t phase = 0;
+
+  fn( t1, phase, perm );
+
+  const auto& swaps = detail::swaps[num_vars - 2u];
+  const auto& flips = detail::flips[num_vars - 2u];
+
+  for ( std::size_t i = 0; i < swaps.size(); ++i )
+  {
+    const auto pos = swaps[i];
+    swap_adjacent_inplace( t1, pos );
+
+    std::swap( perm[pos], perm[pos + 1] );
+
+    fn( t1, phase, perm );
+    fn( ~t1, phase | ( 1u << num_vars ), perm );
+  }
+
+  for ( std::size_t j = 0; j < flips.size(); ++j )
+  {
+    const auto pos = flips[j];
+    swap_adjacent_inplace( t1, 0 );
+    flip_inplace( t1, pos );
+
+    std::swap( perm[0], perm[1] );
+    phase ^= 1 << perm[pos];
+
+    fn( t1, phase, perm );
+    fn( ~t1, phase | ( 1u << num_vars ), perm );
+
+    for ( std::size_t i = 0; i < swaps.size(); ++i )
+    {
+      const auto pos = swaps[i];
+      swap_adjacent_inplace( t1, pos );
+
+      std::swap( perm[pos], perm[pos + 1] );
+
+      fn( t1, phase, perm );
+      fn( ~t1, phase | ( 1u << num_vars ), perm );
+    }
+  }
+}
+
 /*! \brief Exact NP enumeration
 
   Given a truth table, this function enumerates all the functions in its
