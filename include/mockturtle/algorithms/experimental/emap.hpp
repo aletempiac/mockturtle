@@ -3973,8 +3973,9 @@ private:
 
       assert( index1 < index2 );
 
-      /* remove contained multi-output gates */
-      if ( !multi_gate_mark( index1, index2, cut1 ) )
+      /* remove overlapping multi-output gates */
+      /* TODO: this constraint could be relaxed -> 1 output has be be part of maximum one output tuple */
+      if ( !multi_gate_check_overlapping( index1, index2, cut1 ) )
         continue;
 
       /* copy cuts */
@@ -3988,6 +3989,9 @@ private:
       std::array<cut_t, max_multioutput_output_size> cut_pair = { new_cut1, new_cut2 };
       if ( !multi_compute_cut_data( cut_pair ) )
         continue;
+
+      /* mark multioutput gate */
+      multi_gate_mark_visited( index1, index2, cut1 );
 
       /* add cut */
       multi_cut_set.push_back( cut_pair );
@@ -4078,14 +4082,14 @@ private:
     if ( !valid )
       return false;
 
-    /* TODO: add a more precise check */
+    /* TODO: add a more precise check --> in case of other cases than adder */
     // if ( is_contained( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
     //   return false;
 
     return true;
   }
 
-  inline bool multi_gate_mark( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
+  inline bool multi_gate_check_overlapping( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
   {
     bool contained = false;
 
@@ -4098,14 +4102,21 @@ private:
     contained = multi_mark_visited_rec<false>( ntk.index_to_node( index1 ) );
     contained |= multi_mark_visited_rec<false>( ntk.index_to_node( index2 ) );
 
-    if ( contained )
+    /* unmark leaves */
+    for ( auto leaf : cut )
     {
-      /* unmark leaves */
-      for ( auto leaf : cut )
-      {
-        ntk.decr_value( ntk.index_to_node( leaf ) );
-      }
-      return false;
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+
+    return contained;
+  }
+
+  inline void multi_gate_mark_visited( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
+  {
+    /* mark leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
     }
 
     /* mark */
