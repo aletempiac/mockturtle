@@ -513,7 +513,7 @@ private:
     auto max_depth = std::numeric_limits<uint32_t>::max();
     if ( ps.preserve_depth )
     {
-      max_depth = ntk.level( root ) - 1;
+      max_depth = ntk.required( root ) - 1;
     }
     /* add the leaves of the cuts to the divisors */
     divs.clear();
@@ -740,7 +740,7 @@ public:
       auto max_depth = std::numeric_limits<uint32_t>::max();
       if ( ps.preserve_depth )
       {
-        max_depth = ntk.level( n ) - 1;
+        max_depth = ntk.required( n ) - 1;
       }
       return resub_fn( n, care, max_depth, ps.max_inserts, potential_gain, last_gain );
     } );
@@ -1049,7 +1049,7 @@ public:
 
     progress_bar pbar{ntk.size(), "resub |{0}| node = {1:>4}   cand = {2:>4}   est. gain = {3:>5}", ps.progress};
 
-    auto const size = ntk.num_gates();
+    auto const size = ntk.size();
     ntk.foreach_gate( [&]( auto const& n, auto i ) {
       if ( i >= size )
       {
@@ -1057,6 +1057,10 @@ public:
       }
 
       pbar( i, i, candidates, st.estimated_gain );
+
+      /* TODO: try this to speed-up */
+      // if ( ntk.fanout_size( n ) == 1 && ntk.fanout_size( n ) == ntk.fanout( n ).size() )
+      //   return true;
 
       /* compute cut, collect divisors, compute MFFC */
       mffc_result_t potential_gain;
@@ -1111,9 +1115,19 @@ public:
       st.estimated_gain += last_gain;
 
       /* update network */
-      call_with_stopwatch( st.time_callback, [&]() {
-        return callback( ntk, n, *g );
-      } );
+      if ( !ps.preserve_depth || ( ps.preserve_depth && ntk.level( ntk.get_node( *g ) ) <= ntk.required( n ) ) )
+      {
+        call_with_stopwatch( st.time_callback, [&]() {
+          return callback( ntk, n, *g );
+        } );
+      }
+      else
+      {
+        return true;
+      }
+
+      /* update levels and required */
+      ntk.update_levels();
 
       return true; /* next */
     } );

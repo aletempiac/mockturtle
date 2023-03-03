@@ -1,5 +1,5 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2019  EPFL
+ * Copyright (C) 2018-2021  EPFL
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -23,30 +23,30 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <string>
-#include <fmt/format.h>
-#include <lorina/aiger.hpp>
-#include <mockturtle/algorithms/node_resynthesis/sop_factoring.hpp>
+#include <mockturtle/algorithms/rewrite.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
-#include <mockturtle/algorithms/refactoring.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
+#include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/depth_view.hpp>
+#include <lorina/aiger.hpp>
 
 #include <experiments.hpp>
-
+#include <fmt/format.h>
+#include <string>
 
 int main()
 {
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, double, bool> exp(
-      "refactoring", "benchmark", "size", "size_after", "depth", "depth_after", "run time", "equivalent" );
+  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, float, bool>
+    exp( "refactoring", "benchmark", "size_before", "size_after", "depth_before", "depth_after", "runtime", "equivalent" );
 
-  sop_factoring_params sps;
-  sps.use_boolean_division = false;
-  sop_factoring<aig_network> resyn( sps );
+  xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> resyn;
+  exact_library_params eps;
+  exact_library<aig_network, decltype( resyn )> exact_lib( resyn, eps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -58,23 +58,23 @@ int main()
       continue;
     }
 
-    const uint32_t size_before = aig.num_gates();
-    const uint32_t depth_before = depth_view( aig ).depth();
-
-    refactoring_params ps;
+    rewrite_params ps;
+    rewrite_stats st;
+    ps.use_mffc = false;
+    ps.optimize_literal_cost = true;
     ps.preserve_depth = true;
     ps.allow_zero_gain = true;
-    refactoring_stats st;
-    refactoring( aig, resyn, ps, &st );
+    ps.progress = false;
+    ps.verbose = false;
 
+    uint32_t const size_before = aig.num_gates();
+    uint32_t const depth_before = depth_view( aig ).depth();
+
+    rewrite( aig, exact_lib, ps, &st );
     aig = cleanup_dangling( aig );
 
-    const uint32_t size_after = aig.num_gates();
-    const uint32_t depth_after = depth_view( aig ).depth();
-
-    const auto cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
-
-    exp( benchmark, size_before, size_after, depth_before, depth_after, to_seconds( st.time_total ), cec );
+    bool const cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
+    exp( benchmark, size_before, aig.num_gates(), depth_before, depth_view( aig ).depth(), to_seconds( st.time_total ), cec );
   }
 
   exp.save();

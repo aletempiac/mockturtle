@@ -28,11 +28,12 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
-#include <mockturtle/algorithms/aig_resub.hpp>
+#include <mockturtle/algorithms/factor_resub.hpp>
 #include <mockturtle/algorithms/cleanup.hpp>
 #include <mockturtle/algorithms/resubstitution.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
+#include <mockturtle/views/depth_view.hpp>
 
 #include <experiments.hpp>
 
@@ -41,7 +42,7 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, float, bool> exp( "aig_resubstitution", "benchmark", "size_before", "size_after", "runtime", "equivalent" );
+  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, float, bool> exp( "aig_resubstitution", "benchmark", "size_before", "size_after", "depth_before", "depth_after", "runtime", "equivalent" );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -56,21 +57,24 @@ int main()
     resubstitution_stats st;
 
     ps.max_pis = 8u;
-    ps.max_inserts = 1u;
+    ps.max_inserts = 2u;
     ps.progress = false;
+    ps.preserve_depth = true;
 
     const uint32_t size_before = aig.num_gates();
-    aig_resubstitution( aig, ps, &st );
+    const uint32_t depth_before = depth_view( aig ).depth();
+
+    factor_resubstitution( aig, ps, &st );
 
     aig = cleanup_dangling( aig );
 
     const auto cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
 
-    exp( benchmark, size_before, aig.num_gates(), to_seconds( st.time_total ), cec );
+    exp( benchmark, size_before, aig.num_gates(), depth_before, depth_view( aig ).depth(), to_seconds( st.time_total ), cec );
   }
 
   exp.save();
-  exp.compare();
+  exp.table();
 
   return 0;
 }

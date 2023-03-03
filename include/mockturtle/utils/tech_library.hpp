@@ -651,7 +651,7 @@ struct exact_library_params
   float delay_inverter{ 0.0f };
 
   /* classify in NP instead of NPN */
-  bool np_classification{ true };
+  bool np_classification{ false };
   /* verbose */
   bool verbose{ false };
 };

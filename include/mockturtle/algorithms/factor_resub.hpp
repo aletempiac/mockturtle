@@ -209,7 +209,7 @@ public:
       return g; /* accepted resub */
     }
 
-    if ( max_inserts == 0 || num_lits == 2 )
+    if ( max_inserts == 0 || num_lits <= 2 )
       return std::nullopt;
 
     /* collect level one divisors */
@@ -292,6 +292,9 @@ public:
       auto const d = divs.at( i );
       if ( tt != sim.get_tt( ntk.make_signal( d ) ) )
         continue; /* next */
+      
+      if ( ntk.level( d ) > required )
+        continue;
 
       // if ( ntk.value( d ) >= num_lits )
       //   return std::nullopt;
@@ -435,6 +438,13 @@ public:
                 ntk.level( ntk.get_node( s2 ) )
               });
             assert( max_level <= required - 1 );
+
+            uint32_t lev_cnt = ntk.level( ntk.get_node( s0 ) ) < required - 1 ? 1 : 0;
+            lev_cnt = ntk.level( ntk.get_node( s0 ) ) < required - 1 ? 1 : 0;
+            lev_cnt = ntk.level( ntk.get_node( s0 ) ) < required - 1 ? 1 : 0;
+
+            if ( lev_cnt < 2 )
+              continue;
 
             signal max = s0;
             signal min0 = s1;

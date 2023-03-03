@@ -116,7 +116,7 @@ public:
   using signal = typename Ntk::signal;
 
   explicit depth_view( NodeCostFn const& cost_fn = {}, depth_view_params const& ps = {} )
-      : Ntk(), _ps( ps ), _levels( *this ), _crit_path( *this ), _cost_fn( cost_fn )
+      : Ntk(), _ps( ps ), _levels( *this ), _crit_path( *this ), _required( *this, UINT32_MAX ), _cost_fn( cost_fn )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -135,7 +135,7 @@ public:
    * \param ntk Base network
    */
   explicit depth_view( Ntk const& ntk, NodeCostFn const& cost_fn = {}, depth_view_params const& ps = {} )
-      : Ntk( ntk ), _ps( ps ), _levels( ntk ), _crit_path( ntk ), _cost_fn( cost_fn )
+      : Ntk( ntk ), _ps( ps ), _levels( ntk ), _crit_path( ntk ), _required( *this, UINT32_MAX ), _cost_fn( cost_fn )
   {
     static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
     static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -147,13 +147,14 @@ public:
     static_assert( has_foreach_fanin_v<Ntk>, "Ntk does not implement the foreach_fanin method" );
 
     update_levels();
+    update_required();
 
     add_event = Ntk::events().register_add_event( [this]( auto const& n ) { on_add( n ); } );
   }
 
   /*! \brief Copy constructor. */
   explicit depth_view( depth_view<Ntk, NodeCostFn, false> const& other )
-      : Ntk( other ), _ps( other._ps ), _levels( other._levels ), _crit_path( other._crit_path ), _depth( other._depth ), _cost_fn( other._cost_fn )
+      : Ntk( other ), _ps( other._ps ), _levels( other._levels ), _crit_path( other._crit_path ), _depth( other._depth ), _required( other._required ),  _cost_fn( other._cost_fn )
   {
     add_event = Ntk::events().register_add_event( [this]( auto const& n ) { on_add( n ); } );
   }
@@ -194,6 +195,11 @@ public:
   {
     return _levels[n];
   }
+  
+  uint32_t required( node const& n ) const
+  {
+    return _required[n];
+  }
 
   bool is_on_critical_path( node const& n ) const
   {
@@ -213,10 +219,18 @@ public:
   void update_levels()
   {
     _levels.reset( 0 );
+    _required.reset( 0 );
     _crit_path.reset( false );
 
     this->incr_trav_id();
     compute_levels();
+    compute_required();
+  }
+
+  void update_required()
+  {
+    _required.reset( 0 );
+    compute_required();
   }
 
   void resize_levels()
@@ -283,6 +297,25 @@ private:
     } );
   }
 
+  void compute_required()
+  {
+    _required.resize();
+
+    this->foreach_po( [&]( auto const& f ) {
+      _required[f] = _depth;
+    } );
+
+    for ( uint32_t index = this->size() - 1; index > this->num_pis(); index-- )
+    {
+      const auto n = this->index_to_node( index );
+      uint32_t req = _required[n];
+
+      this->foreach_fanin( n, [&]( auto const& f ) {
+        _required[f] = std::min( _required[f], req - 1 );
+      } );
+    }
+  }
+
   void set_critical_path( node const& n )
   {
     _crit_path[n] = true;
@@ -324,6 +357,8 @@ private:
   depth_view_params _ps;
   node_map<uint32_t, Ntk> _levels;
   node_map<uint32_t, Ntk> _crit_path;
+  node_map<uint32_t, Ntk> _required;
+
   uint32_t _depth{};
   NodeCostFn _cost_fn;
 
