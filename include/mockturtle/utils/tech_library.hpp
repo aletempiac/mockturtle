@@ -187,10 +187,13 @@ private:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_multi_outputs = 2;
   using supergates_list_t = std::vector<supergate<NInputs>>;
-  using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
+  using TT = kitty::static_truth_table<NInputs>;
+  using tt_hash = kitty::hash<TT>;
   using multi_tt_hash = detail::tuple_tt_hash<NInputs, max_multi_outputs>;
-  using lib_t = phmap::flat_hash_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
-  using multi_relation_t = std::array<kitty::static_truth_table<NInputs>, max_multi_outputs>;
+  using index_t = phmap::flat_hash_map<TT, uint32_t, tt_hash>;
+  // using lib_t = std::vector<supergates_list_t>;
+  using lib_t = phmap::flat_hash_map<TT, supergates_list_t, tt_hash>;
+  using multi_relation_t = std::array<TT, max_multi_outputs>;
   using multi_supergates_list_t = std::array<std::vector<supergate<NInputs>>, max_multi_outputs>;
   using multi_lib_t = phmap::flat_hash_map<multi_relation_t, multi_supergates_list_t, multi_tt_hash>;
   using multi_func_t = phmap::flat_hash_map<uint64_t, uint64_t>;
@@ -235,7 +238,7 @@ public:
    * Returns a list of gates that match the function represented
    * by the truth table.
    */
-  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  const supergates_list_t* get_supergates( TT const& tt ) const
   {
     auto match = _super_lib.find( tt );
     if ( match != _super_lib.end() )
@@ -248,7 +251,7 @@ public:
    * Returns a list of multi-output gates that match the function
    * represented by the truth table.
    */
-  const multi_supergates_list_t* get_multi_supergates( std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> const& tts ) const
+  const multi_supergates_list_t* get_multi_supergates( std::array<TT, max_multi_outputs> const& tts ) const
   {
     auto match = _multi_lib.find( tts );
     if ( match != _multi_lib.end() )
@@ -730,8 +733,8 @@ private:
           }
         }
 
-        std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> static_tts = {};
-        std::array<kitty::static_truth_table<NInputs>, max_multi_outputs> sorted_tts = {};
+        std::array<TT, max_multi_outputs> static_tts = {};
+        std::array<TT, max_multi_outputs> sorted_tts = {};
 
         /* canonize output */
         for ( auto i = 0; i < tts.size(); ++i )
@@ -861,7 +864,7 @@ private:
         for ( auto j = 0; j < max_multi_outputs; ++j )
         {
           auto& gate = multi_gates[j][i];
-          const kitty::static_truth_table<NInputs> tt = kitty::extend_to<NInputs>( gate.root->function );
+          const TT tt = kitty::extend_to<NInputs>( gate.root->function );
 
           /* get the area of the smallest match with a simple gate */
           const auto match = get_supergates( tt );
@@ -977,6 +980,31 @@ private:
     }
   }
 
+  // uint32_t insert_index( TT tt )
+  // {
+  //   uint32_t is_compl{ 0 };
+
+  //   if ( kitty::get_bit( tt, 0 ) )
+  //   {
+  //     is_compl = 1u;
+  //     tt = ~tt;
+  //   }
+
+  //   /* is truth table already indexed? */
+  //   if ( const auto it = _indexes.find( tt ); it != _indexes.end() )
+  //   {
+  //     return static_cast<uint32_t>( 2u * it->second + is_compl );
+  //   }
+
+  //   /* data to _super_lib */
+  //   const auto size = _super_lib.size();
+  //   const auto index = static_cast<uint32_t>( 2 * size + is_compl );
+  //   /* _super_lib.emplace_back(); */
+  //   /* _super_lib.emplace_back(); */
+  //   _indexes[tt] = static_cast<uint32_t>( size );
+  //   return index;
+  // }
+
 private:
   /* inverter info */
   float _inv_area{ 0.0 };
@@ -997,6 +1025,7 @@ private:
   tech_library_params const _ps;
 
   super_utils<NInputs> _super;  /* supergates generation */
+  index_t _indexes;          /* indexes gates from functions */
   lib_t _super_lib;             /* library of enumerated gates */
   multi_lib_t _multi_lib;       /* library of enumerated multioutput gates */
   multi_func_t _multi_funcs;    /* enumerated functions for multioutput gates */
@@ -1062,8 +1091,9 @@ template<typename Ntk, class RewritingFn, unsigned NInputs = 4u>
 class exact_library
 {
   using supergates_list_t = std::vector<exact_supergate<Ntk, NInputs>>;
-  using tt_hash = kitty::hash<kitty::static_truth_table<NInputs>>;
-  using lib_t = std::unordered_map<kitty::static_truth_table<NInputs>, supergates_list_t, tt_hash>;
+  using TT = kitty::static_truth_table<NInputs>;
+  using tt_hash = kitty::hash<TT>;
+  using lib_t = std::unordered_map<TT, supergates_list_t, tt_hash>;
 
 public:
   explicit exact_library( RewritingFn const& rewriting_fn, exact_library_params const& ps = {} )
@@ -1080,7 +1110,7 @@ public:
    * Returns a list of graph structures that match the function
    * represented by the truth table.
    */
-  const supergates_list_t* get_supergates( kitty::static_truth_table<NInputs> const& tt ) const
+  const supergates_list_t* get_supergates( TT const& tt ) const
   {
     auto match = _super_lib.find( tt );
     if ( match != _super_lib.end() )
@@ -1113,8 +1143,8 @@ private:
     }
 
     /* Compute NPN classes */
-    std::unordered_set<kitty::static_truth_table<NInputs>, tt_hash> classes;
-    kitty::static_truth_table<NInputs> tt;
+    std::unordered_set<TT, tt_hash> classes;
+    TT tt;
     do
     {
       const auto res = kitty::exact_npn_canonization( tt );
