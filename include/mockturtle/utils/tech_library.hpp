@@ -1025,7 +1025,7 @@ private:
   tech_library_params const _ps;
 
   super_utils<NInputs> _super;  /* supergates generation */
-  index_t _indexes;          /* indexes gates from functions */
+  // index_t _indexes;             /* indexes gates from functions */
   lib_t _super_lib;             /* library of enumerated gates */
   multi_lib_t _multi_lib;       /* library of enumerated multioutput gates */
   multi_func_t _multi_funcs;    /* enumerated functions for multioutput gates */
