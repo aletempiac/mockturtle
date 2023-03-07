@@ -62,7 +62,7 @@ struct block_storage_data
  * `data[2+i].h2`: Fan-out size
  *
  */
-struct block_storage_node : block_fanin_node<1>
+struct block_storage_node : block_fanin_node<2>
 {
   block_storage_node()
   {
@@ -95,7 +95,8 @@ public:
   static constexpr auto min_fanin_size = 1;
   static constexpr auto max_fanin_size = 32;
   static constexpr auto min_fanout_size = 1;
-  static constexpr auto max_fanout_size = 32;
+  static constexpr auto max_fanout_size = 2;
+  static constexpr auto fanout_signal_bits = 1;
 
   using base_type = block_network;
   using storage = std::shared_ptr<block_storage>;
@@ -106,7 +107,12 @@ public:
     signal() = default;
 
     signal( uint64_t index, uint64_t complement )
-        : complement( complement ), index( index )
+        : complement( complement ), output( 0 ), index( index )
+    {
+    }
+
+    signal( uint64_t index, uint64_t complement, uint64_t output )
+        : complement( complement ), output( output ), index( index )
     {
     }
 
@@ -116,7 +122,7 @@ public:
     }
 
     signal( block_storage::node_type::pointer_type const& p )
-        : complement( p.weight ), index( p.index )
+        : complement( p.weight & 1 ), output( p.weight >> 1 ), index( p.index )
     {
     }
 
@@ -125,7 +131,8 @@ public:
       struct
       {
         uint64_t complement : 1;
-        uint64_t index : 63;
+        uint64_t output : fanout_signal_bits;
+        uint64_t index : 63 - fanout_signal_bits;
       };
       uint64_t data;
     };
@@ -137,12 +144,12 @@ public:
 
     signal operator+() const
     {
-      return { index, 0 };
+      return { index, output, 0 };
     }
 
     signal operator-() const
     {
-      return { index, 1 };
+      return { index, output, 1 };
     }
 
     signal operator^( bool complement ) const
@@ -167,7 +174,7 @@ public:
 
     operator block_storage::node_type::pointer_type() const
     {
-      return { index, complement };
+      return { index, ( output << 1 ) | complement };
     }
 
 #if __cplusplus > 201703L
@@ -274,7 +281,7 @@ public:
     /* increase ref-count to children */
     _storage->nodes[f.index].data[1].h2++; /* TODO: increase fanout count for output */
     auto const po_index = static_cast<uint32_t>( _storage->outputs.size() );
-    _storage->outputs.emplace_back( f.index, f.complement );
+    _storage->outputs.emplace_back( f.index, ( f.output << 1 ) | f.complement );
     return po_index;
   }
 
@@ -563,6 +570,11 @@ public:
   {
     (void)f;
     return false;
+  }
+
+  uint32_t get_output_pin( signal const& f ) const
+  {
+    return static_cast<uint32_t>( f.output );
   }
 
   uint32_t node_to_index( node const& n ) const
