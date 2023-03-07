@@ -138,6 +138,20 @@ struct mixed_fanin_node
   }
 };
 
+template<int PointerFieldSize = 0>
+struct block_fanin_node
+{
+  using pointer_type = node_pointer<PointerFieldSize>;
+
+  std::vector<pointer_type> children;
+  std::vector<cauint64_t> data;
+
+  bool operator==( block_fanin_node<PointerFieldSize> const& other ) const
+  {
+    return children == other.children;
+  }
+};
+
 /*! \brief Hash function for 64-bit word */
 inline uint64_t hash_block( uint64_t word )
 {
@@ -209,6 +223,28 @@ struct storage
   std::vector<typename node_type::pointer_type> outputs;
 
   phmap::flat_hash_map<node_type, uint64_t, NodeHasher> hash;
+
+  T data;
+};
+
+template<typename Node, typename T = empty_storage_data>
+struct storage_no_hash
+{
+  storage_no_hash()
+  {
+    nodes.reserve( 10000u );
+
+    /* we generally reserve the first node for a constant */
+    nodes.emplace_back();
+  }
+
+  using node_type = Node;
+
+  uint32_t trav_id = 0u;
+
+  std::vector<node_type> nodes;
+  std::vector<uint64_t> inputs;
+  std::vector<typename node_type::pointer_type> outputs;
 
   T data;
 };

@@ -3817,7 +3817,7 @@ private:
   /* Experimental code resticted to only half adders and full adders */
   void multi_enumerate_matches( multi_cuts_t const& multi_cuts )
   {
-    static_assert( max_multioutput_cut_size > 2 && max_multioutput_cut_size < 7 );
+    static_assert( max_multioutput_cut_size > 1 && max_multioutput_cut_size < 7 );
 
     multi_cuts_classes.reserve( 2000 );
 
