@@ -35,13 +35,16 @@
 #include <vector>
 
 #include <fmt/format.h>
+#include <kitty/dynamic_truth_table.hpp>
 #include <kitty/static_truth_table.hpp>
 #include <parallel_hashmap/phmap.h>
 
 #include "detail/mffc_utils.hpp"
 #include "cut_enumeration.hpp"
+#include "../networks/block.hpp"
 #include "../networks/storage.hpp"
 #include "../views/choice_view.hpp"
+#include "../utils/node_map.hpp"
 #include "../utils/stopwatch.hpp"
 
 namespace mockturtle
@@ -128,6 +131,7 @@ public:
   using leaves_hash_t = phmap::flat_hash_map<std::array<uint32_t, 3>, std::vector<uint64_t>, triple_hash>;
   using match_pair_t = std::pair<uint64_t, uint64_t>;
   using matches_t = std::vector<match_pair_t>;
+  using block_map = node_map<signal<block_network>, Ntk>;
 
 public:
   explicit map_adders_impl( Ntk& ntk, map_adders_params const& ps, map_adders_stats& st )
@@ -137,33 +141,28 @@ public:
         cuts( fast_cut_enumeration<Ntk, 3, true, cut_enumeration_fa_cut>( ntk, ps.cut_enumeration_ps ) ),
         cuts_classes(),
         half_adders(),
-        full_adders()
+        full_adders(),
+        node_match( ntk.size(), UINT32_MAX )
   {
     cuts_classes.reserve( 2000 );
   }
   
-  void run()
+  block_network run()
   {
     stopwatch t( st.time_total );
 
-    /* init fanout values */
-    // initialize_values_with_fanout( ntk );
-
-    /* create classes */
-    count_gates();
-    // count_matches();
-    match_adder();
-
-    /* map */
-    ntk.incr_trav_id();
-    ntk.clear_values();
+    auto [res, old2new] = initialize_map_network();
+    create_classes();
+    match_adders();
     map();
+    topo_sort();
+    finalize( res, old2new );
 
-    // topo_sort();
+    return res;
   }
 
 private:
-  void count_gates()
+  void create_classes()
   {
     uint32_t counter = 0;
     std::array<uint32_t, 3> leaves = {0, 0, 0};
@@ -273,7 +272,7 @@ private:
           continue;
         
         /* check compatibility */
-        if ( !check_adder( index_i, index_j, cut_i, cut_j ) )
+        if ( !check_adder( index_i, index_j, cut_i ) )
           continue;
         
         half_adders.push_back( { data_i, data_j } );
@@ -281,10 +280,11 @@ private:
     }
   }
 
-  void match_adder()
+  void match_adders()
   {
     half_adders.reserve( cuts_classes.size() );
     full_adders.reserve( cuts_classes.size() );
+    ntk.clear_values();
 
     for ( auto& it : cuts_classes )
     {
@@ -319,7 +319,7 @@ private:
             continue;
           
           /* check compatibility */
-          if ( !check_adder( index_i, index_j, cut_i, cut_j ) )
+          if ( !check_adder( index_i, index_j, cut_i ) )
             continue;
           
           full_adders.push_back( { data_i, data_j } );
@@ -330,24 +330,33 @@ private:
 
   void map()
   {
-    for ( auto& pair : full_adders )
+    selected.reserve( full_adders.size() + half_adders.size() );
+
+    ntk.incr_trav_id();
+
+    for ( uint32_t i = 0; i < full_adders.size(); ++i )
     {
+      auto& pair = full_adders[i];
       uint32_t index1 = pair.first >> 16;
       uint32_t index2 = pair.second >> 16;
       uint32_t cut_index1 = pair.first & UINT16_MAX;
       cut_t const& cut = cuts.cuts( index1 )[cut_index1];
 
+      /* remove overlapping multi-output gates */
       if ( !gate_mark( index1, index2, cut ) )
         continue;
 
-      ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
-      ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
+      selected.push_back( 2 * i );
+      node_match[std::max( index1, index2 )] = 2 * i;
+      // ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
+      // ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
 
       ++st.mapped_fa;
     }
 
-    for ( auto& pair : half_adders )
+    for ( uint32_t i = 0; i < half_adders.size(); ++i )
     {
+      auto& pair = half_adders[i];
       uint32_t index1 = pair.first >> 16;
       uint32_t index2 = pair.second >> 16;
       uint32_t cut_index1 = pair.first & UINT16_MAX;
@@ -356,25 +365,95 @@ private:
       if ( !gate_mark( index1, index2, cut ) )
         continue;
 
-      ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
-      ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
+      selected.push_back( 2 * i + 1 );
+      node_match[std::max( index1, index2 )] = 2 * i + 1;
+      // ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
+      // ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
 
       ++st.mapped_ha;
     }
   }
 
-  inline bool check_adder( uint32_t index1, uint32_t index2, cut_t const& cut1, cut_t const& cut2 )
+  void topo_sort()
+  {
+    topo_order.reserve( ntk.size() );
+
+    /* add map choices */
+    choice_view<Ntk> choice_ntk{ ntk };
+    add_choices( choice_ntk ); /* TODO: buggy */
+
+    ntk.incr_trav_id();
+    ntk.incr_trav_id();
+
+    /* add constants and CIs */
+    const auto c0 = ntk.get_node( ntk.get_constant( false ) );
+    // topo_order.push_back( c0 );
+    ntk.set_visited( c0, ntk.trav_id() );
+
+    if ( const auto c1 = ntk.get_node( ntk.get_constant( true ) ); ntk.visited( c1 ) != ntk.trav_id() )
+    {
+      // topo_order.push_back( c1 );
+      ntk.set_visited( c1, ntk.trav_id() );
+    }
+
+    ntk.foreach_ci( [&]( auto const& n ) {
+      if ( ntk.visited( n ) != ntk.trav_id() )
+      {
+        // topo_order.push_back( n );
+        ntk.set_visited( n, ntk.trav_id() );
+      }
+    } );
+
+    /* sort topologically */
+    ntk.foreach_co( [&]( auto const& f ) {
+      if ( ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() )
+        return;
+      topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+    } );
+
+    /* print the order */
+    // for ( auto const& n : topo_order )
+    //   std::cout << ntk.node_to_index( n ) << " ";
+    // std::cout << "\n";
+  }
+
+  void add_choices( choice_view<Ntk>& choice_ntk )
+  {
+    for ( uint32_t index : selected )
+    {
+      auto& pair = ( index & 1 ) ? half_adders[index >> 1] : full_adders[index >> 1];
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
+
+      if ( index1 > index2 )
+        std::swap( index1, index2 );
+
+      /* don't add choice if in TFI */
+      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
+      {
+        /* add a TFI dependency */
+        ntk.set_value( ntk.index_to_node( index1 ), index2 );
+        continue;
+      }
+
+      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
+
+      assert( choice_ntk.count_choices( ntk.index_to_node( index1 ) ) == 2 );
+    }
+  }
+
+  inline bool check_adder( uint32_t index1, uint32_t index2, cut_t const& cut )
   {
     bool valid = true;
-    bool swapped = false;
 
     /* check containment of cut1 in cut2 and viceversa */
     if ( index1 > index2 )
     {
       std::swap( index1, index2 );
-      swapped = true;
     }
-    
+
     ntk.foreach_fanin( ntk.index_to_node( index2 ), [&]( auto const& f ) {
       auto g = ntk.get_node( f );
       if ( ntk.node_to_index( g ) == index1 && ntk.fanout_size( g ) == 1 )
@@ -386,42 +465,9 @@ private:
 
     if ( !valid )
       return false;
-    
-    // if ( is_contained( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
-    //   return false;
 
-    /* TODO: check phases? */
-    return true;
-  }
-
-  void count_matches()
-  {
-    for ( auto& it : cuts_classes )
-    {
-      if ( it.second.size() < 2 )
-        continue;
-
-      bool has_xor = false, has_and = false;
-      for ( uint64_t data : it.second )
-      {
-        uint32_t index = data >> 16;
-        uint32_t cut_index = data & UINT16_MAX;
-        auto const& cut = cuts.cuts( index )[cut_index];
-
-        if ( cut->data.is_xor )
-          has_xor = true;
-        else
-          has_and = true;
-      }
-
-      // if ( has_xor && has_and )
-      // {
-      //   if ( it.first[2] == 0 )
-      //     ++ha;
-      //   else
-      //     ++fa;
-      // }
-    }
+    /* check containment when node is reachable from middle nodes with multiple fanouts */
+    return check_adder_tfi_valid( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut );
   }
 
   inline bool gate_mark( uint32_t index1, uint32_t index2, cut_t const& cut )
@@ -492,7 +538,7 @@ private:
     return contained;
   }
 
-  inline bool is_contained( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
+  inline bool check_adder_tfi_valid( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
   {
     /* reference cut leaves */
     for ( auto leaf : cut )
@@ -500,11 +546,9 @@ private:
       ntk.incr_value( ntk.index_to_node( leaf ) );
     }
 
-    recursive_deref( ntk, root );
-
-    bool contained = ntk.value( n ) == 0;
-
-    recursive_ref( ntk, root );
+    ntk.incr_trav_id();
+    bool valid = true;
+    check_adder_tfi_valid_rec( root, root, n, valid );
 
     /* dereference leaves */
     for ( auto leaf : cut )
@@ -512,24 +556,47 @@ private:
       ntk.decr_value( ntk.index_to_node( leaf ) );
     }
 
-    return contained;
+    return valid;
+  }
+
+  bool check_adder_tfi_valid_rec( node<Ntk> const& n, node<Ntk> const& root, node<Ntk> const& target, bool& valid )
+  {
+    /* leaf */
+    if ( ntk.value( n ) )
+      return false;
+
+    /* already visited */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return false;
+
+    ntk.set_visited( n, ntk.trav_id() );
+
+    if ( n == target )
+      return true;
+
+    bool found = false;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      found |= check_adder_tfi_valid_rec( ntk.get_node( f ), root, target, valid );
+      return valid;
+    } );
+
+    if ( found && n != root && ntk.fanout_size( n ) > 1 )
+      valid = false;
+
+    return found;
   }
 
   inline bool is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
   {
-    assert( ntk.value( n ) == ntk.fanout_size( n ) );
-
     /* reference cut leaves */
     for ( auto leaf : cut )
     {
       ntk.incr_value( ntk.index_to_node( leaf ) );
     }
 
-    recursive_deref( ntk, root );
-
-    bool contained = ntk.value( n ) != ntk.fanout_size( n );
-
-    recursive_ref( ntk, root );
+    ntk.incr_trav_id();
+    mark_visited_rec<true>( root );
+    bool contained = ntk.visited( n ) == ntk.trav_id();
 
     /* dereference leaves */
     for ( auto leaf : cut )
@@ -538,52 +605,6 @@ private:
     }
 
     return contained;
-  }
-
-  void topo_sort()
-  {
-    ntk.incr_trav_id();
-    initialize_values_with_fanout( ntk );
-    topo_order.reserve( ntk.size() );
-
-    /* create and initialize a choice view */
-    choice_view<Ntk> choice_ntk{ ntk };
-    add_choices( choice_ntk ); /* TODO: buggy */
-
-    ntk.incr_trav_id();
-    ntk.incr_trav_id();
-
-    /* add constants and CIs */
-    const auto c0 = ntk.get_node( ntk.get_constant( false ) );
-    topo_order.push_back( c0 );
-    ntk.set_visited( c0, ntk.trav_id() );
-
-    if ( const auto c1 = ntk.get_node( ntk.get_constant( true ) ); ntk.visited( c1 ) != ntk.trav_id() )
-    {
-      topo_order.push_back( c1 );
-      ntk.set_visited( c1, ntk.trav_id() );
-    }
-
-    ntk.foreach_ci( [&]( auto const& n ) {
-      if ( ntk.visited( n ) != ntk.trav_id() )
-      {
-        topo_order.push_back( n );
-        ntk.set_visited( n, ntk.trav_id() );
-      }
-    } );
-
-    /* sort topologically */
-    ntk.foreach_co( [&]( auto const& f ) {
-      if ( ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() )
-        return;
-      topo_sort_rec( choice_ntk, ntk.get_node( f ) );
-    } );
-
-    /* print the order */
-    for ( auto const& n : topo_order )
-      std::cout << ntk.node_to_index( n ) << " ";
-
-    std::cout << "\n";
   }
 
   void topo_sort_rec( choice_view<Ntk>& choice_ntk, node<Ntk> const& n )
@@ -591,9 +612,21 @@ private:
     /* is permanently marked? */
     if ( ntk.visited( n ) == ntk.trav_id() )
       return;
+    
+    /* solve the TFI dependency first */
+    node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
+    if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
+    {
+      topo_sort_rec( choice_ntk, dependency_node );
+      assert( ntk.visited( n ) == ntk.trav_id() );
+      return;
+    }
+
+    /* get the representative (smallest index) */
+    node<Ntk> repr = choice_ntk.get_choice_representative( n );
 
     /* for all the choices */
-    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited or temporarily marked */
       assert( ntk.visited( g ) != ntk.trav_id() );
       assert( ntk.visited( g ) != ntk.trav_id() - 1 );
@@ -609,7 +642,7 @@ private:
       return true;
     } );
 
-    choice_ntk.foreach_choice( n, [&]( auto const& g ) {
+    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited */
       assert( ntk.visited( g ) != ntk.trav_id() );
 
@@ -623,47 +656,45 @@ private:
     } );
   }
 
-  void add_choices( choice_view<Ntk>& choice_ntk )
+  std::pair<block_network, block_map> initialize_map_network()
   {
-    for ( auto& pair : full_adders )
+    block_network dest;
+    block_map old2new( ntk );
+
+    old2new[ntk.get_node( ntk.get_constant( false ) )] = dest.get_constant( false );
+    old2new[ntk.get_node( ntk.get_constant( true ) )] = dest.get_constant( true );
+
+    ntk.foreach_pi( [&]( auto const& n ) {
+      old2new[ntk.node_to_index( n )] = dest.create_pi();
+    } );
+    return { dest, old2new };
+  }
+
+  void finalize( block_network& res, block_map& old2new )
+  {
+    uint32_t multioutput_count = 0;
+
+    for ( auto const& n : topo_order )
     {
-      uint32_t index1 = pair.first >> 16;
-      uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
-
-      if ( !gate_mark( index1, index2, cut ) )
+      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
         continue;
 
-      if ( index1 > index2 )
-        std::swap( index1, index2 );
+      kitty::dynamic_truth_table tt = ntk.node_function( n );
 
-      /* don't add choice if in TFI */
-      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
-        continue;
+      std::vector<signal<block_network>> children;
+      ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
+        children.push_back( old2new[f] );
+        if ( ntk.is_complemented( f ) )
+          kitty::flip_inplace( tt, i );
+      } );
 
-      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
+      old2new[n] = res.create_node( children, tt );
     }
 
-    for ( auto& pair : half_adders )
-    {
-      uint32_t index1 = pair.first >> 16;
-      uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
-
-      if ( !gate_mark( index1, index2, cut ) )
-        continue;
-
-      if ( index1 > index2 )
-        std::swap( index1, index2 );
-
-      /* don't add choice if in TFI */
-      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
-        continue;
-
-      choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
-    }
+    /* create POs */
+    ntk.foreach_po( [&]( auto const& f ) {
+      res.create_po( ntk.is_complemented( f ) ? !old2new[f] : old2new[f] );
+    } );
   }
 
 private:
@@ -675,6 +706,8 @@ private:
   leaves_hash_t cuts_classes;
   matches_t half_adders;
   matches_t full_adders;
+  std::vector<uint32_t> selected;
+  std::vector<uint32_t> node_match;
 
   std::vector<node<Ntk>> topo_order;
 
@@ -687,7 +720,7 @@ private:
 } /* namespace detail */
 
 template<class Ntk>
-void map_adders( Ntk& ntk, map_adders_params const& ps = {}, map_adders_stats* pst = {} )
+block_network map_adders( Ntk& ntk, map_adders_params const& ps = {}, map_adders_stats* pst = {} )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -704,13 +737,15 @@ void map_adders( Ntk& ntk, map_adders_params const& ps = {}, map_adders_stats* p
   map_adders_stats st;
 
   detail::map_adders_impl p( ntk, ps, st );
-  p.run();
+  block_network res = p.run();
 
   if ( ps.verbose )
     st.report();
 
   if ( pst )
     *pst = st;
+  
+  return res;
 }
 
 } /* namespace mockturtle */
