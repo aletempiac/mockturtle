@@ -415,6 +415,34 @@ public:
     return { index, 0 };
   }
 
+  signal _create_node( std::vector<signal> const& children, std::vector<uint32_t> const& literals )
+  {
+    storage::element_type::node_type node;
+    std::copy( children.begin(), children.end(), std::back_inserter( node.children ) );
+
+    for ( auto i = 0; i < literals.size(); ++i )
+      node.data[2 + i].h1 = literals[i];
+
+    const auto index = _storage->nodes.size();
+    _storage->nodes.push_back( node );
+
+    /* increase ref-count to children */
+    for ( auto c : children )
+    {
+      _storage->nodes[c.index].data[1].h2++;
+      _storage->nodes[c.index].data[2 + c.output].h2++;
+    }
+
+    set_value( index, 0 );
+
+    for ( auto const& fn : _events->on_add )
+    {
+      ( *fn )( index );
+    }
+
+    return { index, 0 };
+  }
+
   signal create_node( std::vector<signal> const& children, kitty::dynamic_truth_table const& function )
   {
     if ( children.size() == 0u )
@@ -425,15 +453,21 @@ public:
     return _create_node( children, _storage->data.cache.insert( function ) );
   }
 
-  // signal create_node( std::vector<signal> const& children, std::vector<kitty::dynamic_truth_table> const& function )
-  // {
-  //   if ( children.size() == 0u )
-  //   {
-  //     assert( function.num_vars() == 0u );
-  //     return get_constant( !kitty::is_const0( function ) );
-  //   }
-  //   return _create_node( children, _storage->data.cache.insert( function ) );
-  // }
+  signal create_node( std::vector<signal> const& children, std::vector<kitty::dynamic_truth_table> const& functions )
+  {
+    assert( functions.size() > 0 );
+
+    if ( children.size() == 0u )
+    {
+      assert( functions[0].num_vars() == 0u );
+      return get_constant( !kitty::is_const0( functions[0] ) );
+    }
+    std::vector<uint32_t> literals;
+    for ( auto const& tt : functions )
+      literals.push_back( _storage->data.cache.insert( tt ) );
+
+    return _create_node( children, literals );
+  }
 
   signal clone_node( block_network const& other, node const& source, std::vector<signal> const& children )
   {
