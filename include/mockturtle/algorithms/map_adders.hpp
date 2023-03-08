@@ -673,28 +673,202 @@ private:
   void finalize( block_network& res, block_map& old2new )
   {
     uint32_t multioutput_count = 0;
+    mark_multioutput_gates();
 
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
         continue;
 
-      kitty::dynamic_truth_table tt = ntk.node_function( n );
-
-      std::vector<signal<block_network>> children;
-      ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
-        children.push_back( old2new[f] );
-        if ( ntk.is_complemented( f ) )
-          kitty::flip_inplace( tt, i );
-      } );
-
-      old2new[n] = res.create_node( children, tt );
+      /* is a multioutput gate root? */
+      if ( node_match[ntk.node_to_index( n )] == UINT32_MAX )
+      {
+        /* included in a multioutput gate volume */
+        if ( ntk.visited( n ) == ntk.trav_id() )
+          continue;
+        finalize_simple_gate( res, old2new, n );
+      }
+      else
+      {
+        finalize_multi_gate( res, old2new, n );
+      }
     }
 
     /* create POs */
     ntk.foreach_po( [&]( auto const& f ) {
       res.create_po( ntk.is_complemented( f ) ? !old2new[f] : old2new[f] );
     } );
+  }
+
+  inline void finalize_simple_gate( block_network& res, block_map& old2new, node<Ntk> const& n )
+  {
+    kitty::dynamic_truth_table tt = ntk.node_function( n );
+
+    std::vector<signal<block_network>> children;
+    ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
+      children.push_back( old2new[f] );
+      if ( ntk.is_complemented( f ) )
+        kitty::flip_inplace( tt, i );
+    } );
+
+    old2new[n] = res.create_node( children, tt );
+  }
+
+  inline void finalize_multi_gate( block_network& res, block_map& old2new, node<Ntk> const& n )
+  {
+    uint32_t index = node_match[ntk.node_to_index( n )];
+    assert( index < UINT32_MAX );
+
+    /* extract the match */
+    if ( index & 1 )
+      finalize_multi_gate_ha( res, old2new, n, index >> 1 );
+    else
+      finalize_multi_gate_fa( res, old2new, n, index >> 1 );
+  }
+
+  inline void finalize_multi_gate_ha( block_network& res, block_map& old2new, node<Ntk> const& n, uint32_t index )
+  {
+    auto& pair = half_adders[index];
+    uint32_t index1 = pair.first >> 16;
+    uint32_t index2 = pair.second >> 16;
+    uint32_t cut_index1 = pair.first & UINT16_MAX;
+    uint32_t cut_index2 = pair.second & UINT16_MAX;
+    cut_t const& cut1 = cuts.cuts( index1 )[cut_index1];
+    cut_t const& cut2 = cuts.cuts( index2 )[cut_index2];
+
+    kitty::static_truth_table<3> tt1 = cuts.truth_table( cut1 );
+    kitty::static_truth_table<3> tt2 = cuts.truth_table( cut2 );
+    bool xor_is_1 = false;
+
+    /* find the XOR2 */
+    for ( uint32_t func : xor2func )
+    {
+      if ( tt1._bits == func )
+      {
+        xor_is_1 = true;
+        break;
+      }
+    }
+
+    /* find the negation vector of AND2 and XOR2*/
+    kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
+    uint32_t neg_and = 0;
+    for ( uint32_t func : and2func )
+    {
+      if ( tt._bits == func )
+      {
+        xor_is_1 = true;
+        break;
+      }
+      ++neg_and;
+    }
+
+    tt = xor_is_1 ? tt2 : tt1;
+    uint32_t neg_xor = 0;
+    for ( uint32_t func : xor3func )
+    {
+      if ( tt._bits == func )
+        break;
+      ++neg_xor;
+    }
+    neg_xor ^= neg_and;
+    neg_xor = ( neg_xor & 1 ) ^ ( ( neg_xor >> 1 ) & 1 ) ^ ( ( neg_xor >> 2 ) & 1 );
+
+    /* normalize and create multioutput gate */
+    std::array<signal<block_network>, 2> children;
+    uint32_t ctr = 0;
+    for ( auto l : cut1 )
+    {
+      signal<block_network> f = old2new[ntk.index_to_node( l )];
+      bool phase = ( neg_and >> ctr ) & 1 ? true : false;
+      children[ctr] = f ^ phase;
+      ++ctr;
+    }
+
+    old2new[n] = res.create_and( children[0], children[1] ) ^ ( ( neg_and >> 2 ) ? true : false );
+    old2new[n] = res.create_xor( children[0], children[1] ) ^ ( neg_xor ? true : false );
+  }
+
+  inline void finalize_multi_gate_fa( block_network& res, block_map& old2new, node<Ntk> const& n, uint32_t index )
+  {
+    auto& pair = half_adders[index];
+    uint32_t index1 = pair.first >> 16;
+    uint32_t index2 = pair.second >> 16;
+    uint32_t cut_index1 = pair.first & UINT16_MAX;
+    uint32_t cut_index2 = pair.second & UINT16_MAX;
+    cut_t const& cut1 = cuts.cuts( index1 )[cut_index1];
+    cut_t const& cut2 = cuts.cuts( index2 )[cut_index2];
+
+    kitty::static_truth_table<3> tt1 = cuts.truth_table( cut1 );
+    kitty::static_truth_table<3> tt2 = cuts.truth_table( cut2 );
+
+    bool xor_is_1 = false;
+
+    /* find the XOR3 */
+    for ( uint32_t func : xor3func )
+    {
+      if ( tt1._bits == func )
+      {
+        xor_is_1 = true;
+        break;
+      }
+    }
+
+    /* find the phase and permutation of MAJ3 and XOR3*/
+    kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
+    uint32_t neg_maj = 0;
+    for ( uint32_t func : maj3func )
+    {
+      if ( tt._bits == func )
+        break;
+      ++neg_maj;
+    }
+
+    tt = xor_is_1 ? tt2 : tt1;
+    uint32_t neg_xor = 0;
+    for ( uint32_t func : xor3func )
+    {
+      if ( tt._bits == func )
+        break;
+      ++neg_xor;
+    }
+    neg_xor ^= neg_maj;
+    neg_xor = ( neg_xor & 1 ) ^ ( ( neg_xor >> 1 ) & 1 ) ^ ( ( neg_xor >> 2 ) & 1 );
+
+    /* normalize and create the multioutput gate */
+    /* normalize and create multioutput gate */
+    std::array<signal<block_network>, 3> children;
+    uint32_t ctr = 0;
+    for ( auto l : cut1 )
+    {
+      signal<block_network> f = old2new[ntk.index_to_node( l )];
+      bool phase = ( neg_maj >> ctr ) & 1 ? true : false;
+      children[ctr] = f ^ phase;
+      ++ctr;
+    }
+
+    old2new[n] = res.create_maj( children[0], children[1], children[2] );
+    old2new[n] = res.create_xor3( children[0], children[1], children[2] ) ^ ( neg_xor ? true : false );
+  }
+
+  void mark_multioutput_gates()
+  {
+    ntk.incr_trav_id();
+
+    for ( uint32_t index : selected )
+    {
+      auto& pair = ( index & 1 ) ? half_adders[index >> 1] : full_adders[index >> 1];
+      uint32_t index1 = pair.first >> 16;
+      uint32_t index2 = pair.second >> 16;
+      uint32_t cut_index1 = pair.first & UINT16_MAX;
+      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
+
+      if ( index1 > index2 )
+        std::swap( index1, index2 );
+
+      bool valid = gate_mark( index1, index2, cut );
+      assert( valid );
+    }
   }
 
 private:
