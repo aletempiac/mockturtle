@@ -487,8 +487,18 @@ public:
   signal clone_node( block_network const& other, node const& source, std::vector<signal> const& children )
   {
     assert( !children.empty() );
-    const auto tt = other._storage->data.cache[other._storage->nodes[source].data[2].h1];
-    return create_node( children, tt );
+    if ( is_multioutput( source ) )
+    {
+      std::vector<kitty::dynamic_truth_table> tts;
+      for ( auto i = 2; i < other._storage->nodes[source].data.size(); ++i )
+        tts.push_back( other._storage->data.cache[other._storage->nodes[source].data[i].h1] );
+      create_node( children, tts );
+    }
+    else
+    {
+      const auto tt = other._storage->data.cache[other._storage->nodes[source].data[2].h1];
+      return create_node( children, tt );
+    }
   }
 #pragma endregion
 
@@ -571,6 +581,11 @@ public:
     return static_cast<uint32_t>( _storage->nodes.size() - _storage->inputs.size() - 2 );
   }
 
+  uint32_t num_outputs( node const& n ) const
+  {
+    return static_cast<uint32_t>( _storage->nodes[n].data.size() - 2 );
+  }
+
   uint32_t fanin_size( node const& n ) const
   {
     return static_cast<uint32_t>( _storage->nodes[n].children.size() );
@@ -589,6 +604,66 @@ public:
   bool is_function( node const& n ) const
   {
     return n > 1 && !is_ci( n );
+  }
+
+  bool is_and( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 4;
+  }
+
+  bool is_and( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 4;
+  }
+
+  bool is_or( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 6;
+  }
+
+  bool is_or( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 6;
+  }
+
+  bool is_xor( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 12;
+  }
+
+  bool is_xor( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 12;
+  }
+
+  bool is_maj( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 14;
+  }
+
+  bool is_maj( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 14;
+  }
+
+  bool is_ite( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 16;
+  }
+
+  bool is_ite( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 16;
+  }
+
+  bool is_xor3( node const& n ) const
+  {
+    return n > 1 && _storage->nodes[n].data.size() == 3 && _storage->nodes[n].data[2].h1 == 18;
+  }
+
+  bool is_xor3( signal const& f ) const
+  {
+    return f.index > 1 && _storage->nodes[f.index].data[2 + f.output].h1 == 18;
   }
 #pragma endregion
 
@@ -613,6 +688,11 @@ public:
   signal make_signal( node const& n ) const
   {
     return { n, 0 };
+  }
+
+  signal make_signal( node const& n, uint32_t output_pin ) const
+  {
+    return { n, output_pin, 0 };
   }
 
   bool is_complemented( signal const& f ) const
