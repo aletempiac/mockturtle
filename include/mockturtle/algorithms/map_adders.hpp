@@ -901,8 +901,6 @@ block_network map_adders( Ntk& ntk, map_adders_params const& ps = {}, map_adders
   static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_foreach_gate_v<Ntk>, "Ntk does not implement the foreach_node method" );
-  static_assert( has_clear_mapping_v<Ntk>, "Ntk does not implement the clear_mapping method" );
-  static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
 
   map_adders_stats st;
 

@@ -265,6 +265,21 @@ template<class Ntk>
 inline constexpr bool has_is_ro_v = has_is_ro<Ntk>::value;
 #pragma endregion
 
+#pragma region has_is_ro
+template<class Ntk, class = void>
+struct has_is_multioutput : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_is_multioutput<Ntk, std::void_t<decltype( std::declval<Ntk>().is_multioutput( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_is_multioutput_v = has_is_multioutput<Ntk>::value;
+#pragma endregion
+
 #pragma region has_constant_value
 template<class Ntk, class = void>
 struct has_constant_value : std::false_type

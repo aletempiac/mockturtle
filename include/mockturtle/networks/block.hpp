@@ -290,6 +290,11 @@ public:
     return true;
   }
 
+  bool is_multioutput( node const& n ) const
+  {
+    return _storage->nodes[n].data.size() > 3;
+  }
+
   bool is_constant( node const& n ) const
   {
     return n <= 1;
