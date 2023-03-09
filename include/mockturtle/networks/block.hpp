@@ -370,6 +370,16 @@ public:
   {
     return _create_node( { a, b, c }, 18 );
   }
+
+  signal create_ha( signal a, signal b )
+  {
+    return _create_node( { a, b }, { 4, 12 } );
+  }
+
+  signal create_fa( signal a, signal b, signal c )
+  {
+    return _create_node( { a, b, c }, { 14, 18 } );
+  }
 #pragma endregion
 
 #pragma region Create nary functions
@@ -609,6 +619,11 @@ public:
   uint32_t get_output_pin( signal const& f ) const
   {
     return static_cast<uint32_t>( f.output );
+  }
+
+  signal next_output_pin( signal const& f ) const
+  {
+    return { f.index, f.output + 1, f.complement };
   }
 
   uint32_t node_to_index( node const& n ) const

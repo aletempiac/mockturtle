@@ -275,6 +275,9 @@ private:
         if ( !check_adder( index_i, index_j, cut_i ) )
           continue;
         
+        assert( cut_i.size() == 2 );
+        assert( cut_j.size() == 2 );
+
         half_adders.push_back( { data_i, data_j } );
       }
     }
@@ -322,6 +325,9 @@ private:
           if ( !check_adder( index_i, index_j, cut_i ) )
             continue;
           
+          assert( cut_i.size() == 3 );
+          assert( cut_j.size() == 3 );
+
           full_adders.push_back( { data_i, data_j } );
         }
       }
@@ -741,14 +747,7 @@ private:
     bool xor_is_1 = false;
 
     /* find the XOR2 */
-    for ( uint32_t func : xor2func )
-    {
-      if ( tt1._bits == func )
-      {
-        xor_is_1 = true;
-        break;
-      }
-    }
+    xor_is_1 = cut1->data.is_xor;
 
     /* find the negation vector of AND2 and XOR2*/
     kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
@@ -785,13 +784,15 @@ private:
       ++ctr;
     }
 
-    old2new[n] = res.create_and( children[0], children[1] ) ^ ( ( neg_and >> 2 ) ? true : false );
-    old2new[n] = res.create_xor( children[0], children[1] ) ^ ( neg_xor ? true : false );
+    signal<block_network> ha = res.create_ha( children[0], children[1] );
+
+    old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = ha ^ ( ( neg_and >> 2 ) ? true : false );
+    old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( ha ) ^ ( neg_xor ? true : false );
   }
 
   inline void finalize_multi_gate_fa( block_network& res, block_map& old2new, node<Ntk> const& n, uint32_t index )
   {
-    auto& pair = half_adders[index];
+    auto& pair = full_adders[index];
     uint32_t index1 = pair.first >> 16;
     uint32_t index2 = pair.second >> 16;
     uint32_t cut_index1 = pair.first & UINT16_MAX;
@@ -805,14 +806,7 @@ private:
     bool xor_is_1 = false;
 
     /* find the XOR3 */
-    for ( uint32_t func : xor3func )
-    {
-      if ( tt1._bits == func )
-      {
-        xor_is_1 = true;
-        break;
-      }
-    }
+    xor_is_1 = cut1->data.is_xor;
 
     /* find the phase and permutation of MAJ3 and XOR3*/
     kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
@@ -847,8 +841,10 @@ private:
       ++ctr;
     }
 
-    old2new[n] = res.create_maj( children[0], children[1], children[2] );
-    old2new[n] = res.create_xor3( children[0], children[1], children[2] ) ^ ( neg_xor ? true : false );
+    signal<block_network> fa = res.create_fa( children[0], children[1], children[2] );
+
+    old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = fa;
+    old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( fa ) ^ ( neg_xor ? true : false );
   }
 
   void mark_multioutput_gates()
