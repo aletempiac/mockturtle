@@ -50,7 +50,7 @@ namespace detail
 {
 
 template<typename NtkSrc, typename NtkDest, typename LeavesIterator>
-void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterator begin, LeavesIterator end, std::unordered_map<signal<NtkSrc>, signal<NtkDest>>& old_to_new )
+void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterator begin, LeavesIterator end, std::unordered_map<uint64_t, signal<NtkDest>>& old_to_new )
 {
   /* constants */
   old_to_new[ntk.get_constant( false )] = dest.get_constant( false );
@@ -82,7 +82,12 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
     /* collect children */
     std::vector<signal<NtkDest>> children;
     ntk.foreach_fanin( node, [&]( auto child, auto ) {
-      const auto f = old_to_new[child];
+      const auto child_no_complement = child ^ ntk.is_complemented( child );
+      const auto f = old_to_new[child_no_complement];
+
+      assert( dest.get_node( f ) != dest.get_node( dest.get_constant( false ) ) );
+      assert( dest.get_node( f ) != dest.get_node( dest.get_constant( true ) ) );
+
       if ( ntk.is_complemented( child ) )
       {
         children.push_back( dest.create_not( f ) );
@@ -155,10 +160,9 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
               break;
             }
           }
-          if constexpr ( has_is_function_v<NtkSrc> )
+          if constexpr ( has_is_function_v<NtkSrc> && has_create_node_v<NtkDest> )
           {
-            static_assert( has_create_node_v<NtkDest>, "NtkDest cannot create arbitrary function gates" );
-            old_to_new[f] = dest.create_node( children, ntk.node_function_pin( n, i ) );
+            old_to_new[f] = dest.create_node( children, ntk.node_function_pin( node, i ) );
             break;
           }
           std::cerr << "[e] something went wrong, could not copy node " << ntk.node_to_index( node ) << "\n";
@@ -270,9 +274,8 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
               break;
             }
           }
-          if constexpr ( has_is_function_v<NtkSrc> )
+          if constexpr ( has_is_function_v<NtkSrc> && has_create_node_v<NtkDest> )
           {
-            static_assert( has_create_node_v<NtkDest>, "NtkDest cannot create arbitrary function gates" );
             old_to_new[f] = dest.create_node( children, ntk.node_function( node ) );
             break;
           }
@@ -294,6 +297,33 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
       }
     }
   } );
+
+  /* POs */
+  ntk.foreach_po( [&]( auto const& po ) {
+    const auto po_no_complement = po ^ ntk.is_complemented( po );
+    auto const f = old_to_new[po_no_complement];
+    dest.create_po( ntk.is_complemented( po ) ? dest.create_not( f ) : f );
+  } );
+
+  /* RIs */
+  if constexpr ( has_foreach_ri_v<NtkSrc> && has_create_ri_v<NtkDest> )
+  {
+    ntk.foreach_ri( [&]( auto const& f ) {
+      dest.create_ri( ntk.is_complemented( f ) ? dest.create_not( old_to_new[f ^ 1] ) : old_to_new[f] );
+    } );
+  }
+
+  /* CO names */
+  if constexpr ( has_has_output_name_v<NtkSrc> && has_get_output_name_v<NtkSrc> && has_set_output_name_v<NtkDest> )
+  {
+    ntk.foreach_co( [&]( auto co, auto index ) {
+      (void)co;
+      if ( ntk.has_output_name( index ) )
+      {
+        dest.set_output_name( index, ntk.get_output_name( index ) );
+      }
+    } );
+  }
 }
 
 } // namespace detail
@@ -351,12 +381,10 @@ template<class NtkSrc, class NtkDest = NtkSrc>
   NtkDest dest;
 
   std::vector<signal<NtkDest>> cis;
-  detail::clone_inputs( ntk, dest, cis, remove_dangling_PIs );
+  detail::clone_inputs( ntk, dest, cis, false );
 
-  std::unordered_map<signal<NtkSrc>, signal<NtkDest>> old2new;
+  std::unordered_map<uint64_t, signal<NtkDest>> old_to_new;
   detail::decompose_multioutput_impl( ntk, dest, cis.begin(), cis.end(), old_to_new );
-
-  detail::clone_outputs( ntk, dest, old_to_new, remove_redundant_POs );
 
   return dest;
 }

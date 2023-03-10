@@ -111,6 +111,11 @@ public:
     {
     }
 
+    signal( uint32_t index )
+        : complement( 0 ), output( 0 ), index( index )
+    {
+    }
+
     signal( uint64_t index, uint64_t complement, uint64_t output )
         : complement( complement ), output( output ), index( index )
     {
@@ -175,6 +180,11 @@ public:
     operator block_storage::node_type::pointer_type() const
     {
       return { index, ( output << 1 ) | complement };
+    }
+
+    operator uint64_t() const
+    {
+      return data;
     }
 
 #if __cplusplus > 201703L
@@ -435,6 +445,8 @@ public:
     storage::element_type::node_type node;
     std::copy( children.begin(), children.end(), std::back_inserter( node.children ) );
 
+    node.data = decltype( node.data )( 2 + literals.size() );
+
     for ( auto i = 0; i < literals.size(); ++i )
       node.data[2 + i].h1 = literals[i];
 
@@ -692,13 +704,12 @@ public:
 
   signal make_signal( node const& n, uint32_t output_pin ) const
   {
-    return { n, output_pin, 0 };
+    return { n, 0, output_pin };
   }
 
   bool is_complemented( signal const& f ) const
   {
-    (void)f;
-    return false;
+    return f.complement ? true : false;
   }
 
   uint32_t get_output_pin( signal const& f ) const
@@ -708,7 +719,7 @@ public:
 
   signal next_output_pin( signal const& f ) const
   {
-    return { f.index, f.output + 1, f.complement };
+    return { f.index, f.complement, f.output + 1 };
   }
 
   uint32_t node_to_index( node const& n ) const
@@ -764,8 +775,8 @@ public:
   void foreach_co( Fn&& fn ) const
   {
     using IteratorType = decltype( _storage->outputs.begin() );
-    detail::foreach_element_transform<IteratorType, uint32_t>(
-        _storage->outputs.begin(), _storage->outputs.end(), []( auto o ) { return o.index; }, fn );
+    detail::foreach_element_transform<IteratorType, signal>(
+        _storage->outputs.begin(), _storage->outputs.end(), []( auto f ) { return signal( f ); }, fn );
   }
 
   template<typename Fn>
@@ -778,8 +789,8 @@ public:
   void foreach_po( Fn&& fn ) const
   {
     using IteratorType = decltype( _storage->outputs.begin() );
-    detail::foreach_element_transform<IteratorType, uint32_t>(
-        _storage->outputs.begin(), _storage->outputs.end(), []( auto o ) { return o.index; }, fn );
+    detail::foreach_element_transform<IteratorType, signal>(
+        _storage->outputs.begin(), _storage->outputs.end(), []( auto f ) { return signal( f ); }, fn );
   }
 
   template<typename Fn>
@@ -799,8 +810,8 @@ public:
       return;
 
     using IteratorType = decltype( _storage->outputs.begin() );
-    detail::foreach_element_transform<IteratorType, uint32_t>(
-        _storage->nodes[n].children.begin(), _storage->nodes[n].children.end(), []( auto f ) { return f.index; }, fn );
+    detail::foreach_element_transform<IteratorType, signal>(
+        _storage->nodes[n].children.begin(), _storage->nodes[n].children.end(), []( auto f ) { return signal( f ); }, fn );
   }
 #pragma endregion
 

@@ -354,8 +354,6 @@ private:
 
       selected.push_back( 2 * i );
       node_match[std::max( index1, index2 )] = 2 * i;
-      // ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
-      // ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
 
       ++st.mapped_fa;
     }
@@ -373,8 +371,6 @@ private:
 
       selected.push_back( 2 * i + 1 );
       node_match[std::max( index1, index2 )] = 2 * i + 1;
-      // ntk.add_to_mapping( ntk.index_to_node( index1 ), cut.begin(), cut.end() );
-      // ntk.add_to_mapping( ntk.index_to_node( index2 ), cut.begin(), cut.end() );
 
       ++st.mapped_ha;
     }
@@ -386,7 +382,7 @@ private:
 
     /* add map choices */
     choice_view<Ntk> choice_ntk{ ntk };
-    add_choices( choice_ntk ); /* TODO: buggy */
+    add_choices( choice_ntk );
 
     ntk.incr_trav_id();
     ntk.incr_trav_id();
@@ -430,19 +426,9 @@ private:
       auto& pair = ( index & 1 ) ? half_adders[index >> 1] : full_adders[index >> 1];
       uint32_t index1 = pair.first >> 16;
       uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
 
       if ( index1 > index2 )
         std::swap( index1, index2 );
-
-      /* don't add choice if in TFI */
-      if ( is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
-      {
-        /* add a TFI dependency */
-        ntk.set_value( ntk.index_to_node( index1 ), index2 );
-        continue;
-      }
 
       choice_ntk.add_choice( ntk.index_to_node( index1 ), ntk.index_to_node( index2 ) );
 
@@ -618,48 +604,72 @@ private:
     /* is permanently marked? */
     if ( ntk.visited( n ) == ntk.trav_id() )
       return;
-    
-    /* solve the TFI dependency first */
-    node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
-    if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
-    {
-      topo_sort_rec( choice_ntk, dependency_node );
-      assert( ntk.visited( n ) == ntk.trav_id() );
-      return;
-    }
 
     /* get the representative (smallest index) */
     node<Ntk> repr = choice_ntk.get_choice_representative( n );
 
-    /* for all the choices */
-    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
+    /* multioutput gate */
+    if ( choice_ntk.count_choices( repr ) > 1 )
+    {
+      /* get the cut */
+      uint32_t max_index = 0;
+      choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
+        /* ensure that the node is not visited or temporarily marked */
+        assert( ntk.visited( g ) != ntk.trav_id() );
+        assert( ntk.visited( g ) != ntk.trav_id() - 1 );
+
+        /* mark node temporarily */
+        ntk.set_visited( g, ntk.trav_id() - 1 );
+
+        max_index = std::max( max_index, ntk.node_to_index( g ) );
+        return true;
+      } );
+
+      uint32_t cindex = node_match[max_index];
+      auto& pair = ( cindex & 1 ) ? half_adders[cindex >> 1] : full_adders[cindex >> 1];
+      cut_t const& cut = cuts.cuts( pair.first >> 16 )[pair.first & UINT16_MAX];
+
+      for ( auto l : cut )
+      {
+        topo_sort_rec( choice_ntk, ntk.index_to_node( l ) );
+      }
+
+      choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
+        /* ensure that the node is not visited */
+        assert( ntk.visited( g ) != ntk.trav_id() );
+
+        /* mark node n permanently */
+        ntk.set_visited( g, ntk.trav_id() );
+
+        /* visit node */
+        topo_order.push_back( g );
+
+        return true;
+      } );
+    }
+    else
+    {
       /* ensure that the node is not visited or temporarily marked */
-      assert( ntk.visited( g ) != ntk.trav_id() );
-      assert( ntk.visited( g ) != ntk.trav_id() - 1 );
+      assert( ntk.visited( n ) != ntk.trav_id() );
+      assert( ntk.visited( n ) != ntk.trav_id() - 1 );
 
       /* mark node temporarily */
-      ntk.set_visited( g, ntk.trav_id() - 1 );
+      ntk.set_visited( n, ntk.trav_id() - 1 );
 
-      /* mark children */
-      ntk.foreach_fanin( g, [&]( auto const& f ) {
+      /* mark cut leaves */
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
         topo_sort_rec( choice_ntk, ntk.get_node( f ) );
       } );
 
-      return true;
-    } );
-
-    choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited */
-      assert( ntk.visited( g ) != ntk.trav_id() );
+      assert( ntk.visited( n ) != ntk.trav_id() );
 
       /* mark node n permanently */
-      ntk.set_visited( g, ntk.trav_id() );
+      ntk.set_visited( n, ntk.trav_id() );
 
       /* visit node */
-      topo_order.push_back( g );
-
-      return true;
-    } );
+      topo_order.push_back( n );
+    }
   }
 
   std::pair<block_network, block_map> initialize_map_network()
@@ -678,9 +688,6 @@ private:
 
   void finalize( block_network& res, block_map& old2new )
   {
-    uint32_t multioutput_count = 0;
-    mark_multioutput_gates();
-
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
@@ -689,9 +696,6 @@ private:
       /* is a multioutput gate root? */
       if ( node_match[ntk.node_to_index( n )] == UINT32_MAX )
       {
-        /* included in a multioutput gate volume */
-        if ( ntk.visited( n ) == ntk.trav_id() )
-          continue;
         finalize_simple_gate( res, old2new, n );
       }
       else
@@ -712,9 +716,7 @@ private:
 
     std::vector<signal<block_network>> children;
     ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
-      children.push_back( old2new[f] );
-      if ( ntk.is_complemented( f ) )
-        kitty::flip_inplace( tt, i );
+      children.push_back( old2new[f] ^ ntk.is_complemented( f ) );
     } );
 
     old2new[n] = res.create_node( children, tt );
@@ -750,21 +752,18 @@ private:
     xor_is_1 = cut1->data.is_xor;
 
     /* find the negation vector of AND2 and XOR2*/
-    kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
+    kitty::static_truth_table<3> tt = xor_is_1 ? tt2 : tt1;
     uint32_t neg_and = 0;
     for ( uint32_t func : and2func )
     {
       if ( tt._bits == func )
-      {
-        xor_is_1 = true;
         break;
-      }
       ++neg_and;
     }
 
-    tt = xor_is_1 ? tt2 : tt1;
+    tt = xor_is_1 ? tt1 : tt2;
     uint32_t neg_xor = 0;
-    for ( uint32_t func : xor3func )
+    for ( uint32_t func : xor2func )
     {
       if ( tt._bits == func )
         break;
@@ -779,7 +778,7 @@ private:
     for ( auto l : cut1 )
     {
       signal<block_network> f = old2new[ntk.index_to_node( l )];
-      bool phase = ( neg_and >> ctr ) & 1 ? true : false;
+      bool phase = ( ( neg_and >> ctr ) & 1 ) ? true : false;
       children[ctr] = f ^ phase;
       ++ctr;
     }
@@ -809,7 +808,7 @@ private:
     xor_is_1 = cut1->data.is_xor;
 
     /* find the phase and permutation of MAJ3 and XOR3*/
-    kitty::static_truth_table<3> tt = xor_is_1 ? tt1 : tt2;
+    kitty::static_truth_table<3> tt = xor_is_1 ? tt2 : tt1;
     uint32_t neg_maj = 0;
     for ( uint32_t func : maj3func )
     {
@@ -818,7 +817,7 @@ private:
       ++neg_maj;
     }
 
-    tt = xor_is_1 ? tt2 : tt1;
+    tt = xor_is_1 ? tt1 : tt2;
     uint32_t neg_xor = 0;
     for ( uint32_t func : xor3func )
     {
@@ -836,7 +835,7 @@ private:
     for ( auto l : cut1 )
     {
       signal<block_network> f = old2new[ntk.index_to_node( l )];
-      bool phase = ( neg_maj >> ctr ) & 1 ? true : false;
+      bool phase = ( ( neg_maj >> ctr ) & 1 ) ? true : false;
       children[ctr] = f ^ phase;
       ++ctr;
     }
@@ -845,26 +844,6 @@ private:
 
     old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = fa;
     old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( fa ) ^ ( neg_xor ? true : false );
-  }
-
-  void mark_multioutput_gates()
-  {
-    ntk.incr_trav_id();
-
-    for ( uint32_t index : selected )
-    {
-      auto& pair = ( index & 1 ) ? half_adders[index >> 1] : full_adders[index >> 1];
-      uint32_t index1 = pair.first >> 16;
-      uint32_t index2 = pair.second >> 16;
-      uint32_t cut_index1 = pair.first & UINT16_MAX;
-      cut_t const& cut = cuts.cuts( index1 )[cut_index1];
-
-      if ( index1 > index2 )
-        std::swap( index1, index2 );
-
-      bool valid = gate_mark( index1, index2, cut );
-      assert( valid );
-    }
   }
 
 private:
