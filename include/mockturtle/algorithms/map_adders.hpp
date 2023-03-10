@@ -354,6 +354,7 @@ private:
 
       selected.push_back( 2 * i );
       node_match[std::max( index1, index2 )] = 2 * i;
+      node_match[std::min( index1, index2 )] = UINT32_MAX - 1;
 
       ++st.mapped_fa;
     }
@@ -371,6 +372,7 @@ private:
 
       selected.push_back( 2 * i + 1 );
       node_match[std::max( index1, index2 )] = 2 * i + 1;
+      node_match[std::min( index1, index2 )] = UINT32_MAX - 1;
 
       ++st.mapped_ha;
     }
@@ -678,7 +680,8 @@ private:
     block_map old2new( ntk );
 
     old2new[ntk.get_node( ntk.get_constant( false ) )] = dest.get_constant( false );
-    old2new[ntk.get_node( ntk.get_constant( true ) )] = dest.get_constant( true );
+    if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
+      old2new[ntk.get_node( ntk.get_constant( true ) )] = dest.get_constant( true );
 
     ntk.foreach_pi( [&]( auto const& n ) {
       old2new[ntk.node_to_index( n )] = dest.create_pi();
@@ -698,14 +701,14 @@ private:
       {
         finalize_simple_gate( res, old2new, n );
       }
-      else
+      else if ( node_match[ntk.node_to_index( n )] < UINT32_MAX - 1 )
       {
         finalize_multi_gate( res, old2new, n );
       }
     }
 
     /* create POs */
-    ntk.foreach_po( [&]( auto const& f ) {
+    ntk.foreach_co( [&]( auto const& f ) {
       res.create_po( ntk.is_complemented( f ) ? !old2new[f] : old2new[f] );
     } );
   }
@@ -716,7 +719,8 @@ private:
 
     std::vector<signal<block_network>> children;
     ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
-      children.push_back( old2new[f] ^ ntk.is_complemented( f ) );
+      auto s = old2new[f] ^ ntk.is_complemented( f );
+      children.push_back( s );
     } );
 
     old2new[n] = res.create_node( children, tt );
@@ -725,7 +729,7 @@ private:
   inline void finalize_multi_gate( block_network& res, block_map& old2new, node<Ntk> const& n )
   {
     uint32_t index = node_match[ntk.node_to_index( n )];
-    assert( index < UINT32_MAX );
+    assert( index < UINT32_MAX - 1 );
 
     /* extract the match */
     if ( index & 1 )
@@ -861,9 +865,9 @@ private:
   std::vector<node<Ntk>> topo_order;
 
   const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
-  const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x17, 0x2b, 0x4d, 0x8e };
+  const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x8e, 0xd4, 0x2b, 0x17 };
   const std::array<uint64_t, 2> xor2func = { 0x66, 0x99 };
-  const std::array<uint64_t, 2> xor3func = { 0x69, 0x96 };
+  const std::array<uint64_t, 2> xor3func = { 0x96, 0x69 };
 };
 
 } /* namespace detail */

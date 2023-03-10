@@ -28,6 +28,7 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
+#include <mockturtle/algorithms/experimental/decompose_multioutput.hpp>
 #include <mockturtle/algorithms/map_adders.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
@@ -41,8 +42,8 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, float> exp(
-      "FA", "benchmark", "size", "adders", "runtime" );
+  experiment<std::string, uint32_t, uint32_t, float, bool> exp(
+      "FA", "benchmark", "size", "adders", "runtime", "cec" );
 
   for ( auto const& benchmark : iscas_benchmarks() )
   {
@@ -63,7 +64,11 @@ int main()
 
     std::cout << fmt::format( "Results: Ig:{}\t Fg:{}\t ha:{}\t fa:{}\n", size_before, res.num_gates(), st.mapped_ha, st.mapped_fa );
 
-    exp( benchmark, size_before, st.mapped_fa + st.mapped_ha, to_seconds( st.time_total ) );
+    /* check correctness */
+    aig_network aig_res = decompose_multioutput<block_network, aig_network>( res );
+    bool const cec = abc_cec( aig_res, benchmark );
+
+    exp( benchmark, size_before, st.mapped_fa + st.mapped_ha, to_seconds( st.time_total ), cec );
   }
 
   exp.save();

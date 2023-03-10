@@ -289,7 +289,8 @@ public:
   uint32_t create_po( signal const& f )
   {
     /* increase ref-count to children */
-    _storage->nodes[f.index].data[1].h2++; /* TODO: increase fanout count for output */
+    _storage->nodes[f.index].data[1].h2++;
+    _storage->nodes[f.index].data[2 + f.output].h2++;
     auto const po_index = static_cast<uint32_t>( _storage->outputs.size() );
     _storage->outputs.emplace_back( f.index, ( f.output << 1 ) | f.complement );
     return po_index;
@@ -428,6 +429,7 @@ public:
     for ( auto c : children )
     {
       _storage->nodes[c.index].data[1].h2++; /* TODO: increase fanout count for output */
+      _storage->nodes[c.index].data[2 + c.output].h2++;
     }
 
     set_value( index, 0 );
