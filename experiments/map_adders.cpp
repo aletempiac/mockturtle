@@ -45,7 +45,7 @@ int main()
   experiment<std::string, uint32_t, uint32_t, float, bool> exp(
       "FA", "benchmark", "size", "adders", "runtime", "cec" );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
