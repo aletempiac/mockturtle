@@ -848,6 +848,8 @@ private:
   template<bool DO_AREA>
   bool compute_mapping_match()
   {
+    bool warning_box = false;
+
     for ( auto const& n : topo_order )
     {
       auto const index = ntk.node_to_index( n );
@@ -859,7 +861,7 @@ private:
 
       if ( ntk.is_constant( n ) )
       {
-        /* all terminals have flow 1.0 */
+        /* all terminals have flow 0.0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
         add_zero_cut( index );
@@ -868,13 +870,23 @@ private:
       }
       else if ( ntk.is_pi( n ) )
       {
-        /* all terminals have flow 1.0 */
+        /* all terminals have flow 0.0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = 0.0f;
         /* PIs have the negative phase implemented with an inverter */
         node_data.arrival[1] = lib_inv_delay;
         add_unit_cut( index );
         continue;
+      }
+
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        if ( ntk.is_dont_touch( n ) )
+        {
+          warning_box |= initialize_box( n );
+          continue;
+        }
       }
 
       /* compute cuts for node */
@@ -911,6 +923,11 @@ private:
 
     double area_old = area;
     bool success = set_mapping_refs<false>();
+
+    if ( warning_box )
+    {
+      std::cerr << "[i] MAP WARNING: not mapped don't touch gates are treated as sequential black boxes\n";
+    }
 
     /* round stats */
     if ( ps.verbose )
@@ -1214,6 +1231,19 @@ private:
 
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
         continue;
+      
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        if ( ntk.is_dont_touch( n ) )
+        {
+          if constexpr ( has_has_binding_v<Ntk> )
+          {
+            propagate_data_forward_white_box( n );
+          }
+          continue;
+        }
+      }
 
       /* match positive phase */
       match_phase<DO_AREA>( n, 0u );
@@ -1272,6 +1302,19 @@ private:
     {
       if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
         continue;
+      
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        if ( ntk.is_dont_touch( n ) )
+        {
+          if constexpr ( has_has_binding_v<Ntk> )
+          {
+            propagate_data_forward_white_box( n );
+          }
+          continue;
+        }
+      }
 
       auto index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
@@ -2139,6 +2182,60 @@ private:
     node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
   }
 
+  bool initialize_box( node<Ntk> const& n )
+  {
+    uint32_t index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    add_unit_cut( index );
+
+    node_data.same_match = true;
+
+    /* if it has mapping data propagate the delays and measure the data */
+    if constexpr ( has_has_binding_v<Ntk> )
+    {
+      propagate_data_forward_white_box( n );
+      return false;
+    }
+
+    /* consider as a black box */
+    node_data.flows[0] = node_data.flows[1] = 0.0f;
+    node_data.arrival[0] = 0.0f;
+    node_data.arrival[1] = lib_inv_delay;
+    node_data.area[0] = node_data.area[1] = 0;
+    node_data.flows[0] = 0;
+
+    return true;
+  }
+
+  void propagate_data_forward_white_box( node<Ntk> const& n )
+  {
+    /* TODO: include in all the methods */
+    uint32_t index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    auto const& gate = ntk.get_binding( n );
+
+    /* propagate arrival time */
+    double arrival = 0;
+    ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
+      uint32_t f_index = ntk.node_to_index( ntk.get_node( f ) );
+      uint8_t phase = ntk.is_complemented( f ) ? 1 : 0;
+      double propagation_delay = std::max( gate.pins[i].rise_block_delay, gate.pins[i].fall_block_delay );
+      arrival = std::max( arrival, node_match[f_index].arrival[phase] + propagation_delay );
+    } );
+
+    /* set data */
+    node_data.arrival[0] = arrival;
+    node_data.arrival[1] = arrival + lib_inv_delay;
+    node_data.area[0] = node_data.area[1] = gate.area;
+    node_data.flows[0] = node_data.area[0] / node_data.est_refs[2];
+    node_data.flows[1] = node_data.flows[0] + lib_inv_area;
+  }
+
+  void propagate_data_backward_white_box( uint32_t index )
+  {
+    /* TODO: implement*/
+  }
+
   void match_constants( uint32_t index )
   {
     auto& node_data = node_match[index];
@@ -2361,7 +2458,7 @@ private:
         node_data.phase[mapped_phase] = pin_phase[j];
         node_data.arrival[mapped_phase] = arrival[j] + lib_inv_delay;
         node_data.area[mapped_phase] = area[j]; /* partial area contribution */
-        node_data.flows[mapped_phase] = flow_sum;
+        node_data.flows[mapped_phase] = flow_sum + lib_inv_area; /* TODO: check quality */
 
         assert( node_data.arrival[mapped_phase] < node_data.required[mapped_phase] + epsilon );
       }
