@@ -1825,6 +1825,36 @@ template<class Ntk>
 inline constexpr bool has_get_binding_index_v = has_get_binding_index<Ntk>::value;
 #pragma endregion
 
+#pragma region has_select_dont_touch
+template<class Ntk, class = void>
+struct has_select_dont_touch : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_select_dont_touch<Ntk, std::void_t<decltype( std::declval<Ntk>().select_dont_touch( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_select_dont_touch_v = has_select_dont_touch<Ntk>::value;
+#pragma endregion
+
+#pragma region has_is_dont_touch
+template<class Ntk, class = void>
+struct has_is_dont_touch : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_is_dont_touch<Ntk, std::void_t<decltype( std::declval<Ntk>().is_dont_touch( std::declval<node<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_is_dont_touch_v = has_is_dont_touch<Ntk>::value;
+#pragma endregion
+
 #pragma region has_clear_values
 template<class Ntk, class = void>
 struct has_clear_values : std::false_type

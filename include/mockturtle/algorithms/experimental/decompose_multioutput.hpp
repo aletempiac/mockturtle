@@ -46,11 +46,16 @@
 namespace mockturtle
 {
 
+struct decompose_multioutput_params
+{
+  bool set_multioutput_as_dont_touch{ false };
+};
+
 namespace detail
 {
 
 template<typename NtkSrc, typename NtkDest, typename LeavesIterator>
-void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterator begin, LeavesIterator end, std::unordered_map<uint64_t, signal<NtkDest>>& old_to_new )
+void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterator begin, LeavesIterator end, std::unordered_map<uint64_t, signal<NtkDest>>& old_to_new, decompose_multioutput_params const& ps )
 {
   /* constants */
   old_to_new[ntk.get_constant( false )] = dest.get_constant( false );
@@ -167,6 +172,13 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
           }
           std::cerr << "[e] something went wrong, could not copy node " << ntk.node_to_index( node ) << "\n";
         } while ( false );
+
+        /* set dont touch */
+        if constexpr ( has_select_dont_touch_v<NtkDest> )
+        {
+          if ( ps.set_multioutput_as_dont_touch )
+            dest.select_dont_touch( dest.get_node( old_to_new[f] ) );
+        }
 
         /* copy name */
         if constexpr ( has_has_name_v<NtkSrc> && has_get_name_v<NtkSrc> && has_set_name_v<NtkDest> )
@@ -358,7 +370,7 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
  * - `has_multioutput`
  */
 template<class NtkSrc, class NtkDest = NtkSrc>
-[[nodiscard]] NtkDest decompose_multioutput( NtkSrc const& ntk )
+[[nodiscard]] NtkDest decompose_multioutput( NtkSrc const& ntk, decompose_multioutput_params const& ps = {} )
 {
   static_assert( is_network_type_v<NtkSrc>, "NtkSrc is not a network type" );
   static_assert( is_network_type_v<NtkDest>, "NtkDest is not a network type" );
@@ -384,7 +396,7 @@ template<class NtkSrc, class NtkDest = NtkSrc>
   detail::clone_inputs( ntk, dest, cis, false );
 
   std::unordered_map<uint64_t, signal<NtkDest>> old_to_new;
-  detail::decompose_multioutput_impl( ntk, dest, cis.begin(), cis.end(), old_to_new );
+  detail::decompose_multioutput_impl( ntk, dest, cis.begin(), cis.end(), old_to_new, ps );
 
   return dest;
 }
