@@ -841,11 +841,6 @@ private:
       }
     }
 
-    // if ( ps.map_multioutput )
-    // {
-    //   check_unused_multioutput();
-    // }
-
     return true;
   }
 
@@ -3316,7 +3311,7 @@ private:
         }
 
         /* count multioutput gates */
-        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX && node_data.multioutput_match[phase] )
+        if ( ps.map_multioutput && node_tuple_match[index] < UINT32_MAX - 1 && node_data.multioutput_match[phase] )
         {
           ++multioutput_count;
         }
@@ -3329,7 +3324,7 @@ private:
         create_lut_for_gate( res, old2new, index, phase );
 
         /* count multioutput gates */
-        if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX && node_data.multioutput_match[phase] )
+        if ( ps.map_multioutput && node_tuple_match[index] < UINT32_MAX - 1 && node_data.multioutput_match[phase] )
         {
           ++multioutput_count;
         }
@@ -3769,12 +3764,9 @@ private:
     multi_ps.minimize_truth_table = false;
     multi_cuts_t multi_cuts = fast_cut_enumeration<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>( ntk, multi_ps );
 
-    /* TODO: Boolean matching */
-
     /* Multi-output matching */
     multi_enumerate_matches( multi_cuts );
     multi_compute_matches( multi_cuts );
-    /* TODO: remove filtering? */
     multi_filter_and_match( multi_cuts ); /* it also adds the tuple for node mapping */
   }
 
@@ -3828,8 +3820,10 @@ private:
       uint32_t cut_index = 0;
       for ( auto& cut : multi_cuts.cuts( ntk.node_to_index( n ) ) )
       {
-        kitty::static_truth_table<max_multioutput_cut_size> tt = multi_cuts.truth_table( *cut );\
-        uint64_t id = library.get_multi_function_id( tt._bits );
+        kitty::static_truth_table<max_multioutput_cut_size> tt = multi_cuts.truth_table( *cut );
+        /* reduce support for matching ID */
+        uint64_t tt_id = ( cut->size() < 3 ) ? ( tt._bits & 0xF ) : tt._bits;
+        uint64_t id = library.get_multi_function_id( tt_id );
 
         if ( !id )
         {
@@ -3930,7 +3924,7 @@ private:
 
       /* remove overlapping multi-output gates */
       /* TODO: this constraint could be relaxed -> 1 output has be be part of maximum one output tuple */
-      if ( !multi_gate_check_overlapping( index1, index2, cut1 ) )
+      if ( multi_gate_check_overlapping( index1, index2, cut1 ) )
         continue;
 
       /* copy cuts */

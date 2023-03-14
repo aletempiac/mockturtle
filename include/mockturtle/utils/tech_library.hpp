@@ -262,7 +262,7 @@ public:
   /*! \brief Get the multi-output gate function ID for a single output.
    *
    * Returns the function ID of a multi-output gate output if matched. This function
-   * supports up to 6 inputs. Returns a constant false in case of no match.
+   * supports up to 6 inputs. Returns zero in case of no match.
    */
   uint64_t get_multi_function_id( uint64_t const& tt ) const
   {
@@ -830,10 +830,10 @@ private:
       /* NPN enumeration of the single outputs */
       for ( auto const& gate : multi_gate )
       {
-        exact_npn_enumeration( gate.function, [&]( auto const& tts, auto neg, auto const& perm ) {
+        exact_npn_enumeration( gate.function, [&]( auto const& tt, auto neg, auto const& perm ) {
           ( void ) neg;
           ( void ) perm;
-          _multi_funcs[tts._bits[0]] = gate.function._bits[0];
+          _multi_funcs[tt._bits[0]] = gate.function._bits[0];
         } );
       }
     }
