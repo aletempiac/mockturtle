@@ -65,6 +65,9 @@ struct map_adders_params
    */
   cut_enumeration_params cut_enumeration_ps{};
 
+  /*! \brief Map inverted (NAND2-XNOR2, MIN3-XNOR3) */
+  bool map_inverted{ false };
+
   /*! \brief Be verbose */
   bool verbose{ false };
 };
@@ -787,8 +790,15 @@ private:
       ++ctr;
     }
 
-    signal<block_network> ha = res.create_ha( children[0], children[1] );
+    if ( ps.map_inverted )
+    {
+      signal<block_network> ha = res.create_hai( children[0], children[1] );
+      old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = ha ^ ( ( neg_and >> 2 ) ? false : true );
+      old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( ha ) ^ ( neg_xor ? false : true );
+      return;
+    }
 
+    signal<block_network> ha = res.create_ha( children[0], children[1] );
     old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = ha ^ ( ( neg_and >> 2 ) ? true : false );
     old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( ha ) ^ ( neg_xor ? true : false );
   }
@@ -821,6 +831,11 @@ private:
       ++neg_maj;
     }
 
+    if ( ps.map_inverted )
+    {
+      neg_maj = ( ~neg_maj ) & 0x7;
+    }
+
     tt = xor_is_1 ? tt1 : tt2;
     uint32_t neg_xor = 0;
     for ( uint32_t func : xor3func )
@@ -844,8 +859,15 @@ private:
       ++ctr;
     }
 
-    signal<block_network> fa = res.create_fa( children[0], children[1], children[2] );
+    if ( ps.map_inverted )
+    {
+      signal<block_network> fa = res.create_fai( children[0], children[1], children[2] );
+      old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = fa;
+      old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( fa ) ^ ( neg_xor ? false : true );
+      return;
+    }
 
+    signal<block_network> fa = res.create_fa( children[0], children[1], children[2] );
     old2new[ntk.index_to_node( xor_is_1 ? index2 : index1 )] = fa;
     old2new[ntk.index_to_node( xor_is_1 ? index1 : index2 )] = res.next_output_pin( fa ) ^ ( neg_xor ? true : false );
   }

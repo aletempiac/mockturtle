@@ -106,7 +106,7 @@ public:
     }
   }
 
-  bool is_dont_touch( node const& n )
+  bool is_dont_touch( node const& n ) const
   {
     return _dont_touch.find( Ntk::node_to_index( n ) ) != _dont_touch.end();
   }

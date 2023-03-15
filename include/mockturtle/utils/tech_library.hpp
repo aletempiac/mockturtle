@@ -302,6 +302,12 @@ public:
     return _gates;
   }
 
+  /*! \brief Returns multioutput gates. */
+  const std::vector<std::vector<composed_gate<NInputs>>>& get_multioutput_gates() const
+  {
+    return _super.get_multioutput_library();
+  }
+
   /*! \brief Returns the number of multi-output gates loaded in the library. */
   const uint32_t num_multioutput_gates() const
   {

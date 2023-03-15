@@ -1580,6 +1580,16 @@ private:
       /* continue if not referenced in the cover */
       if ( node_match[index].map_refs[2] == 0u )
         continue;
+      
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        if ( ntk.is_dont_touch( *it ) )
+        {
+          set_mapping_refs_dont_touch<ELA>( *it );
+          continue;
+        }
+      }
 
       unsigned use_phase = node_data.best_supergate[0] == nullptr ? 1u : 0u;
 
@@ -1675,7 +1685,7 @@ private:
     if constexpr ( has_has_binding_v<Ntk> )
     {
       /* increase area */
-      area += node_match[index].area;
+      area += node_match[index].area[0];
       if ( node_match[index].map_refs[1] )
         area += lib_inv_area;
     }
@@ -2328,7 +2338,7 @@ private:
       uint32_t f_index = ntk.node_to_index( ntk.get_node( f ) );
       uint8_t phase = ntk.is_complemented( f ) ? 1 : 0;
       double propagation_delay = std::max( gate.pins[i].rise_block_delay, gate.pins[i].fall_block_delay );
-      node_match[f_index].required[phase] = std::min( node_match[f_index].required[phase], node_match[f_index].required[0] - propagation_delay );
+      node_match[f_index].required[phase] = std::min( node_match[f_index].required[phase], node_data.required[0] - propagation_delay );
     } );
   }
 
@@ -3168,6 +3178,15 @@ private:
       count = switch_activity[ntk.node_to_index( n )];
     else
       count = node_data.area[phase];
+    
+    /* don't touch box */
+    if constexpr ( has_is_dont_touch_v<Ntk> )
+    {
+      if ( ntk.is_dont_touch( n ) )
+      {
+        return count;
+      }
+    }
 
     uint8_t ctr = 0;
     for ( auto leaf : cut )
@@ -3241,6 +3260,15 @@ private:
       count = switch_activity[ntk.node_to_index( n )];
     else
       count = node_data.area[phase];
+    
+    /* don't touch box */
+    if constexpr ( has_is_dont_touch_v<Ntk> )
+    {
+      if ( ntk.is_dont_touch( n ) )
+      {
+        return count;
+      }
+    }
 
     uint8_t ctr = 0;
     for ( auto leaf : cut )
@@ -3332,6 +3360,15 @@ private:
       count = switch_activity[ntk.node_to_index( n )];
     else
       count = node_data.area[phase];
+    
+    /* don't touch box */
+    if constexpr ( has_is_dont_touch_v<Ntk> )
+    {
+      if ( ntk.is_dont_touch( n ) )
+      {
+        return count;
+      }
+    }
 
     uint8_t ctr = 0;
     for ( auto leaf : cut )
@@ -3494,7 +3531,7 @@ private:
       {
         if ( ntk.is_dont_touch( n ) )
         {
-          clone_box();
+          clone_box( res, old2new, index );
           continue;
         }
       }
@@ -3628,13 +3665,30 @@ private:
 
   void clone_box( binding_view<klut_network>& res, klut_map& old2new, uint32_t index )
   {
-    /* TODO: continue implementing */
-    // if constexpr ( has_has_binding_v<Ntk> )
-    // {
-    // }
-    // else
-    // {
-    // }
+    node<Ntk> n = ntk.index_to_node( index );
+    std::vector<signal<klut_network>> children;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      children.push_back( old2new[ntk.get_node( f )][ntk.is_complemented( f ) ? 1 : 0] );
+    } );
+
+    /* create the node */
+    auto const& tt = ntk.node_function( n );
+    auto f = res.create_node( children, tt );
+
+    /* add the node in the data structure */
+    old2new[index][0] = f;
+    if ( node_match[index].map_refs[1] )
+    {
+      old2new[index][1] = res.create_not( f );
+      res.add_binding( res.get_node( old2new[index][1] ), lib_inv_id );
+    }
+
+    if constexpr ( has_has_binding_v<Ntk> )
+    {
+      if ( ntk.has_binding( n ) )
+        res.add_binding( res.get_node( f ), ntk.get_binding_index( n ) );
+    }
   }
 
 #pragma region Cuts and matching utils

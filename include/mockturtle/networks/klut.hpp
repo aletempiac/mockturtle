@@ -578,7 +578,7 @@ public:
   {
     const auto nfanin = _storage->nodes[n].children.size();
 
-    std::vector<typename Iterator::value_type> tts( begin, end );
+    std::vector<typename std::iterator_traits<Iterator>::value_type> tts( begin, end );
 
     assert( nfanin != 0 );
     assert( tts.size() == nfanin );

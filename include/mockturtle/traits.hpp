@@ -1825,6 +1825,21 @@ template<class Ntk>
 inline constexpr bool has_get_binding_index_v = has_get_binding_index<Ntk>::value;
 #pragma endregion
 
+#pragma region has_add_binding
+template<class Ntk, class = void>
+struct has_add_binding : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_add_binding<Ntk, std::void_t<decltype( std::declval<Ntk>().add_binding( std::declval<node<Ntk>>(), uint32_t() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_add_binding_v = has_add_binding<Ntk>::value;
+#pragma endregion
+
 #pragma region has_select_dont_touch
 template<class Ntk, class = void>
 struct has_select_dont_touch : std::false_type

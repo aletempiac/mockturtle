@@ -392,9 +392,19 @@ public:
     return _create_node( { a, b }, { 4, 12 } );
   }
 
+  signal create_hai( signal a, signal b )
+  {
+    return _create_node( { a, b }, { 5, 13 } );
+  }
+
   signal create_fa( signal a, signal b, signal c )
   {
     return _create_node( { a, b, c }, { 14, 18 } );
+  }
+
+  signal create_fai( signal a, signal b, signal c )
+  {
+    return _create_node( { a, b, c }, { 15, 19 } );
   }
 #pragma endregion
 
@@ -837,7 +847,7 @@ public:
   {
     const auto nfanin = _storage->nodes[n].children.size();
 
-    std::vector<typename Iterator::value_type> tts( begin, end );
+    std::vector<typename std::iterator_traits<Iterator>::value_type> tts( begin, end );
 
     assert( nfanin != 0 );
     assert( tts.size() == nfanin );
