@@ -796,6 +796,7 @@ private:
     if ( ps.use_fast_area_recovery )
     {
       compute_required_time( true );
+      reindex_multioutput_data();
       while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
       {
         if ( !compute_mapping_exact_reversed<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
@@ -1375,21 +1376,6 @@ private:
     /* this method works in reverse topological order: less nodes to update (faster) */
     /* instead of propagating arrival times forward, it propagates required times backwards */
 
-    /* re-index the multioutput list using the lowest index output instead of the greatest one */
-    if ( ps.map_multioutput )
-    {
-      for ( auto i = ntk.num_pis(); i < topo_order.size(); ++i )
-      {
-        uint32_t tuple_index = node_tuple_match[i];
-        if ( tuple_index >= UINT32_MAX - 1 )
-          continue;
-
-        multi_match_t const& tuple_data = multi_node_match[tuple_index];
-        node_tuple_match[i] = UINT32_MAX - 1; /* arbitrary value to skip the required time propagation */
-        node_tuple_match[tuple_data[0].node_index] = tuple_index;
-      }
-    }
-
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
@@ -1401,6 +1387,20 @@ private:
       /* skip not mapped nodes */
       if ( node_match[index].map_refs[2] == 0 )
         continue;
+
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        node<Ntk> n = ntk.index_to_node( index );
+        if ( ntk.is_dont_touch( n ) )
+        {
+          if constexpr ( has_has_binding_v<Ntk> )
+          {
+            propagate_data_backward_white_box( n );
+          }
+          continue;
+        }
+      }
 
       /* recursively deselect the best cut shared between
        * the two phases if in use in the cover */
@@ -1461,6 +1461,20 @@ private:
 
   inline void match_propagate_required( uint32_t index )
   {
+    /* don't touch box */
+    if constexpr ( has_is_dont_touch_v<Ntk> )
+    {
+      node<Ntk> n = ntk.index_to_node( index );
+      if ( ntk.is_dont_touch( n ) )
+      {
+        if constexpr ( has_has_binding_v<Ntk> )
+        {
+          propagate_data_backward_white_box( n );
+        }
+        return;
+      }
+    }
+
     auto& node_data = node_match[index];
 
     /* propagate required time through the leaves */
@@ -1642,6 +1656,31 @@ private:
     return true;
   }
 
+  template<bool ELA>
+  inline void set_mapping_refs_dont_touch( node<Ntk> const& n )
+  {
+    if constexpr ( !ELA )
+    {
+      /* reference node */
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        uint32_t leaf = ntk.node_to_index( ntk.get_node( f ) );
+        uint8_t phase = ntk.is_complemented( f ) ? 1 : 0;
+        node_match[leaf].map_refs[2]++;
+        node_match[leaf].map_refs[phase]++;
+      } );
+    }
+
+    const auto index = ntk.node_to_index( n );
+
+    if constexpr ( has_has_binding_v<Ntk> )
+    {
+      /* increase area */
+      area += node_match[index].area;
+      if ( node_match[index].map_refs[1] )
+        area += lib_inv_area;
+    }
+  }
+
   void compute_required_time( bool exit_early = false )
   {
     for ( auto i = 0u; i < node_match.size(); ++i )
@@ -1728,6 +1767,24 @@ private:
       /* reset required time */
       node_data.required[0] = std::numeric_limits<float>::max();
       node_data.required[1] = std::numeric_limits<float>::max();
+
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        node<Ntk> n = ntk.index_to_node( index );
+        if ( ntk.is_dont_touch( n ) )
+        {
+          if constexpr ( has_has_binding_v<Ntk> )
+          {
+            propagate_data_forward_white_box( n );
+            if ( node_data.map_refs[2] )
+              area += node_data.area[0];
+            if ( node_data.map_refs[1] )
+              area += lib_inv_area;
+          }
+          continue;
+        }
+      }
 
       uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
 
@@ -2181,6 +2238,24 @@ private:
     node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
     node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
   }
+  
+  void reindex_multioutput_data()
+  {
+    /* re-index the multioutput list using the lowest index output instead of the greatest one */
+    if ( !ps.map_multioutput )
+      return;
+
+    for ( auto i = ntk.num_pis(); i < topo_order.size(); ++i )
+    {
+      uint32_t tuple_index = node_tuple_match[i];
+      if ( tuple_index >= UINT32_MAX - 1 )
+        continue;
+
+      multi_match_t const& tuple_data = multi_node_match[tuple_index];
+      node_tuple_match[i] = UINT32_MAX - 1; /* arbitrary value to skip the required time propagation */
+      node_tuple_match[tuple_data[0].node_index] = tuple_index;
+    }
+  }
 
   bool initialize_box( node<Ntk> const& n )
   {
@@ -2209,7 +2284,6 @@ private:
 
   void propagate_data_forward_white_box( node<Ntk> const& n )
   {
-    /* TODO: include in all the methods */
     uint32_t index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
     auto const& gate = ntk.get_binding( n );
@@ -2231,9 +2305,31 @@ private:
     node_data.flows[1] = node_data.flows[0] + lib_inv_area;
   }
 
-  void propagate_data_backward_white_box( uint32_t index )
+  void propagate_data_backward_white_box( node<Ntk> const& n )
   {
-    /* TODO: implement*/
+    uint32_t index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    auto const& gate = ntk.get_binding( n );
+
+    assert( node_data.map_refs[0] || node_data.map_refs[1] );
+
+    /* propagate required time over the output inverter if present */
+    if ( node_data.map_refs[1] > 0 )
+    {
+      node_data.required[0] = std::min( node_data.required[0], node_data.required[1] - lib_inv_delay );
+    }
+
+    if ( node_data.map_refs[0] )
+      assert( node_data.arrival[0] < node_data.required[0] + epsilon );
+    if ( node_data.map_refs[1] )
+      assert( node_data.arrival[1] < node_data.required[1] + epsilon );
+
+    ntk.foreach_fanin( n, [&]( auto const& f, auto i ) {
+      uint32_t f_index = ntk.node_to_index( ntk.get_node( f ) );
+      uint8_t phase = ntk.is_complemented( f ) ? 1 : 0;
+      double propagation_delay = std::max( gate.pins[i].rise_block_delay, gate.pins[i].fall_block_delay );
+      node_match[f_index].required[phase] = std::min( node_match[f_index].required[phase], node_match[f_index].required[0] - propagation_delay );
+    } );
   }
 
   void match_constants( uint32_t index )
@@ -3393,6 +3489,16 @@ private:
       if ( node_data.map_refs[2] == 0u )
         continue;
 
+      /* don't touch box */
+      if constexpr ( has_is_dont_touch_v<Ntk> )
+      {
+        if ( ntk.is_dont_touch( n ) )
+        {
+          clone_box();
+          continue;
+        }
+      }
+
       unsigned phase = ( node_data.best_supergate[0] != nullptr ) ? 0 : 1;
 
       /* add used cut */
@@ -3518,6 +3624,17 @@ private:
     auto f = res.create_node( children_local, gate.root->function );
     res.add_binding( res.get_node( f ), gate.root->id );
     return f;
+  }
+
+  void clone_box( binding_view<klut_network>& res, klut_map& old2new, uint32_t index )
+  {
+    /* TODO: continue implementing */
+    // if constexpr ( has_has_binding_v<Ntk> )
+    // {
+    // }
+    // else
+    // {
+    // }
   }
 
 #pragma region Cuts and matching utils
