@@ -39,7 +39,6 @@
 #include <kitty/static_truth_table.hpp>
 #include <parallel_hashmap/phmap.h>
 
-#include "detail/mffc_utils.hpp"
 #include "cut_enumeration.hpp"
 #include "../networks/block.hpp"
 #include "../networks/storage.hpp"
@@ -686,8 +685,8 @@ private:
     if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
       old2new[ntk.get_node( ntk.get_constant( true ) )] = dest.get_constant( true );
 
-    ntk.foreach_pi( [&]( auto const& n ) {
-      old2new[ntk.node_to_index( n )] = dest.create_pi();
+    ntk.foreach_ci( [&]( auto const& n ) {
+      old2new[n] = dest.create_pi();
     } );
     return { dest, old2new };
   }

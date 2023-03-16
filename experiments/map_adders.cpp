@@ -64,7 +64,7 @@ int main()
     aig_network aig_res = decompose_multioutput<block_network, aig_network>( res );
     bool const cec = benchmark == "hyp" ? true : abc_cec( aig_res, benchmark );
 
-    exp( benchmark, size_before, st.mapped_ha, st.mapped_ha, to_seconds( st.time_total ), cec );
+    exp( benchmark, size_before, st.mapped_ha, st.mapped_fa, to_seconds( st.time_total ), cec );
   }
 
   exp.save();
