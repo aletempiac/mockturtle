@@ -111,6 +111,9 @@ struct emap_params
   /*! \brief Maps multi-output gates */
   bool map_multioutput{ false };
 
+  /*! \brief Decompose multi-input primitive nodes */
+  bool decompose_multi_input{ false };
+
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ false };
 
@@ -646,6 +649,7 @@ public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
   static constexpr uint32_t max_cut_leaves = 6;
+  static constexpr bool activate_decomposition = Ntk::max_fanin_size > Ntk::min_fanin_size;
   using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
@@ -895,6 +899,11 @@ private:
       if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
       {
         merge_cuts2<DO_AREA>( n );
+      }
+      else if ( activate_decomposition )
+      {
+        // if ( ps.decompose_multi_input )
+          merge_cuts<DO_AREA>( n ); /* TODO: implement */
       }
       else
       {

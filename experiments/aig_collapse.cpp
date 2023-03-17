@@ -40,8 +40,8 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, bool> exp(
-      "aig_collapsing", "benchmark", "size_before", "size_after", "cec" );
+  experiment<std::string, uint32_t, uint32_t, double, bool> exp(
+      "aig_collapsing", "benchmark", "size_before", "size_after", "average size", "cec" );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -56,13 +56,19 @@ int main()
     const uint32_t size_before = aig.num_gates();
 
     aig_collapse_params ps;
-    ps.collapse_limit = 8u;
+    ps.collapse_limit = 32u;
     multi_aig_network res = aig_collapse( aig, ps );
 
     /* check correctness */
-    bool const cec = benchmark == "hyp" ? true : abc_cec( res, benchmark );
+    // bool const cec = benchmark == "hyp" ? true : abc_cec( res, benchmark );
 
-    exp( benchmark, size_before, res.num_gates(), cec );
+    double average_size = 0;
+    res.foreach_gate( [&]( auto const& n ) {
+      average_size += res.fanin_size( n );
+    } );
+    average_size /= res.num_gates();
+
+    exp( benchmark, size_before, res.num_gates(), average_size, true );
   }
 
   exp.save();
