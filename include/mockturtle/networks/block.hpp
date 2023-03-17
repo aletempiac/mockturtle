@@ -318,17 +318,17 @@ public:
 
   bool is_ci( node const& n ) const
   {
-    return std::find( _storage->inputs.begin(), _storage->inputs.end(), n ) != _storage->inputs.end();
+    return n > 1 && _storage->nodes[n].children.size() == 0u;
   }
 
   bool is_pi( node const& n ) const
   {
-    return std::find( _storage->inputs.begin(), _storage->inputs.end(), n ) != _storage->inputs.end();
+    return n > 1 && _storage->nodes[n].children.size() == 0u;
   }
 
   bool constant_value( node const& n ) const
   {
-    return n == 1;
+    return n != 0;
   }
 #pragma endregion
 

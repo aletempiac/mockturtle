@@ -126,7 +126,7 @@ int main()
   /* library to map to technology */
   fmt::print( "[i] processing technology library\n" );
   std::vector<gate> gates;
-  std::ifstream in( "asap7.genlib" );
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
