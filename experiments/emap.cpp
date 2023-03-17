@@ -76,8 +76,6 @@ int main()
 
   /* library to map to technology */
   std::vector<gate> gates;
-  // std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
-  // std::ifstream in( "../../../asap7_lib/asap.genlib" );
   std::stringstream in( mcnc_library );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
@@ -91,9 +89,6 @@ int main()
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
-    // if ( benchmark != "bar" )
-    //   continue;
-
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -106,19 +101,10 @@ int main()
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_params ps;
-    ps.cut_enumeration_ps.minimize_truth_table = true;
-    ps.cut_enumeration_ps.cut_limit = 16;
-    ps.area_oriented_mapping = false;
-    ps.remove_dominated_cuts = false;
-    ps.allow_node_duplication = true;
-    ps.use_matching_prioritization = false;
-    ps.use_fast_area_recovery = true;
-    // ps.relax_required = 1;
-    ps.verbose = false;
+    ps.verbose = true;
     emap_stats st;
 
     binding_view<klut_network> res = emap<aig_network, 5>( aig, tech_lib, ps, &st );
-    // res.report_gates_usage();
 
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
 

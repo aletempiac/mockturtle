@@ -137,6 +137,8 @@ struct emap_stats
   double delay{ 0 };
   /*! \brief Power result. */
   double power{ 0 };
+  /*! \brief Power result. */
+  uint32_t inverters{ 0 };
 
   /*! \brief Mapped multi-output gates. */
   uint32_t multioutput_gates{ 0 };
@@ -199,7 +201,6 @@ struct cut_enumeration_emap_cut
 struct cut_enumeration_emap_multi_cut
 {
   /* stats */
-  // bool is_xor{ false };
   uint64_t id{ 0 };
 };
 
@@ -941,11 +942,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1183,11 +1184,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1284,11 +1285,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1361,9 +1362,9 @@ private:
       float area_gain = float( ( area_old - area ) / area_old * 100 );
       std::stringstream stats{};
       if constexpr ( SwitchActivity )
-        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       else
-        stats << fmt::format( "[i] Area     : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Area     : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       st.round_stats.push_back( stats.str() );
     }
 
@@ -1450,9 +1451,9 @@ private:
       float area_gain = float( ( area_old - area ) / area_old * 100 );
       std::stringstream stats{};
       if constexpr ( SwitchActivity )
-        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       else
-        stats << fmt::format( "[i] Area Rev : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Area Rev : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       st.round_stats.push_back( stats.str() );
     }
 
@@ -1547,6 +1548,7 @@ private:
 
     /* compute current area and update mapping refs in top-down order */
     area = 0.0f;
+    inv = 0;
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       const auto index = ntk.node_to_index( *it );
@@ -1573,6 +1575,7 @@ private:
         {
           /* Add inverter area over the negated fanins */
           area += lib_inv_area;
+          ++inv;
         }
         continue;
       }
@@ -1621,6 +1624,7 @@ private:
         if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
         {
           area += lib_inv_area;
+          ++inv;
         }
       }
 
@@ -1687,7 +1691,10 @@ private:
       /* increase area */
       area += node_match[index].area[0];
       if ( node_match[index].map_refs[1] )
+      {
         area += lib_inv_area;
+        ++inv;
+      }
     }
   }
 
@@ -1754,6 +1761,7 @@ private:
   void propagate_arrival_times()
   {
     area = 0.0f;
+    inv = 0;
     for ( auto const& n : topo_order )
     {
       auto index = ntk.node_to_index( n );
@@ -1770,6 +1778,7 @@ private:
         {
           /* Add inverter area over the negated fanins */
           area += lib_inv_area;
+          ++inv;
         }
         continue;
       }
@@ -1790,7 +1799,10 @@ private:
             if ( node_data.map_refs[2] )
               area += node_data.area[0];
             if ( node_data.map_refs[1] )
+            {
               area += lib_inv_area;
+              ++inv;
+            }
           }
           continue;
         }
@@ -1819,6 +1831,7 @@ private:
         if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
         {
           area += lib_inv_area;
+          ++inv;
         }
       }
 
@@ -3120,7 +3133,7 @@ private:
     if ( ps.verbose )
     {
       float area_gain = float( ( area_old - area ) / area_old * 100 );
-      std::string stats = fmt::format( "[i] Cleaning : Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+      std::string stats = fmt::format( "[i] Cleaning : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
       st.round_stats.push_back( stats );
     }
 
@@ -3462,7 +3475,7 @@ private:
 
         area_gain = float( ( area_old - area ) / area_old * 100 );
 
-        stats << fmt::format( "[i] Buffering: Delay = {:>12.2f}  Area = {:>12.2f}  {:>5.2f} %\n", delay, area, area_gain );
+        stats << fmt::format( "[i] Buffering: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
         st.round_stats.push_back( stats.str() );
       }
     }
@@ -4495,9 +4508,10 @@ private:
   emap_params const& ps;
   emap_stats& st;
 
-  uint32_t iteration{ 0 }; /* current mapping iteration */
-  double delay{ 0.0f };    /* current delay of the mapping */
-  double area{ 0.0f };     /* current area of the mapping */
+  uint32_t iteration{ 0 };  /* current mapping iteration */
+  double delay{ 0.0f };     /* current delay of the mapping */
+  double area{ 0.0f };      /* current area of the mapping */
+  uint32_t inv{ 0 };        /* current inverter count */
 
   /* lib inverter info */
   float lib_inv_area;

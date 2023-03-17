@@ -91,6 +91,10 @@ enum class classification_type : uint32_t
    *  Matching by N-canonization: best for more
    * than ~200 library gates */
   p_configurations = 1,
+
+  /*! \brief generate the n configurations (2^n)
+   *  Direct fast matching, less quality */
+  n_configurations = 2,
 };
 
 struct tech_library_params
@@ -510,6 +514,14 @@ private:
           /* NP enumeration of the function */
           const auto tt = gate.function;
           kitty::exact_np_enumeration( tt, on_np );
+        }
+        else if ( Configuration == classification_type::n_configurations )
+        {
+          /* N enumeration of the function */
+          const auto tt = gate.function;
+          std::vector<uint8_t> pin_order( tt.num_vars() );
+          std::iota( pin_order.begin(), pin_order.end(), 0 );
+          kitty::exact_n_enumeration( tt, [&]( auto const& tt, auto neg ) { on_np( tt, neg, pin_order ); } );
         }
         else
         {
