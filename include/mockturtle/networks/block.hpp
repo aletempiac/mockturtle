@@ -209,6 +209,11 @@ public:
     _init();
   }
 
+  block_network clone() const
+  {
+    return { std::make_shared<block_storage>( *_storage ) };
+  }
+
 protected:
   inline void _init()
   {

@@ -28,11 +28,10 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
-#include <mockturtle/algorithms/experimental/decompose_multioutput.hpp>
-#include <mockturtle/algorithms/map_adders.hpp>
+#include <mockturtle/algorithms/aig_collapse.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
-#include <mockturtle/networks/block.hpp>
+#include <mockturtle/networks/multi_aig.hpp>
 
 #include <experiments.hpp>
 
@@ -41,8 +40,8 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, uint32_t, float, bool> exp(
-      "map_adders", "benchmark", "size", "HA", "FA", "runtime", "cec" );
+  experiment<std::string, uint32_t, uint32_t, bool> exp(
+      "aig_collapsing", "benchmark", "size_before", "size_after", "cec" );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -56,15 +55,14 @@ int main()
 
     const uint32_t size_before = aig.num_gates();
 
-    map_adders_params ps;
-    map_adders_stats st;
-    block_network res = map_adders( aig, ps, &st );
+    aig_collapse_params ps;
+    ps.collapse_limit = 8u;
+    multi_aig_network res = aig_collapse( aig, ps );
 
     /* check correctness */
-    aig_network aig_res = decompose_multioutput<block_network, aig_network>( res );
-    bool const cec = benchmark == "hyp" ? true : abc_cec( aig_res, benchmark );
+    bool const cec = benchmark == "hyp" ? true : abc_cec( res, benchmark );
 
-    exp( benchmark, size_before, st.mapped_ha, st.mapped_fa, to_seconds( st.time_total ), cec );
+    exp( benchmark, size_before, res.num_gates(), cec );
   }
 
   exp.save();
