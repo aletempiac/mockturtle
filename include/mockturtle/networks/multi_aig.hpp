@@ -731,10 +731,12 @@ public:
   iterates_over_truth_table_t<Iterator>
   compute( node const& n, Iterator begin, Iterator end ) const
   {
+    const uint32_t fanin_size = _storage->nodes[n].children.size();
     assert( fanin_size != 0 );
-    assert( std::distance( begin, end ) == fanin_size );
 
-    const auto fanin_size = _storage->nodes[n].children.size();
+    /* assert removed to support computation for a fanin subset */
+    // assert( std::distance( begin, end ) == fanin_size );
+
     auto const& c0 = _storage->nodes[n].children[0];
     typename std::iterator_traits<Iterator>::value_type tt = c0.weight ? ~( *begin++ ) : *begin++;
 

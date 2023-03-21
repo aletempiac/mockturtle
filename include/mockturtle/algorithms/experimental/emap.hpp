@@ -856,6 +856,8 @@ private:
   {
     bool warning_box = false;
 
+    init_decomposition_data();
+
     for ( auto const& n : topo_order )
     {
       auto const index = ntk.node_to_index( n );
@@ -902,8 +904,13 @@ private:
       }
       else if ( activate_decomposition )
       {
-        // if ( ps.decompose_multi_input )
-          merge_cuts<DO_AREA>( n ); /* TODO: implement */
+        if ( ps.decompose_multi_input && ntk.fanin_size( n ) > Ntk::min_fanin_size )
+        {
+          merge_cuts_decompose<DO_AREA>( n ); /* TODO: implement */
+          return false;
+        }
+        else
+          merge_cuts2<DO_AREA>( n );
       }
       else
       {
@@ -977,10 +984,8 @@ private:
 
     /* compute cuts */
     const auto fanin = 2;
-    uint32_t pairs{ 1 };
-    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this]( auto child, auto i ) {
       lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
-      pairs *= static_cast<uint32_t>( lcuts[i]->size() );
     } );
     lcuts[2] = &cuts[index];
     auto& rcuts = *lcuts[fanin];
@@ -1046,12 +1051,10 @@ private:
     }
 
     /* compute cuts */
-    uint32_t pairs{ 1 };
     std::vector<uint32_t> cut_sizes;
-    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs, &cut_sizes]( auto child, auto i ) {
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &cut_sizes]( auto child, auto i ) {
       lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
       cut_sizes.push_back( static_cast<uint32_t>( lcuts[i]->size() ) );
-      pairs *= cut_sizes.back();
     } );
     const auto fanin = cut_sizes.size();
     lcuts[fanin] = &cuts[index];
@@ -1133,6 +1136,217 @@ private:
     cuts_total += rcuts.size();
 
     add_unit_cut( index );
+  }
+
+  template<bool DO_AREA>
+  void merge_cuts_decompose( node<Ntk> const& n )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
+    cut_t best_cut;
+
+    if constexpr ( DO_AREA )
+    {
+      sort = emap_cut_sort_type::AREA;
+    }
+
+    /* load all the input cuts */
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this]( auto child, auto i ) {
+      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
+      lcuts_n[i] = i;
+    } );
+    auto const fanin = ntk.fanin_size( n );
+    lcuts[fanin] = &cuts[index];
+    cut_chain.clear();
+
+    /* compute all the possible cut pairs */
+    uint32_t set_index = 0;
+    for ( uint32_t i = 0; i < fanin - 1; ++i )
+    {
+      for ( uint32_t j = i + 1; j < fanin; ++j )
+      {
+        merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[set_index], i, j, sort );
+        pcuts_c[set_index][0] = i;
+        pcuts_c[set_index][1] = j;
+        ++set_index;
+      }
+    }
+
+    /* pick the best cut pair */
+    uint32_t new_id = fanin;
+    uint32_t best = merge_cuts_decompose_best_pair<DO_AREA>( set_index );
+    cut_chain.push_back( best );
+    auto& children = pcuts_c[best]; /* TODO: remove, only for printing */
+    std::cout << fmt::format( "Picking {} with children {} and {}\n", best, children[0], children[1] );
+
+    /* remove the other cut sets involving the same nodes and load new set in lcuts*/
+    merge_cuts_decompose_load_set( best, fanin - 1 /* -k */, new_id );
+
+    /* Loop: recombine the selected cut with the active leaves */
+    uint32_t k = 1;
+    uint32_t remove_i = 0;
+    for ( uint32_t j = 0; j < fanin - 1 - k; ++j )
+    {
+      /* get new cut location */
+      uint32_t loc = merge_cuts_decompose_remove_pair( best, pcuts_c[best][0], pcuts_c[best][1], set_index, remove_i );
+      merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[loc], fanin - 1 - k, j, sort );
+      pcuts_c[loc][0] = lcuts_n[j];
+      pcuts_c[loc][1] = new_id;
+    }
+
+    /* remove useless remaining cut sets */
+    while ( merge_cuts_decompose_remove_pair( best, pcuts_c[best][0], pcuts_c[best][1], set_index, remove_i ) != UINT32_MAX )
+      ;
+
+  }
+
+  template<bool DO_AREA>
+  inline void merge_cuts2_subset( node<Ntk> const& n, cut_set_t& rcuts, uint32_t i, uint32_t j, emap_cut_sort_type sort )
+  {
+    uint32_t index = ntk.node_to_index( n );
+    cut_t new_cut;
+    std::vector<cut_t const*> vcuts( 2 );
+
+    /* clear set */
+    rcuts.clear();
+
+    /* set cut limit for run-time optimization*/
+    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
+
+    for ( auto const& c1 : *lcuts[i] )
+    {
+      for ( auto const& c2 : *lcuts[j] )
+      {
+        if ( !c1->merge( *c2, new_cut, CutSize ) )
+        {
+          continue;
+        }
+
+        if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+        {
+          continue;
+        }
+
+        /* compute function */
+        vcuts[0] = c1;
+        vcuts[1] = c2;
+        compute_truth_table( index, vcuts, new_cut );
+
+        /* match cut and compute data */
+        compute_cut_data<DO_AREA>( new_cut, n );
+
+        if ( ps.remove_dominated_cuts )
+          rcuts.insert( new_cut, false, sort );
+        else
+          rcuts.simple_insert( new_cut, sort );
+      }
+    }
+
+    // cuts_total += rcuts.size();
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
+
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+  }
+
+  template<bool DO_AREA>
+  uint32_t merge_cuts_decompose_best_pair( uint32_t r )
+  {
+    assert( r > 0 );
+
+    uint32_t best = 0;
+    double best_cost = std::numeric_limits<float>::max();
+
+    auto it = cuts_decomposition.begin();
+    for ( uint32_t i = 0; i < r; ++i )
+    {
+      // if ( *it == nullptr ) /* TODO: change look at the children to decide if to skip */
+      //   continue;
+
+      double cost = ( *it ).best()->delay;
+      if ( cost < best_cost )
+      {
+        best = i;
+        best_cost = cost;
+      }
+    }
+
+    return best;
+  }
+
+  inline uint32_t merge_cuts_decompose_remove_pair( uint32_t best, uint32_t l1, uint32_t l2, uint32_t r, uint32_t& remove_i )
+  {
+    assert( r > 0 );
+
+    while ( remove_i < r )
+    {
+      auto& p = pcuts_c[remove_i];
+
+      /* do not remove the best cut */
+      if (remove_i == best )
+      {
+        ++remove_i;
+        continue;
+      }
+
+      if ( p[0] == UINT32_MAX )
+        return remove_i++;
+
+      if ( p[0] == l1 || p[0] == l2 || p[1] == l1 || p[1] == l2 ) /* TODO: use a new signature */
+      {
+        p[0] = UINT32_MAX;
+        p[1] = UINT32_MAX;
+        return remove_i++;
+      }
+
+      ++remove_i;
+    }
+
+    /* all elements removed */
+    return UINT32_MAX;
+  }
+
+  void inline merge_cuts_decompose_load_set( uint32_t best_cut_set, uint32_t fanin_k, uint32_t new_id )
+  {
+    auto& children = pcuts_c[best_cut_set];
+
+    /* find children0 and children1 in lcuts */
+    uint32_t i0 = 0, i1 = 1;
+    for ( auto j = 0u; j <= fanin_k; ++j )
+    {
+      if ( lcuts_n[j] == children[0] )
+        i0 = j;
+      else if ( lcuts_n[j] == children[1] )
+        i1 = j;
+    }
+
+    assert( i0 < i1 );
+
+    /* remove useless cuts in lcuts */
+    uint32_t k = i0;
+    while ( k + 1 != i1 )
+    {
+      lcuts[k] = lcuts[k + 1];
+      lcuts_n[k] = lcuts_n[k + 1];
+      ++k;
+    }
+
+    while ( k + 2 <= fanin_k )
+    {
+      lcuts[k] = lcuts[k + 2];
+      lcuts_n[k] = lcuts_n[k + 2];
+      ++k;
+    }
+
+    /* add new cut set in lcuts */
+    lcuts[fanin_k - 1] = &cuts_decomposition[best_cut_set];
+    lcuts_n[fanin_k - 1] = new_id;
   }
 
   template<bool DO_AREA>
@@ -3459,6 +3673,7 @@ private:
   }
 #pragma endregion
 
+#pragma region Initialize and dump the mapped network
   void insert_buffers()
   {
     if ( lib_buf_id != UINT32_MAX )
@@ -3712,6 +3927,7 @@ private:
         res.add_binding( res.get_node( f ), ntk.get_binding_index( n ) );
     }
   }
+#pragma endregion
 
 #pragma region Cuts and matching utils
   template<bool DO_AREA>
@@ -3847,6 +4063,25 @@ private:
 
     cut->delay = best_arrival;
     cut->flow = best_area_flow;
+  }
+
+  void init_decomposition_data()
+  {
+    if constexpr ( activate_decomposition )
+    {
+      if ( ps.decompose_multi_input )
+      {
+        /* allocate memory */
+        cuts_decomposition = std::vector<cut_set_t>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
+        // pcuts_decomposition = std::vector<cut_set_t*>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
+        pcuts_c = std::vector<std::array<uint32_t, 2>>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
+        // ppcuts_n = std::vector<std::vector<uint32_t>>( Ntk::max_fanin_size );
+        lcuts_n = std::vector<uint32_t>( Ntk::max_fanin_size );
+        // for ( auto i = 0u; i < Ntk::max_fanin_size; ++i )
+        //   ppcuts_n.reserve( Ntk::max_fanin_size );
+        cut_chain.reserve( Ntk::max_fanin_size - 1 );
+      }
+    }
   }
 
   /* compute positions of leave indices in cut `sub` (subset) with respect to
@@ -4539,11 +4774,17 @@ private:
   std::vector<uint64_t> tmp_visited;
 
   /* cut computation */
-  std::vector<cut_set_t> cuts; /* compressed representation of cuts */
-  cut_merge_t lcuts;           /* cut merger container */
-  truth_compute_t ltruth;      /* truth table merger container */
-  support_t lsupport;          /* support merger container */
-  uint32_t cuts_total{ 0 };    /* current computed cuts */
+  std::vector<cut_set_t> cuts;                  /* compressed representation of cuts */
+  cut_merge_t lcuts;                            /* cut merger container */
+  truth_compute_t ltruth;                       /* truth table merger container */
+  support_t lsupport;                           /* support merger container */
+  uint32_t cuts_total{ 0 };                     /* current computed cuts */
+
+  /* cut computation multi-input */
+  std::vector<cut_set_t> cuts_decomposition;    /* decomposition of large cuts */
+  std::vector<std::array<uint32_t, 2>> pcuts_c; /* children of each pcut */
+  std::vector<uint32_t> lcuts_n;                /* cut merger container node info */
+  std::vector<uint32_t> cut_chain;              /* index of cut sets per chain */
 
   /* multi-output matching */
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */

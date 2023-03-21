@@ -70,8 +70,8 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, double, uint32_t, double, float, bool> exp(
-      "emap_decomp", "benchmark", "size", "area_after", "depth", "delay_after", "runtime", "cec" );
+  experiment<std::string, uint32_t, uint32_t, double, uint32_t, double, float, bool> exp(
+      "emap_decomp", "benchmark", "size", "size_collapsed", "area_after", "depth", "delay_after", "runtime", "cec" );
   
   fmt::print( "[i] processing technology library\n" );
 
@@ -88,8 +88,11 @@ int main()
   tps.verbose = true;
   tech_library<5, classification_type::np_configurations> tech_lib( gates, tps );
 
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iscas_benchmarks() )
   {
+    if ( benchmark != "c432" )
+      continue;
+
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
@@ -102,17 +105,18 @@ int main()
     const uint32_t depth_before = depth_view( aig ).depth();
 
     aig_collapse_params cps;
-    cps.collapse_limit = 32u;
+    cps.collapse_limit = 4u;
     multi_aig_network multi = aig_collapse( aig, cps );
 
     emap_params ps;
+    ps.decompose_multi_input = true;
     ps.verbose = true;
     emap_stats st;
     binding_view<klut_network> res = emap<multi_aig_network, 5>( multi, tech_lib, ps, &st );
 
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
 
-    exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
+    exp( benchmark, size_before, multi.num_gates(), st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
 
   exp.save();
