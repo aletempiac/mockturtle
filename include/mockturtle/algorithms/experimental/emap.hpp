@@ -875,6 +875,7 @@ private:
   bool compute_mapping_match()
   {
     bool warning_box = false;
+    bool decomposition_happened = false;
 
     init_decomposition_data();
 
@@ -926,8 +927,8 @@ private:
       {
         if ( ps.decompose_multi_input && ntk.fanin_size( n ) > Ntk::min_fanin_size )
         {
-          merge_cuts_decompose<DO_AREA>( n ); /* TODO: implement */
-          return false;
+          merge_cuts_decompose<DO_AREA>( n );
+          decomposition_happened = true;
         }
         else
           merge_cuts2<DO_AREA>( n );
@@ -960,6 +961,29 @@ private:
     }
 
     double area_old = area;
+
+    if ( decomposition_happened )
+    {
+      /* compute the current worst delay and update the mapping refs */
+      delay = 0.0f;
+      ntk.foreach_po( [this]( auto s ) {
+        const auto index = ntk.node_to_index( ntk.get_node( s ) );
+
+        if ( ntk.is_complemented( s ) )
+          delay = std::max( delay, node_match[index].arrival[1] );
+        else
+          delay = std::max( delay, node_match[index].arrival[0] );
+
+        node_match[index].map_refs[2]++;
+        if ( ntk.is_complemented( s ) )
+          node_match[index].map_refs[1]++;
+        else
+          node_match[index].map_refs[0]++;
+      } );
+      st.delay = delay;
+      return false;
+    }
+
     bool success = set_mapping_refs<false>();
 
     if ( warning_box )
@@ -1180,17 +1204,14 @@ private:
     auto const fanin = ntk.fanin_size( n );
     lcuts[fanin] = &cuts[index];
 
-    /* clear virtual 2-node merge chain */
-    cut_chain.clear();
-
     /* compute all the possible cut pairs */
     uint32_t set_index = 0;
     for ( uint32_t i = 0; i < fanin - 1; ++i )
     {
       for ( uint32_t j = i + 1; j < fanin; ++j )
       {
-        merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[set_index], i, j, sort );
-        merge_cuts_decompose_compute_cost( set_index );
+        merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[set_index], i, j, sort, true );
+        merge_cuts_decompose_compute_cost<DO_AREA>( set_index );
         pcuts_c[set_index][0] = i;
         pcuts_c[set_index][1] = j;
         pcuts_c[set_index][2] = 0;
@@ -1207,12 +1228,11 @@ private:
 
       /* create virtual node for cut pair */
       decompose_add_unit_cut( best, new_id );
-      cuts[vnode_id] = cuts_decomposition[best];
-      node_match[vnode_id] = node_match_cache[best];
+      cuts[new_id] = cuts_decomposition[best];
+      node_match[new_id] = node_match_cache[best];
 
-      /* set cut set to save and add it to the cut chain */
+      /* set cut set to save */
       pcuts_c[best][2] = 1;
-      cut_chain.push_back( best );
       auto& children = pcuts_c[best];
       std::cout << fmt::format( "Picking {} with children {} and {}\n", best, children[0], children[1] );
 
@@ -1229,13 +1249,14 @@ private:
         if ( k == fanin - 2 )
         {
           /* write root cut set in cut set of n */
-          merge_cuts2_subset<DO_AREA>( n, *lcuts[fanin], fanin - 1 - k, j, sort );
+          merge_cuts2_subset<DO_AREA>( n, *lcuts[fanin], fanin - 1 - k, j, sort, false );
+          std::cout << fmt::format( "Picking {} with children {} and {}\n\n", best, lcuts_n[j], new_id );
         }
         else
         {
           /* write cut set in temporary container */
-          merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[location], fanin - 1 - k, j, sort );
-          merge_cuts_decompose_compute_cost( set_index );
+          merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[location], fanin - 1 - k, j, sort, true );
+          merge_cuts_decompose_compute_cost<DO_AREA>( location );
         }
         pcuts_c[location][0] = lcuts_n[j];
         pcuts_c[location][1] = new_id;
@@ -1244,10 +1265,7 @@ private:
 
       /* last iteration */
       if ( k == fanin - 2 )
-      {
-        cut_chain.push_back( location );
         break;
-      }
 
       /* remove useless remaining cut sets */
       while ( merge_cuts_decompose_remove_pair( best, pcuts_c[best][0], pcuts_c[best][1], set_index, remove_i ) != UINT32_MAX )
@@ -1259,7 +1277,7 @@ private:
   }
 
   template<bool DO_AREA>
-  inline void merge_cuts2_subset( node<Ntk> const& n, cut_set_t& rcuts, uint32_t i, uint32_t j, emap_cut_sort_type sort )
+  inline void merge_cuts2_subset( node<Ntk> const& n, cut_set_t& rcuts, uint32_t i, uint32_t j, emap_cut_sort_type sort, bool adjust_flow )
   {
     uint32_t index = ntk.node_to_index( n );
     cut_t new_cut;
@@ -1292,6 +1310,8 @@ private:
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
+        if ( adjust_flow )
+          new_cut->flow *= ntk.fanout_size( n );
 
         if ( ps.remove_dominated_cuts )
           rcuts.insert( new_cut, false, sort );
@@ -1314,19 +1334,33 @@ private:
     uint32_t best = 0;
     double best_cost = std::numeric_limits<float>::max();
 
-    auto it = cuts_decomposition.begin();
+    auto it = node_match_cache.begin();
     for ( uint32_t i = 0; i < r; ++i )
     {
       /* skip cut if it is set to "save" */
       if ( pcuts_c[i][2] )
+      {
+        ++it;
         continue;
+      }
 
-      double cost = ( *it ).best()->delay;
+      double cost = 0;
+      if constexpr ( DO_AREA )
+      {
+        cost = std::min( it->flows[0], it->flows[1] );
+      }
+      else
+      {
+        cost = std::min( it->arrival[0], it->arrival[1] );
+      }
+
       if ( cost < best_cost )
       {
         best = i;
         best_cost = cost;
       }
+
+      ++it;
     }
 
     return best;
@@ -1402,9 +1436,216 @@ private:
     lcuts_n[fanin_k - 1] = new_id;
   }
 
+  template<bool DO_AREA>
   void merge_cuts_decompose_compute_cost( uint32_t index )
   {
-    return;
+    merge_cuts_decompose_compute_best_match<DO_AREA>( index );
+    merge_cuts_decompose_compute_drop_phase<DO_AREA>( index );
+  }
+
+  template<bool DO_AREA>
+  void merge_cuts_decompose_compute_best_match( uint32_t index )
+  {
+    double best_arrival0 = std::numeric_limits<float>::max();
+    double best_arrival1 = std::numeric_limits<float>::max();
+    double best_area_flow0 = std::numeric_limits<float>::max();
+    double best_area_flow1 = std::numeric_limits<float>::max();
+    float best_area0 = std::numeric_limits<float>::max();
+    float best_area1 = std::numeric_limits<float>::max();
+    uint32_t best_size0 = UINT32_MAX;
+    uint32_t best_size1 = UINT32_MAX;
+    uint8_t best_cut0 = 0u;
+    uint8_t best_cut1 = 0u;
+    uint8_t best_phase0 = 0u;
+    uint8_t best_phase1 = 0u;
+    uint8_t cut_index = 0u;
+
+    auto& node_data = node_match_cache[index];
+    supergate<NInputs> const* best_supergate0 = nullptr;
+    supergate<NInputs> const* best_supergate1 = nullptr;
+
+    /* foreach cut */
+    for ( auto& cut : cuts_decomposition[index] )
+    {
+      /* trivial cuts or not matched cuts */
+      if ( ( *cut )->ignore )
+      {
+        ++cut_index;
+        continue;
+      }
+
+      auto const& supergates = ( *cut )->supergates;
+      auto const negation0 = ( *cut )->negations[0];
+      auto const negation1 = ( *cut )->negations[1];
+
+      if ( supergates[0] != nullptr )
+      {
+        /* match each gate and take the best one */
+        for ( auto const& gate : *supergates[0] )
+        {
+          uint8_t gate_polarity = gate.polarity ^ negation0;
+          double worst_arrival = 0.0f;
+
+          auto ctr = 0u;
+          for ( auto l : *cut )
+          {
+            double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
+            worst_arrival = std::max( worst_arrival, arrival_pin );
+            ++ctr;
+          }
+
+          node_data.phase[0] = gate_polarity;
+          double area_local = gate.area + decompose_cut_leaves_flow( *cut, index, 0 );
+
+          if ( compare_map<DO_AREA>( worst_arrival, best_arrival0, area_local, best_area_flow0, cut->size(), best_size0 ) )
+          {
+            best_arrival0 = worst_arrival;
+            best_area_flow0 = area_local;
+            best_size0 = cut->size();
+            best_cut0 = cut_index;
+            best_area0 = gate.area;
+            best_phase0 = gate_polarity;
+            best_supergate0 = &gate;
+          }
+        }
+      }
+      else if ( supergates[1] != nullptr )
+      {
+        /* match each gate and take the best one */
+        for ( auto const& gate : *supergates[1] )
+        {
+          uint8_t gate_polarity = gate.polarity ^ negation1;
+          double worst_arrival = 0.0f;
+
+          auto ctr = 0u;
+          for ( auto l : *cut )
+          {
+            double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
+            worst_arrival = std::max( worst_arrival, arrival_pin );
+            ++ctr;
+          }
+
+          node_data.phase[1] = gate_polarity;
+          double area_local = gate.area + decompose_cut_leaves_flow( *cut, index, 1 );
+
+          if ( compare_map<DO_AREA>( worst_arrival, best_arrival1, area_local, best_area_flow1, cut->size(), best_size1 ) )
+          {
+            best_arrival1 = worst_arrival;
+            best_area_flow1 = area_local;
+            best_size1 = cut->size();
+            best_cut1 = cut_index;
+            best_area1 = gate.area;
+            best_phase1 = gate_polarity;
+            best_supergate1 = &gate;
+          }
+        }
+      }
+
+      ++cut_index;
+    }
+
+    node_data.flows[0] = best_area_flow0;
+    node_data.flows[1] = best_area_flow1;
+    node_data.arrival[0] = best_arrival0;
+    node_data.arrival[1] = best_arrival1;
+    node_data.area[0] = best_area0;
+    node_data.area[1] = best_area1;
+    node_data.best_cut[0] = best_cut0;
+    node_data.best_cut[1] = best_cut1;
+    node_data.phase[0] = best_phase0;
+    node_data.phase[1] = best_phase1;
+    node_data.best_supergate[0] = best_supergate0;
+    node_data.best_supergate[1] = best_supergate1;
+  }
+
+  template<bool DO_AREA>
+  void merge_cuts_decompose_compute_drop_phase( uint32_t index )
+  {
+    auto& node_data = node_match_cache[index];
+
+    /* compute arrival adding an inverter to the other match phase */
+    double worst_arrival_npos = node_data.arrival[1] + lib_inv_delay;
+    double worst_arrival_nneg = node_data.arrival[0] + lib_inv_delay;
+    bool use_zero = false;
+    bool use_one = false;
+
+    /* only one phase is matched */
+    if ( node_data.best_supergate[0] == nullptr )
+    {
+      merge_cuts_decompose_compute_set_complemented_phase( index, 1, worst_arrival_npos );
+      return;
+    }
+    else if ( node_data.best_supergate[1] == nullptr )
+    {
+      merge_cuts_decompose_compute_set_complemented_phase( index, 0, worst_arrival_nneg );
+      return;
+    }
+
+    /* try to use only one match to cover both phases */
+    if constexpr ( !DO_AREA )
+    {
+      /* if arrival improves matching the other phase and inserting an inverter */
+      if ( worst_arrival_npos < node_data.arrival[0] + epsilon )
+      {
+        use_one = true;
+      }
+      if ( worst_arrival_nneg < node_data.arrival[1] + epsilon )
+      {
+        use_zero = true;
+      }
+    }
+    else
+    {
+      use_zero = true;
+      use_one = true;
+    }
+
+    if ( ( !use_zero && !use_one ) )
+    {
+      /* use both phases */
+      if ( ps.allow_node_duplication )
+      {
+        node_data.same_match = false;
+        return;
+      }
+
+      /* if node duplication is not allowed, pick one phase based on delay */
+      use_zero = true;
+      use_one = true;
+    }
+
+    /* use area flow as a tiebreaker */
+    if ( use_zero && use_one )
+    {
+      auto size_zero = cuts[index][node_data.best_cut[0]].size();
+      auto size_one = cuts[index][node_data.best_cut[1]].size();
+      if ( compare_map<DO_AREA>( worst_arrival_nneg, worst_arrival_npos, node_data.flows[0], node_data.flows[1], size_zero, size_one ) )
+        use_one = false;
+      else
+        use_zero = false;
+    }
+
+    if ( use_zero )
+    {
+      merge_cuts_decompose_compute_set_complemented_phase( index, 0, worst_arrival_nneg );
+    }
+    else
+    {
+      merge_cuts_decompose_compute_set_complemented_phase( index, 1, worst_arrival_npos );
+    }
+  }
+
+  inline void merge_cuts_decompose_compute_set_complemented_phase( uint32_t index, uint8_t phase, double worst_arrival_n )
+  {
+    auto& node_data = node_match_cache[index];
+    auto phase_n = phase ^ 1;
+    node_data.same_match = true;
+    node_data.best_supergate[phase_n] = nullptr;
+    node_data.best_cut[phase_n] = node_data.best_cut[phase];
+    node_data.phase[phase_n] = node_data.phase[phase];
+    node_data.arrival[phase_n] = worst_arrival_n;
+    node_data.area[phase_n] = node_data.area[phase];
+    node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
   }
 #pragma endregion
 
@@ -3463,6 +3704,21 @@ private:
     return flow;
   }
 
+  inline double decompose_cut_leaves_flow( cut_t const& cut, uint32_t index, uint8_t phase )
+  {
+    double flow{ 0.0f };
+    auto const& node_data = node_match_cache[index];
+
+    uint8_t ctr = 0u;
+    for ( auto leaf : cut )
+    {
+      uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
+      flow += node_match[leaf].flows[leaf_phase];
+    }
+
+    return flow;
+  }
+
   template<bool SwitchActivity>
   float cut_ref( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
   {
@@ -4135,7 +4391,6 @@ private:
       cuts_decomposition = std::vector<cut_set_t>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
       pcuts_c = std::vector<std::array<uint32_t, 3>>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
       lcuts_n = std::vector<uint32_t>( Ntk::max_fanin_size );
-      cut_chain.reserve( Ntk::max_fanin_size - 1 );
       node_match_cache = std::vector<node_match_emap<NInputs>>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
 
       /* extend the cuts and node data memory */
@@ -4860,7 +5115,6 @@ private:
   std::vector<cut_set_t> cuts_decomposition;    /* cache for decomposition of large cuts */
   std::vector<std::array<uint32_t, 3>> pcuts_c; /* cut data {2 children of each pcut + skip cut} */
   std::vector<uint32_t> lcuts_n;                /* node info of cut merger lcuts */
-  std::vector<uint32_t> cut_chain;              /* index of cut sets per chain */
   std::vector<node_match_emap<NInputs>> node_match_cache;
 
   /* multi-output matching */
