@@ -685,6 +685,21 @@ template<class Ntk>
 inline constexpr bool has_take_out_node_v = has_take_out_node<Ntk>::value;
 #pragma endregion
 
+#pragma region has_has_and
+template<class Ntk, class = void>
+struct has_has_and : std::false_type
+{
+};
+
+template<class Ntk>
+struct has_has_and<Ntk, std::void_t<decltype( std::declval<Ntk>().has_and( std::declval<signal<Ntk>>(), std::declval<signal<Ntk>>() ) )>> : std::true_type
+{
+};
+
+template<class Ntk>
+inline constexpr bool has_has_and_v = has_has_and<Ntk>::value;
+#pragma endregion
+
 #pragma region is_dead
 template<class Ntk, class = void>
 struct has_is_dead : std::false_type
