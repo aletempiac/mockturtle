@@ -30,6 +30,7 @@
 #include <lorina/aiger.hpp>
 #include <lorina/genlib.hpp>
 #include <mockturtle/algorithms/experimental/emap.hpp>
+#include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
@@ -76,7 +77,8 @@ int main()
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::stringstream in( mcnc_library );
+  // std::stringstream in( mcnc_library );
+  std::ifstream in( "asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -92,10 +94,12 @@ int main()
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
+
+    aig_balance( aig );
 
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();

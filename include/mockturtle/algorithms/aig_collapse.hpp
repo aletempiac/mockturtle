@@ -124,6 +124,9 @@ private:
     assert( storage[level].size() > 1 );
     ntk.incr_value( n );
 
+    /* sort */
+    std::sort( storage[level].begin(), storage[level].end() );
+
     /* create the multi-input AND node */
     children.clear();
     std::transform( storage[level].begin(),

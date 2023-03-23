@@ -195,7 +195,7 @@ private:
   using tt_hash = kitty::hash<TT>;
   using multi_tt_hash = detail::tuple_tt_hash<NInputs, max_multi_outputs>;
   using index_t = phmap::flat_hash_map<TT, uint32_t, tt_hash>;
-  // using lib_t = std::vector<supergates_list_t>;
+  using lib2_t = std::vector<supergates_list_t>;
   using lib_t = phmap::flat_hash_map<TT, supergates_list_t, tt_hash>;
   using multi_relation_t = std::array<TT, max_multi_outputs>;
   using multi_supergates_list_t = std::array<std::vector<supergate<NInputs>>, max_multi_outputs>;
@@ -377,6 +377,7 @@ private:
       if ( skip_gates[skip_count++] )
       {
         /* exclude gate */
+        ++i;
         continue;
       }
 
@@ -1015,10 +1016,10 @@ private:
   //   }
 
   //   /* data to _super_lib */
-  //   const auto size = _super_lib.size();
-  //   const auto index = static_cast<uint32_t>( 2 * size + is_compl );
-  //   /* _super_lib.emplace_back(); */
-  //   /* _super_lib.emplace_back(); */
+  //   const auto size = _super_lib2.size();
+  //   _super_lib2.emplace_back();
+  //   _super_lib2.emplace_back();
+  //   const auto index = static_cast<uint32_t>( size + is_compl );
   //   _indexes[tt] = static_cast<uint32_t>( size );
   //   return index;
   // }
@@ -1043,7 +1044,8 @@ private:
   tech_library_params const _ps;
 
   super_utils<NInputs> _super;  /* supergates generation */
-  // index_t _indexes;             /* indexes gates from functions */
+  // index_t _indexes;             /* assigns ID to functions */
+  // lib2_t  _super_lib2;         /* gates by function ID */
   lib_t _super_lib;             /* library of enumerated gates */
   multi_lib_t _multi_lib;       /* library of enumerated multioutput gates */
   multi_func_t _multi_funcs;    /* enumerated functions for multioutput gates */

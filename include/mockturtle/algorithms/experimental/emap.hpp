@@ -651,6 +651,13 @@ struct node_match_emap
   float flows[2];
 };
 
+struct cut_decomposition_emap
+{
+  uint32_t child1{ UINT32_MAX };
+  uint32_t child2{ UINT32_MAX };
+  bool save{ false };
+};
+
 union multi_match_data
 {
   uint64_t data{ 0 };
@@ -675,6 +682,7 @@ public:
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using support_t = typename std::array<uint8_t, CutSize>;
   using truth_compute_t = typename std::array<kitty::static_truth_table<CutSize>, CutSize>;
+  using node_match_t = std::vector<node_match_emap<NInputs>>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
   using TT = kitty::static_truth_table<CutSize>;
 
@@ -876,6 +884,7 @@ private:
   {
     bool warning_box = false;
     bool decomposition_happened = false;
+    bool decomposition_now = false;
 
     init_decomposition_data();
 
@@ -929,6 +938,7 @@ private:
         {
           merge_cuts_decompose<DO_AREA>( n );
           decomposition_happened = true;
+          decomposition_now = true;
         }
         else
           merge_cuts2<DO_AREA>( n );
@@ -957,6 +967,13 @@ private:
           if ( multi_success )
             multi_node_update<DO_AREA>( n );
         }
+      }
+
+      if ( decomposition_now || n == 53 )
+      {
+        /* report arrival time */
+        std::cout << fmt::format( "Arrival at node {}: {} and {}\n\n", index, node_match[index].arrival[0], node_match[index].arrival[1] );
+        decomposition_now = false;
       }
     }
 
@@ -1199,7 +1216,8 @@ private:
     /* load all the input cuts */
     ntk.foreach_fanin( ntk.index_to_node( index ), [this]( auto child, auto i ) {
       lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
-      lcuts_n[i] = i;
+      lcuts_phase[i] = ntk.is_complemented( child );
+      lcuts_name[i] = i;
     } );
     auto const fanin = ntk.fanin_size( n );
     lcuts[fanin] = &cuts[index];
@@ -1212,9 +1230,9 @@ private:
       {
         merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[set_index], i, j, sort, true );
         merge_cuts_decompose_compute_cost<DO_AREA>( set_index );
-        pcuts_c[set_index][0] = i;
-        pcuts_c[set_index][1] = j;
-        pcuts_c[set_index][2] = 0;
+        pcuts_c[set_index].child1 = i;
+        pcuts_c[set_index].child2 = j;
+        pcuts_c[set_index].save = false;
         ++set_index;
       }
     }
@@ -1232,9 +1250,8 @@ private:
       node_match[new_id] = node_match_cache[best];
 
       /* set cut set to save */
-      pcuts_c[best][2] = 1;
-      auto& children = pcuts_c[best];
-      std::cout << fmt::format( "Picking {} with children {} and {}\n", best, children[0], children[1] );
+      pcuts_c[best].save = true;
+      std::cout << fmt::format( "Picking {} with children {} and {}\n", new_id, pcuts_c[best].child1, pcuts_c[best].child2 );
 
       /* remove the other cut sets involving the same leaves and load new set in lcuts */
       merge_cuts_decompose_load_set( best, fanin - k, new_id );
@@ -1245,12 +1262,12 @@ private:
       for ( uint32_t j = 0; j < fanin - 1 - k; ++j )
       {
         /* get new cut location */
-        location = merge_cuts_decompose_remove_pair( best, pcuts_c[best][0], pcuts_c[best][1], set_index, remove_i );
+        location = merge_cuts_decompose_remove_pair( best, pcuts_c[best].child1, pcuts_c[best].child2, set_index, remove_i );
         if ( k == fanin - 2 )
         {
           /* write root cut set in cut set of n */
           merge_cuts2_subset<DO_AREA>( n, *lcuts[fanin], fanin - 1 - k, j, sort, false );
-          std::cout << fmt::format( "Picking {} with children {} and {}\n\n", best, lcuts_n[j], new_id );
+          std::cout << fmt::format( "Picking {} with children {} and {}\n\n", index, lcuts_name[j], new_id );
         }
         else
         {
@@ -1258,9 +1275,9 @@ private:
           merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[location], fanin - 1 - k, j, sort, true );
           merge_cuts_decompose_compute_cost<DO_AREA>( location );
         }
-        pcuts_c[location][0] = lcuts_n[j];
-        pcuts_c[location][1] = new_id;
-        pcuts_c[location][2] = 0;
+        pcuts_c[location].child1 = lcuts_name[j];
+        pcuts_c[location].child2 = new_id;
+        pcuts_c[location].save = false;
       }
 
       /* last iteration */
@@ -1268,7 +1285,7 @@ private:
         break;
 
       /* remove useless remaining cut sets */
-      while ( merge_cuts_decompose_remove_pair( best, pcuts_c[best][0], pcuts_c[best][1], set_index, remove_i ) != UINT32_MAX )
+      while ( merge_cuts_decompose_remove_pair( best, pcuts_c[best].child1, pcuts_c[best].child2, set_index, remove_i ) != UINT32_MAX )
         ;
     }
 
@@ -1289,6 +1306,9 @@ private:
     /* set cut limit for run-time optimization*/
     rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
 
+    bool phase_i = lcuts_name[i] < ntk.size() ? lcuts_phase[lcuts_name[i]] : false;
+    bool phase_j = lcuts_name[j] < ntk.size() ? lcuts_phase[lcuts_name[j]] : false;
+
     for ( auto const& c1 : *lcuts[i] )
     {
       for ( auto const& c2 : *lcuts[j] )
@@ -1306,7 +1326,7 @@ private:
         /* compute function */
         vcuts[0] = c1;
         vcuts[1] = c2;
-        compute_truth_table( index, vcuts, new_cut );
+        compute_truth_table_decompose( index, vcuts, new_cut, phase_i, phase_j );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -1338,7 +1358,7 @@ private:
     for ( uint32_t i = 0; i < r; ++i )
     {
       /* skip cut if it is set to "save" */
-      if ( pcuts_c[i][2] )
+      if ( pcuts_c[i].save )
       {
         ++it;
         continue;
@@ -1359,7 +1379,6 @@ private:
         best = i;
         best_cost = cost;
       }
-
       ++it;
     }
 
@@ -1381,14 +1400,14 @@ private:
         continue;
       }
 
-      if ( p[0] == UINT32_MAX )
+      if ( p.child1 == UINT32_MAX )
         return remove_i++;
 
-      if ( p[0] == l1 || p[0] == l2 || p[1] == l1 || p[1] == l2 ) /* TODO: use a new signature */
+      if ( p.child1 == l1 || p.child1 == l2 || p.child2 == l1 || p.child2 == l2 ) /* TODO: use a new signature */
       {
-        p[0] = UINT32_MAX;
-        p[1] = UINT32_MAX;
-        p[2] = 1; /* skip */
+        p.child1 = UINT32_MAX;
+        p.child1 = UINT32_MAX;
+        p.save = true;
         return remove_i++;
       }
 
@@ -1401,16 +1420,23 @@ private:
 
   void inline merge_cuts_decompose_load_set( uint32_t best_cut_set, uint32_t fanin_k, uint32_t new_id )
   {
-    auto& children = pcuts_c[best_cut_set];
+    auto& data = pcuts_c[best_cut_set];
 
     /* find children0 and children1 in lcuts */
-    uint32_t i0 = 0, i1 = 1;
-    for ( auto j = 0u; j <= fanin_k; ++j )
+    uint32_t i0 = 0, i1 = 0;
+    uint32_t found = 0;
+    for ( auto j = 0u; j <= fanin_k && found < 2; ++j )
     {
-      if ( lcuts_n[j] == children[0] )
+      if ( lcuts_name[j] == data.child1 )
+      {
         i0 = j;
-      else if ( lcuts_n[j] == children[1] )
+        ++found;
+      }
+      else if ( lcuts_name[j] == data.child2 )
+      {
         i1 = j;
+        ++found;
+      }
     }
 
     assert( i0 < i1 );
@@ -1420,20 +1446,20 @@ private:
     while ( k + 1 != i1 )
     {
       lcuts[k] = lcuts[k + 1];
-      lcuts_n[k] = lcuts_n[k + 1];
+      lcuts_name[k] = lcuts_name[k + 1];
       ++k;
     }
 
     while ( k + 2 <= fanin_k )
     {
       lcuts[k] = lcuts[k + 2];
-      lcuts_n[k] = lcuts_n[k + 2];
+      lcuts_name[k] = lcuts_name[k + 2];
       ++k;
     }
 
     /* add new cut set in lcuts */
     lcuts[fanin_k - 1] = &cuts_decomposition[best_cut_set];
-    lcuts_n[fanin_k - 1] = new_id;
+    lcuts_name[fanin_k - 1] = new_id;
   }
 
   template<bool DO_AREA>
@@ -1509,7 +1535,8 @@ private:
           }
         }
       }
-      else if ( supergates[1] != nullptr )
+
+      if ( supergates[1] != nullptr )
       {
         /* match each gate and take the best one */
         for ( auto const& gate : *supergates[1] )
@@ -4387,22 +4414,25 @@ private:
       if ( !ps.decompose_multi_input )
         return;
 
-      /* allocate memory reserved for decomposition */
-      cuts_decomposition = std::vector<cut_set_t>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
-      pcuts_c = std::vector<std::array<uint32_t, 3>>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
-      lcuts_n = std::vector<uint32_t>( Ntk::max_fanin_size );
-      node_match_cache = std::vector<node_match_emap<NInputs>>( ( Ntk::max_fanin_size * ( Ntk::max_fanin_size - 1 ) ) / 2 );
-
-      /* extend the cuts and node data memory */
+      /* measure maximum fanin size and number of needed virtual nodes */
       vnode_id = ntk.size();
       uint32_t virtual_nodes_needed = 0;
-      ntk.foreach_node( [&]( auto const& n ) {
+      uint32_t max_fanin_size = 0;
+      ntk.foreach_gate( [&]( auto const& n ) {
         virtual_nodes_needed += ntk.fanin_size( n ) - 1;
+        max_fanin_size = std::max( max_fanin_size, ntk.fanin_size( n ) );
       } );
-      std::cout << virtual_nodes_needed << "\n";
 
+      /* allocate memory reserved for decomposition */
+      cuts_decomposition = std::vector<cut_set_t>( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
+      pcuts_c = std::vector<cut_decomposition_emap>( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
+      lcuts_name = std::vector<uint32_t>( max_fanin_size );
+      lcuts_phase = std::vector<bool>( max_fanin_size );
+      node_match_cache = node_match_t( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
+
+      /* extend the cuts and node data memory */
       cuts = std::vector<cut_set_t>( ntk.size() + virtual_nodes_needed );
-      node_match = std::vector<node_match_emap<NInputs>>( ntk.size() + virtual_nodes_needed );
+      node_match = node_match_t( ntk.size() + virtual_nodes_needed );
     }
   }
 
@@ -4426,7 +4456,7 @@ private:
     for ( int i = j - 1; i >= 0; --i )
     {
       assert( i <= lsupport[i] );
-      swap_inplace( tt, i, lsupport[i] );
+      kitty::swap_inplace( tt, i, lsupport[i] );
     }
   }
 
@@ -4494,6 +4524,43 @@ private:
     }
 
     auto tt_res = ntk.compute( ntk.index_to_node( index ), ltruth.begin(), ltruth.begin() + vcuts.size() );
+
+    if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
+    {
+      const auto support = kitty::min_base_inplace( tt_res );
+
+      std::vector<uint32_t> leaves_before( res.begin(), res.end() );
+      std::vector<uint32_t> leaves_after( support.size() );
+
+      auto it_support = support.begin();
+      auto it_leaves = leaves_after.begin();
+      while ( it_support != support.end() )
+      {
+        *it_leaves++ = leaves_before[*it_support++];
+      }
+      res.set_leaves( leaves_after.begin(), leaves_after.end() );
+    }
+
+    res->function = tt_res;
+  }
+
+  void compute_truth_table_decompose( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res, bool phase0, bool phase1 )
+  {
+    assert( ntk.is_nary_and( ntk.index_to_node( index ) ) );
+    kitty::static_truth_table<CutSize> tt_res = ( *vcuts[0] )->function;
+
+    if ( phase0 )
+      tt_res = ~tt_res;
+    compute_truth_table_support( *vcuts[0], res, tt_res );
+
+    ltruth[0] = ( *vcuts[1] )->function;
+
+    if ( phase1 )
+      ltruth[0] = ~ltruth[0];
+
+    compute_truth_table_support( *vcuts[1], res, ltruth[0] );
+
+    tt_res &= ltruth[0];
 
     if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
     {
@@ -5099,7 +5166,7 @@ private:
   uint32_t lib_buf_id;
 
   std::vector<node<Ntk>> topo_order;
-  std::vector<node_match_emap<NInputs>> node_match;
+  node_match_t node_match;
   std::vector<uint32_t> node_tuple_match;
   std::vector<float> switch_activity;
   std::vector<uint64_t> tmp_visited;
@@ -5112,10 +5179,11 @@ private:
   uint32_t cuts_total{ 0 };                     /* current computed cuts */
 
   /* cut computation multi-input */
-  std::vector<cut_set_t> cuts_decomposition;    /* cache for decomposition of large cuts */
-  std::vector<std::array<uint32_t, 3>> pcuts_c; /* cut data {2 children of each pcut + skip cut} */
-  std::vector<uint32_t> lcuts_n;                /* node info of cut merger lcuts */
-  std::vector<node_match_emap<NInputs>> node_match_cache;
+  std::vector<cut_set_t> cuts_decomposition;    /* cache for decomposition of multi-input gates */
+  node_match_t node_match_cache;                /* cache for decomposition cost per cut in cache */
+  std::vector<cut_decomposition_emap> pcuts_c;  /* cut data {2 children of each pcut + skip cut} */
+  std::vector<uint32_t> lcuts_name;             /* node info of cut merger lcuts */
+  std::vector<bool> lcuts_phase;                /* node info of cut merger lcuts */
 
   /* multi-output matching */
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */

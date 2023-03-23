@@ -735,7 +735,7 @@ public:
     assert( fanin_size != 0 );
 
     /* assert removed to support computation for a fanin subset */
-    // assert( std::distance( begin, end ) == fanin_size );
+    assert( std::distance( begin, end ) == fanin_size );
 
     auto const& c0 = _storage->nodes[n].children[0];
     typename std::iterator_traits<Iterator>::value_type tt = c0.weight ? ~( *begin++ ) : *begin++;

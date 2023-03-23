@@ -28,9 +28,12 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
+#include <lorina/verilog.hpp>
 #include <mockturtle/algorithms/experimental/emap.hpp>
+#include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/algorithms/aig_collapse.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
+#include <mockturtle/io/verilog_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
@@ -77,7 +80,8 @@ int main()
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::stringstream in( mcnc_library );
+  // std::stringstream in( mcnc_library );
+  std::ifstream in( "asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -88,24 +92,29 @@ int main()
   tps.verbose = true;
   tech_library<5, classification_type::np_configurations> tech_lib( gates, tps );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  // std::string benchmark = "and9.v";
+
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
-    if ( benchmark != "c432" )
-      continue;
+    // if ( benchmark != "c432" )
+    //   continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
+    // lorina::read_verilog( benchmark, verilog_reader( aig ) );
 
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
+    aig_balance( aig );
+
     aig_collapse_params cps;
-    cps.collapse_limit = 4u;
+    cps.collapse_limit = 16u;
     multi_aig_network multi = aig_collapse( aig, cps );
 
     emap_params ps;
@@ -113,6 +122,7 @@ int main()
     ps.verbose = true;
     emap_stats st;
     binding_view<klut_network> res = emap<multi_aig_network, 5>( multi, tech_lib, ps, &st );
+    // binding_view<klut_network> res = emap<aig_network, 5>( aig, tech_lib, ps, &st );
 
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
 
