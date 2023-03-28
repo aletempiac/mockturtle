@@ -883,8 +883,6 @@ private:
   bool compute_mapping_match()
   {
     bool warning_box = false;
-    bool decomposition_happened = false;
-    bool decomposition_now = false;
 
     init_decomposition_data();
 
@@ -937,11 +935,11 @@ private:
         if ( ps.decompose_multi_input && ntk.fanin_size( n ) > Ntk::min_fanin_size )
         {
           merge_cuts_decompose<DO_AREA>( n );
-          decomposition_happened = true;
-          decomposition_now = true;
         }
         else
           merge_cuts2<DO_AREA>( n );
+        
+        topo_order_tmp.push_back( n );
       }
       else
       {
@@ -968,38 +966,37 @@ private:
             multi_node_update<DO_AREA>( n );
         }
       }
+    }
 
-      if ( decomposition_now || n == 53 )
-      {
-        /* report arrival time */
-        std::cout << fmt::format( "Arrival at node {}: {} and {}\n\n", index, node_match[index].arrival[0], node_match[index].arrival[1] );
-        decomposition_now = false;
-      }
+    if constexpr ( activate_decomposition )
+    {
+      topo_order = topo_order_tmp;
+      topo_order_tmp.clear();
     }
 
     double area_old = area;
 
-    if ( decomposition_happened )
-    {
-      /* compute the current worst delay and update the mapping refs */
-      delay = 0.0f;
-      ntk.foreach_po( [this]( auto s ) {
-        const auto index = ntk.node_to_index( ntk.get_node( s ) );
+    // if ( decomposition_happened )
+    // {
+    //   /* compute the current worst delay and update the mapping refs */
+    //   delay = 0.0f;
+    //   ntk.foreach_po( [this]( auto s ) {
+    //     const auto index = ntk.node_to_index( ntk.get_node( s ) );
 
-        if ( ntk.is_complemented( s ) )
-          delay = std::max( delay, node_match[index].arrival[1] );
-        else
-          delay = std::max( delay, node_match[index].arrival[0] );
+    //     if ( ntk.is_complemented( s ) )
+    //       delay = std::max( delay, node_match[index].arrival[1] );
+    //     else
+    //       delay = std::max( delay, node_match[index].arrival[0] );
 
-        node_match[index].map_refs[2]++;
-        if ( ntk.is_complemented( s ) )
-          node_match[index].map_refs[1]++;
-        else
-          node_match[index].map_refs[0]++;
-      } );
-      st.delay = delay;
-      return false;
-    }
+    //     node_match[index].map_refs[2]++;
+    //     if ( ntk.is_complemented( s ) )
+    //       node_match[index].map_refs[1]++;
+    //     else
+    //       node_match[index].map_refs[0]++;
+    //   } );
+    //   st.delay = delay;
+    //   // return false;
+    // }
 
     bool success = set_mapping_refs<false>();
 
@@ -1248,10 +1245,14 @@ private:
       decompose_add_unit_cut( best, new_id );
       cuts[new_id] = cuts_decomposition[best];
       node_match[new_id] = node_match_cache[best];
+      node_match[new_id].est_refs[0] = node_match[new_id].est_refs[1] = node_match[new_id].est_refs[2] = 1;
+      node_match[new_id].map_refs[0] = node_match[new_id].map_refs[1] = node_match[new_id].map_refs[2] = 0;
+      node_match[new_id].required[0] = node_match[new_id].required[1] = std::numeric_limits<float>::max();
+      topo_order_tmp.push_back( new_id );
 
       /* set cut set to save */
       pcuts_c[best].save = true;
-      std::cout << fmt::format( "Picking {} with children {} and {}\n", new_id, pcuts_c[best].child1, pcuts_c[best].child2 );
+      // std::cout << fmt::format( "Picking {} with children {} and {}\n", new_id, pcuts_c[best].child1, pcuts_c[best].child2 );
 
       /* remove the other cut sets involving the same leaves and load new set in lcuts */
       merge_cuts_decompose_load_set( best, fanin - k, new_id );
@@ -1267,7 +1268,7 @@ private:
         {
           /* write root cut set in cut set of n */
           merge_cuts2_subset<DO_AREA>( n, *lcuts[fanin], fanin - 1 - k, j, sort, false );
-          std::cout << fmt::format( "Picking {} with children {} and {}\n\n", index, lcuts_name[j], new_id );
+          // std::cout << fmt::format( "Picking {} with children {} and {}\n\n", index, lcuts_name[j], new_id );
         }
         else
         {
@@ -1352,7 +1353,9 @@ private:
     assert( r > 0 );
 
     uint32_t best = 0;
-    double best_cost = std::numeric_limits<float>::max();
+    double best_cost1 = std::numeric_limits<float>::max();
+    double best_cost2 = std::numeric_limits<float>::max();
+    uint32_t best_cost3 = UINT32_MAX;
 
     auto it = node_match_cache.begin();
     for ( uint32_t i = 0; i < r; ++i )
@@ -1364,20 +1367,28 @@ private:
         continue;
       }
 
-      double cost = 0;
+      double cost1;
+      double cost2;
+      uint32_t cost3;
+      uint32_t min;
       if constexpr ( DO_AREA )
       {
-        cost = std::min( it->flows[0], it->flows[1] );
+        min = it->flows[0] < it->flows[1] ? 0 : 1;
       }
       else
       {
-        cost = std::min( it->arrival[0], it->arrival[1] );
+        min = it->arrival[0] < it->arrival[1] ? 0 : 1;
       }
+      cost1 = it->arrival[min];
+      cost2 = it->flows[min];
+      best_cost3 = cuts_decomposition[i][it->best_cut[min]].size();
 
-      if ( cost < best_cost )
+      if ( compare_map<DO_AREA>( cost1, best_cost1, cost2, best_cost2, cost3, best_cost3 ) )
       {
         best = i;
-        best_cost = cost;
+        best_cost1 = cost1;
+        best_cost2 = cost2;
+        best_cost3 = cost3;
       }
       ++it;
     }
@@ -1781,7 +1792,7 @@ private:
       /* reset mapping */
       node_match[index].map_refs[0] = node_match[index].map_refs[1] = node_match[index].map_refs[2] = 0u;
 
-      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+      if ( index < ntk.size() && ( ntk.is_constant( n ) || ntk.is_pi( n ) ) )
         continue;
       
       /* don't touch box */
@@ -1852,7 +1863,7 @@ private:
   {
     for ( auto const& n : topo_order )
     {
-      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+      if ( n < ntk.size() && ( ntk.is_constant( n ) || ntk.is_pi( n ) ) )
         continue;
       
       /* don't touch box */
@@ -1929,7 +1940,7 @@ private:
 
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
-      if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
+      if ( *it < ntk.size() && ( ntk.is_constant( *it ) || ntk.is_pi( *it ) ) )
         continue;
 
       const auto index = ntk.node_to_index( *it );
@@ -2105,29 +2116,32 @@ private:
       auto& node_data = node_match[index];
 
       /* skip constants and PIs */
-      if ( ntk.is_constant( *it ) )
+      if ( index < ntk.size() )
       {
-        if ( node_match[index].map_refs[2] > 0u )
+        if ( ntk.is_constant( *it ) )
         {
-          /* if used and not available in the library launch a mapping error */
-          if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
+          if ( node_match[index].map_refs[2] > 0u )
           {
-            std::cerr << "[i] MAP ERROR: technology library does not contain constant gates, impossible to perform mapping" << std::endl;
-            st.mapping_error = true;
-            return false;
+            /* if used and not available in the library launch a mapping error */
+            if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
+            {
+              std::cerr << "[i] MAP ERROR: technology library does not contain constant gates, impossible to perform mapping" << std::endl;
+              st.mapping_error = true;
+              return false;
+            }
           }
+          continue;
         }
-        continue;
-      }
-      else if ( ntk.is_pi( *it ) )
-      {
-        if ( node_match[index].map_refs[1] > 0u )
+        else if ( ntk.is_pi( *it ) )
         {
-          /* Add inverter area over the negated fanins */
-          area += lib_inv_area;
-          ++inv;
+          if ( node_match[index].map_refs[1] > 0u )
+          {
+            /* Add inverter area over the negated fanins */
+            area += lib_inv_area;
+            ++inv;
+          }
+          continue;
         }
-        continue;
       }
 
       /* continue if not referenced in the cover */
@@ -2210,7 +2224,7 @@ private:
     }
 
     /* blend estimated references */
-    for ( auto i = 0u; i < ntk.size(); ++i )
+    for ( auto i = 0u; i < node_match.size(); ++i )
     {
       node_match[i].est_refs[2] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[2] + 2.0f * node_match[i].map_refs[2] ) / 3.0 );
       node_match[i].est_refs[1] = std::max( 1.0, ( 1.0 * node_match[i].est_refs[1] + 2.0f * node_match[i].map_refs[1] ) / 3.0 );
@@ -2296,7 +2310,7 @@ private:
     /* propagate required time to the PIs */
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
-      if ( ntk.is_pi( *it ) || ntk.is_constant( *it ) )
+      if ( ntk.node_to_index( *it ) < ntk.size() && ( ntk.is_pi( *it ) || ntk.is_constant( *it ) ) )
         break;
 
       const auto index = ntk.node_to_index( *it );
@@ -2318,19 +2332,22 @@ private:
       auto& node_data = node_match[index];
 
       /* measure area */
-      if ( ntk.is_constant( n ) )
+      if ( index < ntk.size() )
       {
-        continue;
-      }
-      else if ( ntk.is_pi( n ) )
-      {
-        if ( node_data.map_refs[1] > 0u )
+        if ( ntk.is_constant( n ) )
         {
-          /* Add inverter area over the negated fanins */
-          area += lib_inv_area;
-          ++inv;
+          continue;
         }
-        continue;
+        else if ( ntk.is_pi( n ) )
+        {
+          if ( node_data.map_refs[1] > 0u )
+          {
+            /* Add inverter area over the negated fanins */
+            area += lib_inv_area;
+            ++inv;
+          }
+          continue;
+        }
       }
 
       /* reset required time */
@@ -3772,30 +3789,33 @@ private:
       /* compute leaf phase using the current gate */
       uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
 
-      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      if ( leaf < ntk.size() )
       {
-        continue;
-      }
-      else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
-      {
-        /* reference PIs, add inverter cost for negative phase */
-        if ( leaf_phase == 1u )
+        if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
         {
-          if ( node_match[leaf].map_refs[1]++ == 0u )
+          continue;
+        }
+        else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+        {
+          /* reference PIs, add inverter cost for negative phase */
+          if ( leaf_phase == 1u )
           {
-            if constexpr ( SwitchActivity )
-              count += switch_activity[leaf];
-            else
-              count += lib_inv_area;
+            if ( node_match[leaf].map_refs[1]++ == 0u )
+            {
+              if constexpr ( SwitchActivity )
+                count += switch_activity[leaf];
+              else
+                count += lib_inv_area;
+            }
+            ++node_match[leaf].map_refs[2];
           }
-          ++node_match[leaf].map_refs[2];
+          else
+          {
+            ++node_match[leaf].map_refs[0];
+            ++node_match[leaf].map_refs[2];
+          }
+          continue;
         }
-        else
-        {
-          ++node_match[leaf].map_refs[0];
-          ++node_match[leaf].map_refs[2];
-        }
-        continue;
       }
 
       if ( node_match[leaf].same_match )
@@ -3854,30 +3874,33 @@ private:
       /* compute leaf phase using the current gate */
       uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
 
-      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      if ( leaf < ntk.size() )
       {
-        continue;
-      }
-      else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
-      {
-        /* dereference PIs, add inverter cost for negative phase */
-        if ( leaf_phase == 1u )
+        if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
         {
-          if ( --node_match[leaf].map_refs[1] == 0u )
+          continue;
+        }
+        else if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+        {
+          /* dereference PIs, add inverter cost for negative phase */
+          if ( leaf_phase == 1u )
           {
-            if constexpr ( SwitchActivity )
-              count += switch_activity[leaf];
-            else
-              count += lib_inv_area;
+            if ( --node_match[leaf].map_refs[1] == 0u )
+            {
+              if constexpr ( SwitchActivity )
+                count += switch_activity[leaf];
+              else
+                count += lib_inv_area;
+            }
+            --node_match[leaf].map_refs[2];
           }
-          --node_match[leaf].map_refs[2];
+          else
+          {
+            --node_match[leaf].map_refs[0];
+            --node_match[leaf].map_refs[2];
+          }
+          continue;
         }
-        else
-        {
-          --node_match[leaf].map_refs[0];
-          --node_match[leaf].map_refs[2];
-        }
-        continue;
       }
 
       if ( node_match[leaf].same_match )
@@ -3954,7 +3977,7 @@ private:
       /* compute leaf phase using the current gate */
       uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
 
-      if ( ntk.is_constant( ntk.index_to_node( leaf ) ) )
+      if ( leaf < ntk.size() && ntk.is_constant( ntk.index_to_node( leaf ) ) )
       {
         continue;
       }
@@ -3962,7 +3985,7 @@ private:
       /* add to visited */
       tmp_visited.push_back( ( static_cast<uint64_t>( leaf ) << 1 ) | leaf_phase );
 
-      if ( ntk.is_pi( ntk.index_to_node( leaf ) ) )
+      if ( leaf < ntk.size() && ntk.is_pi( ntk.index_to_node( leaf ) ) )
       {
         /* reference PIs, add inverter cost for negative phase */
         if ( leaf_phase == 1u )
@@ -4086,19 +4109,22 @@ private:
       auto const& node_data = node_match[index];
 
       /* add inverter at PI if needed */
-      if ( ntk.is_constant( n ) )
+      if ( index < ntk.size() )
       {
-        if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
-          continue;
-      }
-      else if ( ntk.is_pi( n ) )
-      {
-        if ( node_data.map_refs[1] > 0 )
+        if ( ntk.is_constant( n ) )
         {
-          old2new[index][1] = res.create_not( old2new[n][0] );
-          res.add_binding( res.get_node( old2new[index][1] ), lib_inv_id );
+          if ( node_data.best_supergate[0] == nullptr && node_data.best_supergate[1] == nullptr )
+            continue;
         }
-        continue;
+        else if ( ntk.is_pi( n ) )
+        {
+          if ( node_data.map_refs[1] > 0 )
+          {
+            old2new[index][1] = res.create_not( old2new[n][0] );
+            res.add_binding( res.get_node( old2new[index][1] ), lib_inv_id );
+          }
+          continue;
+        }
       }
 
       /* continue if cut is not in the cover */
@@ -4419,7 +4445,7 @@ private:
       uint32_t virtual_nodes_needed = 0;
       uint32_t max_fanin_size = 0;
       ntk.foreach_gate( [&]( auto const& n ) {
-        virtual_nodes_needed += ntk.fanin_size( n ) - 1;
+        virtual_nodes_needed += ( ntk.fanin_size( n ) < 2 ) ? 0 : ntk.fanin_size( n ) - 2;
         max_fanin_size = std::max( max_fanin_size, ntk.fanin_size( n ) );
       } );
 
@@ -4433,6 +4459,12 @@ private:
       /* extend the cuts and node data memory */
       cuts = std::vector<cut_set_t>( ntk.size() + virtual_nodes_needed );
       node_match = node_match_t( ntk.size() + virtual_nodes_needed );
+      topo_order_tmp.reserve( ntk.size() +  virtual_nodes_needed );
+
+      topo_order_tmp.push_back( ntk.get_node( ntk.get_constant( false ) ) ); /* TODO: incomplete */
+      ntk.foreach_ci( [this]( auto n ) {
+        topo_order_tmp.push_back( n );
+      } );
     }
   }
 
@@ -5184,6 +5216,7 @@ private:
   std::vector<cut_decomposition_emap> pcuts_c;  /* cut data {2 children of each pcut + skip cut} */
   std::vector<uint32_t> lcuts_name;             /* node info of cut merger lcuts */
   std::vector<bool> lcuts_phase;                /* node info of cut merger lcuts */
+  std::vector<node<Ntk>> topo_order_tmp;
 
   /* multi-output matching */
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */

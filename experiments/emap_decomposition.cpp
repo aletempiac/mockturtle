@@ -81,7 +81,7 @@ int main()
   /* library to map to technology */
   std::vector<gate> gates;
   // std::stringstream in( mcnc_library );
-  std::ifstream in( "asap7.genlib" );
+  std::ifstream in( "../../../asap7_lib/asap.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -118,6 +118,7 @@ int main()
     multi_aig_network multi = aig_collapse( aig, cps );
 
     emap_params ps;
+    ps.area_oriented_mapping = true;
     ps.decompose_multi_input = true;
     ps.verbose = true;
     emap_stats st;
@@ -125,6 +126,9 @@ int main()
     // binding_view<klut_network> res = emap<aig_network, 5>( aig, tech_lib, ps, &st );
 
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    // bool const cec = benchmark != "hyp" ? abc_cec_impl( res, benchmark ) : true;
+
+    res.report_stats();
 
     exp( benchmark, size_before, multi.num_gates(), st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }

@@ -78,7 +78,7 @@ int main()
   /* library to map to technology */
   std::vector<gate> gates;
   // std::stringstream in( mcnc_library );
-  std::ifstream in( "asap7.genlib" );
+  std::ifstream in( "../../../asap7_lib/asap.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -105,6 +105,7 @@ int main()
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_params ps;
+    // ps.area_oriented_mapping = true;
     ps.verbose = true;
     emap_stats st;
 
