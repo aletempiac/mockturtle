@@ -108,7 +108,6 @@ struct triple_hash
 {
   uint64_t operator()( const std::array<uint32_t, 3>& p ) const
   {
-    uint64_t word = p[0];
     uint64_t seed = hash_block( p[0] );
 
     hash_combine( seed, hash_block( p[1] ) );
@@ -576,7 +575,7 @@ private:
       return valid;
     } );
 
-    if ( found && n != root && ntk.fanout_size( n ) > 1 )
+    if ( found && n != root && ntk.fanout_size( n ) > 1 ) /* TODO: investigate this line */
       valid = false;
 
     return found;
