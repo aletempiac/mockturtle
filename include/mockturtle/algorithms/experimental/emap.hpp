@@ -111,9 +111,6 @@ struct emap_params
   /*! \brief Maps multi-output gates */
   bool map_multioutput{ false };
 
-  /*! \brief Decompose multi-input primitive nodes */
-  bool decompose_multi_input{ false };
-
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ false };
 
@@ -611,7 +608,6 @@ struct emap_triple_hash
 {
   inline uint64_t operator()( const std::array<uint32_t, 3>& p ) const
   {
-    uint64_t word = p[0];
     uint64_t seed = hash_block( p[0] );
 
     hash_combine( seed, hash_block( p[1] ) );
@@ -651,13 +647,6 @@ struct node_match_emap
   float flows[2];
 };
 
-struct cut_decomposition_emap
-{
-  uint32_t child1{ UINT32_MAX };
-  uint32_t child2{ UINT32_MAX };
-  bool save{ false };
-};
-
 union multi_match_data
 {
   uint64_t data{ 0 };
@@ -676,7 +665,6 @@ public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
   static constexpr uint32_t max_cut_leaves = 6;
-  static constexpr bool activate_decomposition = Ntk::max_fanin_size > Ntk::min_fanin_size;
   using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
@@ -883,10 +871,6 @@ private:
   bool compute_mapping_match()
   {
     bool warning_box = false;
-    bool decomposition_happened = false;
-    bool decomposition_now = false;
-
-    init_decomposition_data();
 
     for ( auto const& n : topo_order )
     {
@@ -932,17 +916,6 @@ private:
       {
         merge_cuts2<DO_AREA>( n );
       }
-      else if ( activate_decomposition )
-      {
-        if ( ps.decompose_multi_input && ntk.fanin_size( n ) > Ntk::min_fanin_size )
-        {
-          merge_cuts_decompose<DO_AREA>( n );
-          decomposition_happened = true;
-          decomposition_now = true;
-        }
-        else
-          merge_cuts2<DO_AREA>( n );
-      }
       else
       {
         merge_cuts<DO_AREA>( n );
@@ -968,39 +941,9 @@ private:
             multi_node_update<DO_AREA>( n );
         }
       }
-
-      if ( decomposition_now || n == 53 )
-      {
-        /* report arrival time */
-        std::cout << fmt::format( "Arrival at node {}: {} and {}\n\n", index, node_match[index].arrival[0], node_match[index].arrival[1] );
-        decomposition_now = false;
-      }
     }
 
     double area_old = area;
-
-    if ( decomposition_happened )
-    {
-      /* compute the current worst delay and update the mapping refs */
-      delay = 0.0f;
-      ntk.foreach_po( [this]( auto s ) {
-        const auto index = ntk.node_to_index( ntk.get_node( s ) );
-
-        if ( ntk.is_complemented( s ) )
-          delay = std::max( delay, node_match[index].arrival[1] );
-        else
-          delay = std::max( delay, node_match[index].arrival[0] );
-
-        node_match[index].map_refs[2]++;
-        if ( ntk.is_complemented( s ) )
-          node_match[index].map_refs[1]++;
-        else
-          node_match[index].map_refs[0]++;
-      } );
-      st.delay = delay;
-      return false;
-    }
-
     bool success = set_mapping_refs<false>();
 
     if ( warning_box )
@@ -1198,483 +1141,6 @@ private:
 
     add_unit_cut( index );
   }
-
-#pragma region Cut merging with gate decomposition
-  template<bool DO_AREA>
-  void merge_cuts_decompose( node<Ntk> const& n )
-  {
-    auto index = ntk.node_to_index( n );
-    auto& node_data = node_match[index];
-    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
-    cut_t best_cut;
-
-    if constexpr ( DO_AREA )
-    {
-      sort = emap_cut_sort_type::AREA;
-    }
-
-    /* load all the input cuts */
-    ntk.foreach_fanin( ntk.index_to_node( index ), [this]( auto child, auto i ) {
-      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
-      lcuts_phase[i] = ntk.is_complemented( child );
-      lcuts_name[i] = i;
-    } );
-    auto const fanin = ntk.fanin_size( n );
-    lcuts[fanin] = &cuts[index];
-
-    /* compute all the possible cut pairs */
-    uint32_t set_index = 0;
-    for ( uint32_t i = 0; i < fanin - 1; ++i )
-    {
-      for ( uint32_t j = i + 1; j < fanin; ++j )
-      {
-        merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[set_index], i, j, sort, true );
-        merge_cuts_decompose_compute_cost<DO_AREA>( set_index );
-        pcuts_c[set_index].child1 = i;
-        pcuts_c[set_index].child2 = j;
-        pcuts_c[set_index].save = false;
-        ++set_index;
-      }
-    }
-
-    /* Loop: select best and combine the selected cut with the active leaves */
-    for ( uint32_t k = 1; k < fanin - 1; ++k )
-    {
-      /* pick the best cut pair */
-      uint32_t new_id = vnode_id++;
-      uint32_t best = merge_cuts_decompose_best_pair<DO_AREA>( set_index );
-
-      /* create virtual node for cut pair */
-      decompose_add_unit_cut( best, new_id );
-      cuts[new_id] = cuts_decomposition[best];
-      node_match[new_id] = node_match_cache[best];
-
-      /* set cut set to save */
-      pcuts_c[best].save = true;
-      std::cout << fmt::format( "Picking {} with children {} and {}\n", new_id, pcuts_c[best].child1, pcuts_c[best].child2 );
-
-      /* remove the other cut sets involving the same leaves and load new set in lcuts */
-      merge_cuts_decompose_load_set( best, fanin - k, new_id );
-
-      /* compute the new cut set */
-      uint32_t remove_i = 0;
-      uint32_t location = 0;
-      for ( uint32_t j = 0; j < fanin - 1 - k; ++j )
-      {
-        /* get new cut location */
-        location = merge_cuts_decompose_remove_pair( best, pcuts_c[best].child1, pcuts_c[best].child2, set_index, remove_i );
-        if ( k == fanin - 2 )
-        {
-          /* write root cut set in cut set of n */
-          merge_cuts2_subset<DO_AREA>( n, *lcuts[fanin], fanin - 1 - k, j, sort, false );
-          std::cout << fmt::format( "Picking {} with children {} and {}\n\n", index, lcuts_name[j], new_id );
-        }
-        else
-        {
-          /* write cut set in temporary container */
-          merge_cuts2_subset<DO_AREA>( n, cuts_decomposition[location], fanin - 1 - k, j, sort, true );
-          merge_cuts_decompose_compute_cost<DO_AREA>( location );
-        }
-        pcuts_c[location].child1 = lcuts_name[j];
-        pcuts_c[location].child2 = new_id;
-        pcuts_c[location].save = false;
-      }
-
-      /* last iteration */
-      if ( k == fanin - 2 )
-        break;
-
-      /* remove useless remaining cut sets */
-      while ( merge_cuts_decompose_remove_pair( best, pcuts_c[best].child1, pcuts_c[best].child2, set_index, remove_i ) != UINT32_MAX )
-        ;
-    }
-
-    /* add the trivial cut to the root */
-    add_unit_cut( index );
-  }
-
-  template<bool DO_AREA>
-  inline void merge_cuts2_subset( node<Ntk> const& n, cut_set_t& rcuts, uint32_t i, uint32_t j, emap_cut_sort_type sort, bool adjust_flow )
-  {
-    uint32_t index = ntk.node_to_index( n );
-    cut_t new_cut;
-    std::vector<cut_t const*> vcuts( 2 );
-
-    /* clear set */
-    rcuts.clear();
-
-    /* set cut limit for run-time optimization*/
-    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
-
-    bool phase_i = lcuts_name[i] < ntk.size() ? lcuts_phase[lcuts_name[i]] : false;
-    bool phase_j = lcuts_name[j] < ntk.size() ? lcuts_phase[lcuts_name[j]] : false;
-
-    for ( auto const& c1 : *lcuts[i] )
-    {
-      for ( auto const& c2 : *lcuts[j] )
-      {
-        if ( !c1->merge( *c2, new_cut, CutSize ) )
-        {
-          continue;
-        }
-
-        if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
-        {
-          continue;
-        }
-
-        /* compute function */
-        vcuts[0] = c1;
-        vcuts[1] = c2;
-        compute_truth_table_decompose( index, vcuts, new_cut, phase_i, phase_j );
-
-        /* match cut and compute data */
-        compute_cut_data<DO_AREA>( new_cut, n );
-        if ( adjust_flow )
-          new_cut->flow *= ntk.fanout_size( n );
-
-        if ( ps.remove_dominated_cuts )
-          rcuts.insert( new_cut, false, sort );
-        else
-          rcuts.simple_insert( new_cut, sort );
-      }
-    }
-
-    // cuts_total += rcuts.size();
-
-    /* limit the maximum number of cuts, do not add trivial cut (node is still virtual) */
-    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
-  }
-
-  template<bool DO_AREA>
-  uint32_t merge_cuts_decompose_best_pair( uint32_t r )
-  {
-    assert( r > 0 );
-
-    uint32_t best = 0;
-    double best_cost = std::numeric_limits<float>::max();
-
-    auto it = node_match_cache.begin();
-    for ( uint32_t i = 0; i < r; ++i )
-    {
-      /* skip cut if it is set to "save" */
-      if ( pcuts_c[i].save )
-      {
-        ++it;
-        continue;
-      }
-
-      double cost = 0;
-      if constexpr ( DO_AREA )
-      {
-        cost = std::min( it->flows[0], it->flows[1] );
-      }
-      else
-      {
-        cost = std::min( it->arrival[0], it->arrival[1] );
-      }
-
-      if ( cost < best_cost )
-      {
-        best = i;
-        best_cost = cost;
-      }
-      ++it;
-    }
-
-    return best;
-  }
-
-  inline uint32_t merge_cuts_decompose_remove_pair( uint32_t best, uint32_t l1, uint32_t l2, uint32_t r, uint32_t& remove_i )
-  {
-    assert( r > 0 );
-
-    while ( remove_i < r )
-    {
-      auto& p = pcuts_c[remove_i];
-
-      /* do not remove the best cut */
-      if ( remove_i == best )
-      {
-        ++remove_i;
-        continue;
-      }
-
-      if ( p.child1 == UINT32_MAX )
-        return remove_i++;
-
-      if ( p.child1 == l1 || p.child1 == l2 || p.child2 == l1 || p.child2 == l2 ) /* TODO: use a new signature */
-      {
-        p.child1 = UINT32_MAX;
-        p.child1 = UINT32_MAX;
-        p.save = true;
-        return remove_i++;
-      }
-
-      ++remove_i;
-    }
-
-    /* all elements removed */
-    return UINT32_MAX;
-  }
-
-  void inline merge_cuts_decompose_load_set( uint32_t best_cut_set, uint32_t fanin_k, uint32_t new_id )
-  {
-    auto& data = pcuts_c[best_cut_set];
-
-    /* find children0 and children1 in lcuts */
-    uint32_t i0 = 0, i1 = 0;
-    uint32_t found = 0;
-    for ( auto j = 0u; j <= fanin_k && found < 2; ++j )
-    {
-      if ( lcuts_name[j] == data.child1 )
-      {
-        i0 = j;
-        ++found;
-      }
-      else if ( lcuts_name[j] == data.child2 )
-      {
-        i1 = j;
-        ++found;
-      }
-    }
-
-    assert( i0 < i1 );
-
-    /* remove useless cuts in lcuts */
-    uint32_t k = i0;
-    while ( k + 1 != i1 )
-    {
-      lcuts[k] = lcuts[k + 1];
-      lcuts_name[k] = lcuts_name[k + 1];
-      ++k;
-    }
-
-    while ( k + 2 <= fanin_k )
-    {
-      lcuts[k] = lcuts[k + 2];
-      lcuts_name[k] = lcuts_name[k + 2];
-      ++k;
-    }
-
-    /* add new cut set in lcuts */
-    lcuts[fanin_k - 1] = &cuts_decomposition[best_cut_set];
-    lcuts_name[fanin_k - 1] = new_id;
-  }
-
-  template<bool DO_AREA>
-  void merge_cuts_decompose_compute_cost( uint32_t index )
-  {
-    merge_cuts_decompose_compute_best_match<DO_AREA>( index );
-    merge_cuts_decompose_compute_drop_phase<DO_AREA>( index );
-  }
-
-  template<bool DO_AREA>
-  void merge_cuts_decompose_compute_best_match( uint32_t index )
-  {
-    double best_arrival0 = std::numeric_limits<float>::max();
-    double best_arrival1 = std::numeric_limits<float>::max();
-    double best_area_flow0 = std::numeric_limits<float>::max();
-    double best_area_flow1 = std::numeric_limits<float>::max();
-    float best_area0 = std::numeric_limits<float>::max();
-    float best_area1 = std::numeric_limits<float>::max();
-    uint32_t best_size0 = UINT32_MAX;
-    uint32_t best_size1 = UINT32_MAX;
-    uint8_t best_cut0 = 0u;
-    uint8_t best_cut1 = 0u;
-    uint8_t best_phase0 = 0u;
-    uint8_t best_phase1 = 0u;
-    uint8_t cut_index = 0u;
-
-    auto& node_data = node_match_cache[index];
-    supergate<NInputs> const* best_supergate0 = nullptr;
-    supergate<NInputs> const* best_supergate1 = nullptr;
-
-    /* foreach cut */
-    for ( auto& cut : cuts_decomposition[index] )
-    {
-      /* trivial cuts or not matched cuts */
-      if ( ( *cut )->ignore )
-      {
-        ++cut_index;
-        continue;
-      }
-
-      auto const& supergates = ( *cut )->supergates;
-      auto const negation0 = ( *cut )->negations[0];
-      auto const negation1 = ( *cut )->negations[1];
-
-      if ( supergates[0] != nullptr )
-      {
-        /* match each gate and take the best one */
-        for ( auto const& gate : *supergates[0] )
-        {
-          uint8_t gate_polarity = gate.polarity ^ negation0;
-          double worst_arrival = 0.0f;
-
-          auto ctr = 0u;
-          for ( auto l : *cut )
-          {
-            double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-            worst_arrival = std::max( worst_arrival, arrival_pin );
-            ++ctr;
-          }
-
-          node_data.phase[0] = gate_polarity;
-          double area_local = gate.area + decompose_cut_leaves_flow( *cut, index, 0 );
-
-          if ( compare_map<DO_AREA>( worst_arrival, best_arrival0, area_local, best_area_flow0, cut->size(), best_size0 ) )
-          {
-            best_arrival0 = worst_arrival;
-            best_area_flow0 = area_local;
-            best_size0 = cut->size();
-            best_cut0 = cut_index;
-            best_area0 = gate.area;
-            best_phase0 = gate_polarity;
-            best_supergate0 = &gate;
-          }
-        }
-      }
-
-      if ( supergates[1] != nullptr )
-      {
-        /* match each gate and take the best one */
-        for ( auto const& gate : *supergates[1] )
-        {
-          uint8_t gate_polarity = gate.polarity ^ negation1;
-          double worst_arrival = 0.0f;
-
-          auto ctr = 0u;
-          for ( auto l : *cut )
-          {
-            double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-            worst_arrival = std::max( worst_arrival, arrival_pin );
-            ++ctr;
-          }
-
-          node_data.phase[1] = gate_polarity;
-          double area_local = gate.area + decompose_cut_leaves_flow( *cut, index, 1 );
-
-          if ( compare_map<DO_AREA>( worst_arrival, best_arrival1, area_local, best_area_flow1, cut->size(), best_size1 ) )
-          {
-            best_arrival1 = worst_arrival;
-            best_area_flow1 = area_local;
-            best_size1 = cut->size();
-            best_cut1 = cut_index;
-            best_area1 = gate.area;
-            best_phase1 = gate_polarity;
-            best_supergate1 = &gate;
-          }
-        }
-      }
-
-      ++cut_index;
-    }
-
-    node_data.flows[0] = best_area_flow0;
-    node_data.flows[1] = best_area_flow1;
-    node_data.arrival[0] = best_arrival0;
-    node_data.arrival[1] = best_arrival1;
-    node_data.area[0] = best_area0;
-    node_data.area[1] = best_area1;
-    node_data.best_cut[0] = best_cut0;
-    node_data.best_cut[1] = best_cut1;
-    node_data.phase[0] = best_phase0;
-    node_data.phase[1] = best_phase1;
-    node_data.best_supergate[0] = best_supergate0;
-    node_data.best_supergate[1] = best_supergate1;
-  }
-
-  template<bool DO_AREA>
-  void merge_cuts_decompose_compute_drop_phase( uint32_t index )
-  {
-    auto& node_data = node_match_cache[index];
-
-    /* compute arrival adding an inverter to the other match phase */
-    double worst_arrival_npos = node_data.arrival[1] + lib_inv_delay;
-    double worst_arrival_nneg = node_data.arrival[0] + lib_inv_delay;
-    bool use_zero = false;
-    bool use_one = false;
-
-    /* only one phase is matched */
-    if ( node_data.best_supergate[0] == nullptr )
-    {
-      merge_cuts_decompose_compute_set_complemented_phase( index, 1, worst_arrival_npos );
-      return;
-    }
-    else if ( node_data.best_supergate[1] == nullptr )
-    {
-      merge_cuts_decompose_compute_set_complemented_phase( index, 0, worst_arrival_nneg );
-      return;
-    }
-
-    /* try to use only one match to cover both phases */
-    if constexpr ( !DO_AREA )
-    {
-      /* if arrival improves matching the other phase and inserting an inverter */
-      if ( worst_arrival_npos < node_data.arrival[0] + epsilon )
-      {
-        use_one = true;
-      }
-      if ( worst_arrival_nneg < node_data.arrival[1] + epsilon )
-      {
-        use_zero = true;
-      }
-    }
-    else
-    {
-      use_zero = true;
-      use_one = true;
-    }
-
-    if ( ( !use_zero && !use_one ) )
-    {
-      /* use both phases */
-      if ( ps.allow_node_duplication )
-      {
-        node_data.same_match = false;
-        return;
-      }
-
-      /* if node duplication is not allowed, pick one phase based on delay */
-      use_zero = true;
-      use_one = true;
-    }
-
-    /* use area flow as a tiebreaker */
-    if ( use_zero && use_one )
-    {
-      auto size_zero = cuts[index][node_data.best_cut[0]].size();
-      auto size_one = cuts[index][node_data.best_cut[1]].size();
-      if ( compare_map<DO_AREA>( worst_arrival_nneg, worst_arrival_npos, node_data.flows[0], node_data.flows[1], size_zero, size_one ) )
-        use_one = false;
-      else
-        use_zero = false;
-    }
-
-    if ( use_zero )
-    {
-      merge_cuts_decompose_compute_set_complemented_phase( index, 0, worst_arrival_nneg );
-    }
-    else
-    {
-      merge_cuts_decompose_compute_set_complemented_phase( index, 1, worst_arrival_npos );
-    }
-  }
-
-  inline void merge_cuts_decompose_compute_set_complemented_phase( uint32_t index, uint8_t phase, double worst_arrival_n )
-  {
-    auto& node_data = node_match_cache[index];
-    auto phase_n = phase ^ 1;
-    node_data.same_match = true;
-    node_data.best_supergate[phase_n] = nullptr;
-    node_data.best_cut[phase_n] = node_data.best_cut[phase];
-    node_data.phase[phase_n] = node_data.phase[phase];
-    node_data.arrival[phase_n] = worst_arrival_n;
-    node_data.area[phase_n] = node_data.area[phase];
-    node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
-  }
-#pragma endregion
 
   template<bool DO_AREA>
   bool compute_mapping_match_node()
@@ -3731,21 +3197,6 @@ private:
     return flow;
   }
 
-  inline double decompose_cut_leaves_flow( cut_t const& cut, uint32_t index, uint8_t phase )
-  {
-    double flow{ 0.0f };
-    auto const& node_data = node_match_cache[index];
-
-    uint8_t ctr = 0u;
-    for ( auto leaf : cut )
-    {
-      uint8_t leaf_phase = ( node_data.phase[phase] >> ctr++ ) & 1;
-      flow += node_match[leaf].flows[leaf_phase];
-    }
-
-    return flow;
-  }
-
   template<bool SwitchActivity>
   float cut_ref( cut_t const& cut, node<Ntk> const& n, uint8_t phase )
   {
@@ -4407,35 +3858,6 @@ private:
     cut->flow = best_area_flow;
   }
 
-  void init_decomposition_data()
-  {
-    if constexpr ( activate_decomposition )
-    {
-      if ( !ps.decompose_multi_input )
-        return;
-
-      /* measure maximum fanin size and number of needed virtual nodes */
-      vnode_id = ntk.size();
-      uint32_t virtual_nodes_needed = 0;
-      uint32_t max_fanin_size = 0;
-      ntk.foreach_gate( [&]( auto const& n ) {
-        virtual_nodes_needed += ntk.fanin_size( n ) - 1;
-        max_fanin_size = std::max( max_fanin_size, ntk.fanin_size( n ) );
-      } );
-
-      /* allocate memory reserved for decomposition */
-      cuts_decomposition = std::vector<cut_set_t>( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
-      pcuts_c = std::vector<cut_decomposition_emap>( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
-      lcuts_name = std::vector<uint32_t>( max_fanin_size );
-      lcuts_phase = std::vector<bool>( max_fanin_size );
-      node_match_cache = node_match_t( ( max_fanin_size * ( max_fanin_size - 1 ) ) / 2 );
-
-      /* extend the cuts and node data memory */
-      cuts = std::vector<cut_set_t>( ntk.size() + virtual_nodes_needed );
-      node_match = node_match_t( ntk.size() + virtual_nodes_needed );
-    }
-  }
-
   /* compute positions of leave indices in cut `sub` (subset) with respect to
    * leaves in cut `sup` (super set).
    *
@@ -4469,14 +3891,6 @@ private:
   void add_unit_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index + 1 );
-
-    kitty::create_nth_var( cut->function, 0 );
-    cut->ignore = true;
-  }
-
-  void decompose_add_unit_cut( uint32_t location, uint32_t vindex )
-  {
-    auto& cut = cuts_decomposition[location].add_cut( &vindex, &vindex + 1 );
 
     kitty::create_nth_var( cut->function, 0 );
     cut->ignore = true;
@@ -4524,43 +3938,6 @@ private:
     }
 
     auto tt_res = ntk.compute( ntk.index_to_node( index ), ltruth.begin(), ltruth.begin() + vcuts.size() );
-
-    if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
-    {
-      const auto support = kitty::min_base_inplace( tt_res );
-
-      std::vector<uint32_t> leaves_before( res.begin(), res.end() );
-      std::vector<uint32_t> leaves_after( support.size() );
-
-      auto it_support = support.begin();
-      auto it_leaves = leaves_after.begin();
-      while ( it_support != support.end() )
-      {
-        *it_leaves++ = leaves_before[*it_support++];
-      }
-      res.set_leaves( leaves_after.begin(), leaves_after.end() );
-    }
-
-    res->function = tt_res;
-  }
-
-  void compute_truth_table_decompose( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res, bool phase0, bool phase1 )
-  {
-    assert( ntk.is_nary_and( ntk.index_to_node( index ) ) );
-    kitty::static_truth_table<CutSize> tt_res = ( *vcuts[0] )->function;
-
-    if ( phase0 )
-      tt_res = ~tt_res;
-    compute_truth_table_support( *vcuts[0], res, tt_res );
-
-    ltruth[0] = ( *vcuts[1] )->function;
-
-    if ( phase1 )
-      ltruth[0] = ~ltruth[0];
-
-    compute_truth_table_support( *vcuts[1], res, ltruth[0] );
-
-    tt_res &= ltruth[0];
 
     if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
     {
@@ -5153,7 +4530,6 @@ private:
   double delay{ 0.0f };     /* current delay of the mapping */
   double area{ 0.0f };      /* current area of the mapping */
   uint32_t inv{ 0 };        /* current inverter count */
-  uint32_t vnode_id{ 0 };   /* virtual node ID due to on-the-fly decomposition */
 
   /* lib inverter info */
   float lib_inv_area;
@@ -5177,13 +4553,6 @@ private:
   truth_compute_t ltruth;                       /* truth table merger container */
   support_t lsupport;                           /* support merger container */
   uint32_t cuts_total{ 0 };                     /* current computed cuts */
-
-  /* cut computation multi-input */
-  std::vector<cut_set_t> cuts_decomposition;    /* cache for decomposition of multi-input gates */
-  node_match_t node_match_cache;                /* cache for decomposition cost per cut in cache */
-  std::vector<cut_decomposition_emap> pcuts_c;  /* cut data {2 children of each pcut + skip cut} */
-  std::vector<uint32_t> lcuts_name;             /* node info of cut merger lcuts */
-  std::vector<bool> lcuts_phase;                /* node info of cut merger lcuts */
 
   /* multi-output matching */
   multi_hash_t multi_cuts_classes;  /* cuts leaves classes */
