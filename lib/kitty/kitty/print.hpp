@@ -297,6 +297,54 @@ inline std::string to_hex( const TT& tt )
   return st.str();
 }
 
+/*! \brief Creates an expression from a truth table
+ *
+ * \param tt Truth table
+ */
+template<typename TT, typename = std::enable_if_t<
+                          !std::is_same<TT, partial_truth_table>::value>>
+void print_expression( const TT& tt, std::ostream& os = std::cout )
+{
+  auto cubes = isop( tt );
+
+  std::stringstream expr;
+
+  uint32_t c_i = 0;
+  for ( auto c : cubes )
+  {
+    for ( auto i = 0; i < tt.num_vars(); ++i )
+    {
+      if ( !c.get_mask( i ) )
+        continue;
+
+      char lit = 'a' + i;
+      expr << lit;
+
+      if ( c.get_bit( i ) )
+        expr << '\'';
+    }
+
+    if ( c_i++ < cubes.size() - 1 )
+      expr << " + ";
+  }
+
+  os << expr.str();
+}
+
+/*! \brief Returns truth table as an expression
+
+  Calls `print_expression` internally on a string stream.
+
+  \param tt Truth table
+*/
+template<typename TT>
+inline std::string to_expression( const TT& tt )
+{
+  std::stringstream st;
+  print_expression( tt, st );
+  return st.str();
+}
+
 /*! \brief Prints minterms of a Boolean function in christmas tree pattern
 
   This function prints all minterms of a Boolean function and arranges them
