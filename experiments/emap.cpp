@@ -87,7 +87,7 @@ int main()
 
   tech_library_params tps;
   tps.verbose = true;
-  tech_library<5, classification_type::np_configurations> tech_lib( gates, tps );
+  tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -108,7 +108,7 @@ int main()
     ps.verbose = true;
     emap_stats st;
 
-    binding_view<klut_network> res = emap<aig_network, 5>( aig, tech_lib, ps, &st );
+    binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
 
     bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
 

@@ -158,6 +158,15 @@ int main()
     map_adders_stats st_ma;
     block_network res_det = map_adders( aig, ps_ma, &st_ma );
 
+    /* check each output is used */
+    res_det.foreach_gate( [&]( auto const& g ) {
+      for ( auto i = 0u; i < res_det.num_outputs( g ); ++i )
+      {
+        if ( res_det.fanout_size_pin( g, i ) == 0 )
+          std::cout << "[e] unused multi-output fanout\n";
+      }
+    } );
+
     block_dt_t block_res = decompose_multioutput<block_network, block_dt_t>( res_det, { true } );
     binding_view<block_dt_t> partial_map_res{ block_res, gates };
     if ( !add_adders_binding_info( partial_map_res, tech_lib ) )

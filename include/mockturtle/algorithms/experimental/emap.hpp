@@ -79,7 +79,7 @@ struct emap_params
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut limit is 31. By default,
+   * The default cut limit is 16. By default,
    * truth table minimization is performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
@@ -209,7 +209,8 @@ enum class emap_cut_sort_type
   DELAY = 0,
   DELAY2 = 1,
   AREA = 2,
-  NONE = 3
+  AREA2 = 3,
+  NONE = 4
 };
 
 template<typename CutType, int MaxCuts>
@@ -341,9 +342,27 @@ public:
       return true;
     if ( c1->flow > c2->flow + eps )
       return false;
+     if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return c1->delay < c2->delay - eps;
+  }
+
+  static bool sort_area2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( !c1->ignore && c2->ignore )
+      return true;
+    if ( c1->ignore && !c2->ignore )
+      return false;
     if ( c1.size() < c2.size() )
       return true;
     if ( c1.size() > c2.size() )
+      return false;
+    if ( c1->flow < c2->flow - eps )
+      return true;
+    if ( c1->flow > c2->flow + eps )
       return false;
     return c1->delay < c2->delay - eps;
   }
@@ -369,6 +388,10 @@ public:
     else if ( sort == emap_cut_sort_type::AREA )
     {
       return sort_area( cut1, cut2 );
+    }
+    else if ( sort == emap_cut_sort_type::AREA2 )
+    {
+      return sort_area2( cut1, cut2 );
     }
     else
     {
@@ -412,10 +435,6 @@ public:
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
     }
-    // else if ( sort == emap_cut_sort_type::DELAY2 )
-    // {
-    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
-    // }
     else if ( sort == emap_cut_sort_type::AREA )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
@@ -979,11 +998,11 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
+    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY2 : emap_cut_sort_type::AREA;
 
     if constexpr ( DO_AREA )
     {
-      sort = emap_cut_sort_type::AREA;
+      sort = emap_cut_sort_type::AREA2;
     }
 
     /* compute cuts */
@@ -2277,7 +2296,7 @@ private:
     node_data.flows[phase] = node_data.flows[phase] / node_data.est_refs[2];
     node_data.flows[phase_n] = node_data.flows[phase] + lib_inv_area;
   }
-  
+
   void reindex_multioutput_data()
   {
     /* re-index the multioutput list using the lowest index output instead of the greatest one */
@@ -3786,7 +3805,7 @@ private:
     if ( !ps.use_matching_prioritization )
     {
       best_arrival = 0;
-      best_area_flow = 1;
+      best_area_flow = cut.size() > 1 ? cut.size() : 0;
 
       for ( auto leaf : cut )
       {
@@ -3795,7 +3814,7 @@ private:
         best_area_flow += best_leaf_cut->flow;
       }
 
-      cut->delay = best_arrival + 1;
+      cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
       cut->flow = best_area_flow / ntk.fanout_size( n );
       return;
     }

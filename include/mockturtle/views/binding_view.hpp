@@ -202,6 +202,11 @@ public:
         delays[n] = gate_delay;
         worst_delay = std::max( worst_delay, gate_delay );
       }
+      else
+      {
+        worst_delay = -1;
+        return false;
+      }
       return true;
     } );
 
