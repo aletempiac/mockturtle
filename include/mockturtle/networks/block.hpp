@@ -624,6 +624,26 @@ public:
   {
     return _storage->nodes[n].data[1].h2;
   }
+
+  uint32_t incr_fanout_size( node const& n ) const
+  {
+    return _storage->nodes[n].data[1].h2++;
+  }
+
+  uint32_t decr_fanout_size( node const& n ) const
+  {
+    return --_storage->nodes[n].data[1].h2;
+  }
+
+  uint32_t incr_fanout_size_pin( node const& n, uint32_t pin_index  ) const
+  {
+    return _storage->nodes[n].data[2 + pin_index].h2++;
+  }
+
+  uint32_t decr_fanout_size_pin( node const& n, uint32_t pin_index  ) const
+  {
+    return --_storage->nodes[n].data[2 + pin_index].h2;
+  }
   
   uint32_t fanout_size_pin( node const& n, uint32_t pin_index ) const
   {

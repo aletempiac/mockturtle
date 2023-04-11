@@ -32,6 +32,7 @@
 #include <mockturtle/traits.hpp>
 #include <mockturtle/algorithms/experimental/decompose_multioutput.hpp>
 #include <mockturtle/algorithms/experimental/emap.hpp>
+#include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/algorithms/map_adders.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
@@ -149,6 +150,9 @@ int main()
       continue;
     }
 
+    /* balancing */
+    aig_balance( aig, { false } );
+
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
@@ -177,21 +181,22 @@ int main()
     double initial_area = partial_map_res.compute_area();
 
     emap_params ps1;
-    ps1.area_oriented_mapping = true;
+    ps1.area_oriented_mapping = false;
     emap_stats st1;
     binding_view<klut_network> det_emap = emap<binding_view<block_dt_t>, 6>( partial_map_res, tech_lib, ps1, &st1 );
-    bool const cec1 = ( benchmark == "hyp" ) ? true : abc_cec( det_emap, benchmark );
+    // bool const cec1 = ( benchmark == "hyp" ) ? true : abc_cec( det_emap, benchmark );
     st1.area -= initial_area / 2; /* area of multioutput gates is counted as double */
 
 
     /* METHOD 2: map adders in one step using emap */
     emap_params ps2;
     ps2.map_multioutput = true;
-    ps2.area_oriented_mapping = true;
+    ps2.area_oriented_mapping = false;
     emap_stats st2;
     binding_view<klut_network> res_emap = emap<aig_network, 6>( aig, tech_lib, ps2, &st2 );
+    // bool const cec2 = ( benchmark == "hyp" ) ? true : abc_cec( res_emap, benchmark );
 
-    exp( benchmark, size_before, st1.area, st2.area, depth_before, st1.delay, st2.delay, st_ma.mapped_fa + st_ma.mapped_ha, st2.multioutput_gates, to_seconds( st_ma.time_total ) + to_seconds( st1.time_total ), to_seconds( st2.time_total ), cec1, true );
+    exp( benchmark, size_before, st1.area, st2.area, depth_before, st1.delay, st2.delay, st_ma.mapped_fa + st_ma.mapped_ha, st2.multioutput_gates, to_seconds( st_ma.time_total ) + to_seconds( st1.time_total ), to_seconds( st2.time_total ), true, true );
   }
 
   exp.save();

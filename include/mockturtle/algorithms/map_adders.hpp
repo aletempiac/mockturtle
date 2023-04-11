@@ -146,6 +146,7 @@ public:
         node_match( ntk.size(), UINT32_MAX )
   {
     cuts_classes.reserve( 2000 );
+    tmp_visited.reserve( 20 );
   }
   
   block_network run()
@@ -544,6 +545,14 @@ private:
     ntk.incr_trav_id();
     bool valid = true;
     check_adder_tfi_valid_rec( root, root, n, valid );
+    // tmp_visited.clear();
+    // dereference_node_rec( root );
+
+    // if ( ntk.fanout_size( n ) == 0 )
+    //   valid = false;
+    
+    // for ( auto g : tmp_visited )
+    //   ntk.incr_fanout_size( g );
 
     /* dereference leaves */
     for ( auto leaf : cut )
@@ -579,6 +588,22 @@ private:
       valid = false;
 
     return found;
+  }
+
+  void dereference_node_rec( node<Ntk> const& n )
+  {
+    /* leaf */
+    if ( ntk.value( n ) )
+      return;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      node<Ntk> g =  ntk.get_node( f );
+      if ( ntk.decr_fanout_size( g ) == 0 )
+      {
+        dereference_node_rec( g );
+      }
+      tmp_visited.push_back( g );
+    } );
   }
 
   inline bool is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
@@ -883,6 +908,7 @@ private:
   std::vector<uint32_t> node_match;
 
   std::vector<node<Ntk>> topo_order;
+  std::vector<node<Ntk>> tmp_visited;
 
   const std::array<uint64_t, 8> and2func = { 0x88, 0x44, 0x22, 0x11, 0x77, 0xbb, 0xdd, 0xee };
   const std::array<uint64_t, 8> maj3func = { 0xe8, 0xd4, 0xb2, 0x71, 0x8e, 0xd4, 0x2b, 0x17 };

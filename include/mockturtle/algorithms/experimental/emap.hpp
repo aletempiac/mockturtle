@@ -1002,7 +1002,7 @@ private:
 
     if constexpr ( DO_AREA )
     {
-      sort = emap_cut_sort_type::AREA2;
+      sort = emap_cut_sort_type::AREA;
     }
 
     /* compute cuts */
@@ -4167,9 +4167,10 @@ private:
     } );
   }
 
-  /* Experimental code resticted to only half adders and full adders */
+  /* Experimental code */
   void multi_compute_matches( multi_cuts_t const& multi_cuts )
   {
+    ntk.clear_values();
     multi_node_match.reserve( multi_cuts_classes.size() );
 
     /* copy set and sort by gate size: improve, too slow */
@@ -4209,7 +4210,7 @@ private:
             continue;
 
           /* check compatibility */
-          if ( !multi_check_adder( index_i, index_j, cut_i ) )
+          if ( !multi_check_compatibility( index_i, index_j, cut_i ) )
             continue;
 
           multi_node_match.push_back( { data_i, data_j } );
@@ -4225,7 +4226,6 @@ private:
     multi_node_match_tmp.reserve( multi_node_match.size() );
 
     ntk.incr_trav_id();
-    ntk.clear_values();
 
     multi_cut_set.reserve( multi_node_match.size() );
 
@@ -4326,8 +4326,7 @@ private:
     return true;
   }
 
-  /* specific code for checking adder mapping */
-  inline bool multi_check_adder( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
+  inline bool multi_check_compatibility( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
   {
     bool valid = true;
 
@@ -4349,9 +4348,8 @@ private:
     if ( !valid )
       return false;
 
-    /* TODO: add a more precise check --> in case of other cases than adder */
-    // if ( is_contained( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
-    //   return false;
+    if ( !is_contained_mffc( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut1 ) )
+      return false;
 
     return true;
   }
@@ -4429,6 +4427,49 @@ private:
     } );
 
     return contained;
+  }
+
+  bool is_contained_mffc( node<Ntk> root, node<Ntk> n, multi_cut_t const& cut )
+  {
+    /* reference cut leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
+    }
+
+    bool valid = true;
+    tmp_visited.clear();
+    dereference_node_rec( root );
+
+    if ( ntk.fanout_size( n ) == 0 )
+      valid = false;
+
+    for ( uint64_t g : tmp_visited )
+      ntk.incr_fanout_size( ntk.index_to_node( g ) );
+
+    /* dereference leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+
+    return valid;
+  }
+
+  void dereference_node_rec( node<Ntk> const& n )
+  {
+    /* leaf */
+    if ( ntk.value( n ) )
+      return;
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      node<Ntk> g =  ntk.get_node( f );
+      if ( ntk.decr_fanout_size( g ) == 0 )
+      {
+        dereference_node_rec( g );
+      }
+      tmp_visited.push_back( ntk.node_to_index( g ) );
+    } );
   }
 
   void multi_add_choices( choice_view<Ntk>& choice_ntk )
