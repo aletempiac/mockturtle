@@ -2454,7 +2454,6 @@ private:
     std::array<uint32_t, max_multioutput_output_size> cut_index;
     bool mapped_multioutput = false;
 
-    double old_flow_sum = 0;
     uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
 
     /* iterate for each possible match */
@@ -2464,6 +2463,7 @@ private:
       bool valid = true;
       bool is_best = true;
       bool respects_required = true;
+      double old_flow_sum = 0;
 
       /* iterate for each output of the multi-output gate */
       for ( auto j = 0; j < max_multioutput_output_size; ++j )
