@@ -35,6 +35,7 @@
 #include "../traits.hpp"
 
 #include <set>
+#include <type_traits>
 
 namespace mockturtle
 {
@@ -109,6 +110,26 @@ public:
   bool is_dont_touch( node const& n ) const
   {
     return _dont_touch.find( Ntk::node_to_index( n ) ) != _dont_touch.end();
+  }
+
+  template<typename Fn>
+  void foreach_dont_touch( Fn&& fn ) const
+  {
+    constexpr auto is_bool_f = std::is_invocable_r_v<bool, Fn, node>;
+    constexpr auto is_void_f = std::is_invocable_r_v<void, Fn, node>;
+
+    for ( auto el : _dont_touch )
+    {
+      if constexpr ( is_bool_f )
+      {
+        if ( !fn( Ntk::index_to_node( el ) ) )
+          return;
+      }
+      else
+      {
+        fn( Ntk::index_to_node( el ) );
+      }
+    }
   }
 
 private:

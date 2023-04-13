@@ -121,8 +121,8 @@ int main()
   using namespace experiments;
   using block_dt_t = dont_touch_view<block_network>;
 
-  experiment<std::string, uint32_t, double, double, uint32_t, double, double, uint32_t, uint32_t, float, float, bool, bool> exp(
-      "map_adders", "benchmark", "size", "area_det", "area_emap", "depth", "delay_det", "delay_emap", "adders_det", "adders_emap", "runtime_det", "runtime_emap", "cec_det", "cec_emap" );
+  experiment<std::string, uint32_t, uint32_t, double, double, float, double, double, uint32_t, float, double, double, uint32_t, float> exp(
+      "map_multi", "Benchmark", "Size", "Depth", "Area V", "Delay V", "Time V (s)", "Area D", "Delay D", "Multi-output D", "Time D (s)", "Area E", "Delay E", "Multi-output E", "Time E (s)" );
 
   /* library to map to technology */
   fmt::print( "[i] processing technology library\n" );
@@ -156,7 +156,13 @@ int main()
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
-    /* METHOD 1 :map adders in two steps: FA-HA detection followed by emap */
+    /* VANILLA METHOD: map for area */
+    emap_params psv;
+    psv.area_oriented_mapping = true;
+    emap_stats stv;
+    binding_view<klut_network> vanilla_mapping = emap<aig_network, 6>( aig, tech_lib, psv, &stv );
+
+    /* METHOD 1: map adders in two steps: FA-HA detection followed by emap */
     map_adders_params ps_ma;
     ps_ma.map_inverted = true;
     map_adders_stats st_ma;
@@ -180,23 +186,22 @@ int main()
     }
     double initial_area = partial_map_res.compute_area();
 
-    emap_params ps1;
-    ps1.area_oriented_mapping = false;
-    emap_stats st1;
-    binding_view<klut_network> det_emap = emap<binding_view<block_dt_t>, 6>( partial_map_res, tech_lib, ps1, &st1 );
-    // bool const cec1 = ( benchmark == "hyp" ) ? true : abc_cec( det_emap, benchmark );
-    st1.area -= initial_area / 2; /* area of multioutput gates is counted as double */
-
+    emap_params psd;
+    psd.area_oriented_mapping = true;
+    emap_stats std;
+    binding_view<klut_network> det_emap = emap<binding_view<block_dt_t>, 6>( partial_map_res, tech_lib, psd, &std );
+    std.area -= initial_area / 2; /* area of multioutput gates is counted as double */
+    // bool const cecd = ( benchmark == "hyp" ) ? true : abc_cec( det_emap, benchmark );
 
     /* METHOD 2: map adders in one step using emap */
-    emap_params ps2;
-    ps2.map_multioutput = true;
-    ps2.area_oriented_mapping = false;
-    emap_stats st2;
-    binding_view<klut_network> res_emap = emap<aig_network, 6>( aig, tech_lib, ps2, &st2 );
-    // bool const cec2 = ( benchmark == "hyp" ) ? true : abc_cec( res_emap, benchmark );
+    emap_params pse;
+    pse.map_multioutput = true;
+    pse.area_oriented_mapping = true;
+    emap_stats ste;
+    binding_view<klut_network> res_emap = emap<aig_network, 6>( aig, tech_lib, pse, &ste );
+    // bool const cece = ( benchmark == "hyp" ) ? true : abc_cec( res_emap, benchmark );
 
-    exp( benchmark, size_before, st1.area, st2.area, depth_before, st1.delay, st2.delay, st_ma.mapped_fa + st_ma.mapped_ha, st2.multioutput_gates, to_seconds( st_ma.time_total ) + to_seconds( st1.time_total ), to_seconds( st2.time_total ), true, true );
+    exp( benchmark, size_before, depth_before, stv.area, stv.delay, to_seconds( stv.time_total ), std.area, std.delay, st_ma.mapped_fa + st_ma.mapped_ha, to_seconds( ste.time_multioutput ) + to_seconds( std.time_total ), ste.area, ste.delay, ste.multioutput_gates, to_seconds( ste.time_total ) );
   }
 
   exp.save();

@@ -93,14 +93,7 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
       assert( dest.get_node( f ) != dest.get_node( dest.get_constant( false ) ) );
       assert( dest.get_node( f ) != dest.get_node( dest.get_constant( true ) ) );
 
-      if ( ntk.is_complemented( child ) )
-      {
-        children.push_back( dest.create_not( f ) );
-      }
-      else
-      {
-        children.push_back( f );
-      }
+      children.push_back( f ^ ntk.is_complemented( child ) );
     } );
 
     /* clone node */
@@ -314,14 +307,14 @@ void decompose_multioutput_impl( NtkSrc const& ntk, NtkDest& dest, LeavesIterato
   ntk.foreach_po( [&]( auto const& po ) {
     const auto po_no_complement = po ^ ntk.is_complemented( po );
     auto const f = old_to_new[po_no_complement];
-    dest.create_po( ntk.is_complemented( po ) ? dest.create_not( f ) : f );
+    dest.create_po( f ^ ntk.is_complemented( po ) );
   } );
 
   /* RIs */
   if constexpr ( has_foreach_ri_v<NtkSrc> && has_create_ri_v<NtkDest> )
   {
     ntk.foreach_ri( [&]( auto const& f ) {
-      dest.create_ri( ntk.is_complemented( f ) ? dest.create_not( old_to_new[f ^ 1] ) : old_to_new[f] );
+      dest.create_ri( old_to_new[f ^ ntk.is_complemented( f )] ^ ntk.is_complemented( f ) );
     } );
   }
 

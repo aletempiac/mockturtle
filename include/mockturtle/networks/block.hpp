@@ -858,10 +858,12 @@ public:
   compute( node const& n, Iterator begin, Iterator end ) const
   {
     uint32_t index{ 0 };
+    auto it = _storage->nodes[n].children.begin();
     while ( begin != end )
     {
       index <<= 1;
-      index ^= *begin++ ? 1 : 0;
+      index ^= *begin++ ? ( ~( it->weight ) & 1 ) : ( ( it->weight ) & 1 );
+      ++it;
     }
     return kitty::get_bit( _storage->data.cache[_storage->nodes[n].data[2].h1], index );
   }
@@ -876,6 +878,13 @@ public:
 
     assert( nfanin != 0 );
     assert( tts.size() == nfanin );
+
+    /* adjust polarities */
+    for ( auto j = 0u; j < nfanin; ++j )
+    {
+      if ( _storage->nodes[n].children[j].weight & 1 )
+        tts[j] = ~tts[j];
+    }
 
     /* resulting truth table has the same size as any of the children */
     auto result = tts.front().construct();

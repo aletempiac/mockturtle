@@ -67,6 +67,9 @@ struct map_adders_params
   /*! \brief Map inverted (NAND2-XNOR2, MIN3-XNOR3) */
   bool map_inverted{ false };
 
+  /*! \brief Filter cuts using the MFFC */
+  bool use_mffc_filter{ true };
+
   /*! \brief Be verbose */
   bool verbose{ false };
 };
@@ -542,17 +545,23 @@ private:
       ntk.incr_value( ntk.index_to_node( leaf ) );
     }
 
-    ntk.incr_trav_id();
     bool valid = true;
-    check_adder_tfi_valid_rec( root, root, n, valid );
-    // tmp_visited.clear();
-    // dereference_node_rec( root );
+    if ( ps.use_mffc_filter )
+    {
+      tmp_visited.clear();
+      dereference_node_rec( root );
 
-    // if ( ntk.fanout_size( n ) == 0 )
-    //   valid = false;
-    
-    // for ( auto g : tmp_visited )
-    //   ntk.incr_fanout_size( g );
+      if ( ntk.fanout_size( n ) == 0 )
+        valid = false;
+
+      for ( auto g : tmp_visited )
+        ntk.incr_fanout_size( g );
+    }
+    else
+    {
+      ntk.incr_trav_id();
+      check_adder_tfi_valid_rec( root, root, n, valid );
+    }
 
     /* dereference leaves */
     for ( auto leaf : cut )
