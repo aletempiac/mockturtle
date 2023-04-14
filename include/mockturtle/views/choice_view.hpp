@@ -34,6 +34,7 @@
 
 #include <cassert>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -400,25 +401,50 @@ public:
   template<typename Fn>
   void foreach_choice( node const& n, Fn&& fn ) const
   {
-    auto p = n;
-    if ( !fn( p ) )
+    constexpr auto is_bool_f = std::is_invocable_r_v<bool, Fn, node>;
+    constexpr auto is_void_f = std::is_invocable_r_v<void, Fn, node>;
+
+    static_assert( is_bool_f || is_void_f );
+
+    node p = n;
+    if constexpr ( is_bool_f )
     {
-      return;
+      if ( !fn( p ) )
+        return;
     }
+    else
+    {
+      fn( p );
+    }
+
     while ( Ntk::node_to_index( p ) != Ntk::node_to_index( _choice_repr->at( Ntk::node_to_index( p ) ) ) )
     {
       p = _choice_repr->at( Ntk::node_to_index( p ) );
-      if ( !fn( p ) )
+      if constexpr ( is_bool_f )
       {
-        return;
+        if ( !fn( p ) )
+        {
+          return;
+        }
+        else
+        {
+          fn( p );
+        }
       }
     }
+
     p = Ntk::get_node( _choice_phase->at( Ntk::node_to_index( p ) ) );
+
     while ( Ntk::node_to_index( p ) != Ntk::node_to_index( n ) )
     {
-      if ( !fn( p ) )
+      if constexpr ( is_bool_f )
       {
-        return;
+        if ( !fn( p ) )
+          return;
+      }
+      else
+      {
+        fn( p );
       }
       p = _choice_repr->at( Ntk::node_to_index( p ) );
     }
