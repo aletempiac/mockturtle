@@ -53,24 +53,24 @@ struct aig_collapse_params
 namespace detail
 {
 
-template<class Ntk>
+template<class NtkSource, class NtkDest>
 class aig_collapse_impl
 {
 public:
   static constexpr size_t storage_init_size = 30;
-  using node = typename Ntk::node;
-  using storage_t = std::vector<std::vector<signal<Ntk>>>;
-  using collapsed_map = node_map<signal<multi_aig_network>, Ntk>;
+  using node = typename NtkSource::node;
+  using storage_t = std::vector<std::vector<signal<NtkSource>>>;
+  using collapsed_map = node_map<signal<NtkDest>, NtkSource>;
 
 public:
-  aig_collapse_impl( Ntk const& ntk, aig_collapse_params const& ps )
+  aig_collapse_impl( NtkSource const& ntk, aig_collapse_params const& ps )
       : ntk( ntk ), ps( ps ), storage( storage_init_size )
   {
   }
 
-  multi_aig_network run()
+  NtkDest run()
   {
-    multi_aig_network res;
+    NtkDest res;
     collapsed_map old2new( ntk );
 
     initialize_multi_aig_network( res, old2new );
@@ -86,8 +86,9 @@ public:
       res.create_po( old2new[f] ^ ntk.is_complemented( f ) );
     } );
 
-    if constexpr ( has_foreach_ri_v<Ntk> )
+    if constexpr ( has_foreach_ri_v<NtkSource> )
     {
+      static_assert( has_create_ri_v<NtkDest>, "NtkDest does not implement the create_ri method " );
       ntk.foreach_ri( [&]( auto const& f ) {
         collapse_rec( res, old2new, ntk.get_node( f ), 0 );
         res.create_ri( old2new[f] ^ ntk.is_complemented( f ) );
@@ -98,7 +99,7 @@ public:
   }
 
 private:
-  void collapse_rec( multi_aig_network& res, collapsed_map& old2new, node const& n, uint32_t level )
+  void collapse_rec( NtkDest& res, collapsed_map& old2new, node const& n, uint32_t level )
   {
     if ( ntk.is_ci( n ) || ntk.value( n ) > 1 )
       return;
@@ -108,7 +109,7 @@ private:
 
     if ( level >= storage.size() )
     {
-      storage.emplace_back( std::vector<signal<Ntk>>() );
+      storage.emplace_back( std::vector<signal<NtkSource>>() );
       storage.back().reserve( 10 );
     }
 
@@ -171,7 +172,7 @@ private:
     storage[level].clear();
 }
 
-  void collect_leaves( node const& n, std::vector<signal<Ntk>>& leaves )
+  void collect_leaves( node const& n, std::vector<signal<NtkSource>>& leaves )
   {
     ntk.incr_trav_id();
 
@@ -184,14 +185,14 @@ private:
     }
   }
 
-  int collect_leaves_rec( signal<Ntk> const& f, std::vector<signal<Ntk>>& leaves, bool is_root )
+  int collect_leaves_rec( signal<NtkSource> const& f, std::vector<signal<NtkSource>>& leaves, bool is_root )
   {
     node n = ntk.get_node( f );
 
     /* check if already visited */
     if ( ntk.visited( n ) == ntk.trav_id() )
     {
-      for ( signal<Ntk> const& s : leaves )
+      for ( signal<NtkSource> const& s : leaves )
       {
         if ( ntk.get_node( s ) != n )
           continue;
@@ -221,34 +222,7 @@ private:
     return ret;
   }
 
-  void insert_node_sorted( std::vector<signal<Ntk>>& leaves, signal<Ntk> const& f )
-  {
-    node n = ntk.get_node( f );
-
-    /* check uniqueness */
-    for ( auto const& s : leaves )
-    {
-      if ( s == f )
-        return;
-    }
-
-    leaves.push_back( f );
-    for ( size_t i = leaves.size() - 1; i > 0; --i )
-    {
-      auto& s2 = leaves[i - 1];
-
-      if ( ntk.level( ntk.get_node( s2 ) ) < ntk.level( n ) )
-      {
-        std::swap( s2, leaves[i] );
-      }
-      else
-      {
-        break;
-      }
-    }
-  }
-
-  void initialize_multi_aig_network( multi_aig_network& dest, collapsed_map& old2new )
+  void initialize_multi_aig_network( NtkDest& dest, collapsed_map& old2new )
   {
     old2new[ntk.get_node( ntk.get_constant( false ) )] = dest.get_constant( false );
     if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
@@ -258,8 +232,9 @@ private:
       old2new[n] = dest.create_pi();
     } );
 
-    if constexpr ( has_foreach_ro_v<Ntk> )
+    if constexpr ( has_foreach_ro_v<NtkSource> )
     {
+      static_assert( has_create_ro_v<NtkDest>, "NtkDest does not implement the create_ro method" );
       ntk.foreach_ro( [&]( auto const& n ) {
         old2new[n] = dest.create_ro();
       } );
@@ -267,11 +242,11 @@ private:
   }
 
 private:
-  Ntk const& ntk;
+  NtkSource const& ntk;
   aig_collapse_params const& ps;
 
   storage_t storage;
-  std::vector<signal<multi_aig_network>> children;
+  std::vector<signal<NtkDest>> children;
 };
 
 } /* namespace detail */
@@ -281,7 +256,11 @@ private:
  * This method collapses AND2 nodes in an AIG into
  * multi-input ANDs. The maximum number of inputs can
  * be limited using the parameter `collapse_limit`.
- * It returns the resulted network as a klut.
+ * It returns the resulted network as a NtkDest.
+ * 
+ * NtkDest is by default a `multi_aig`. In case of
+ * sequential networks, it should be defined as
+ * `sequential<multi_aig>`.
  *
  * **Required network functions:**
  * - `get_node`
@@ -300,26 +279,31 @@ private:
  * - `is_constant`
  * - `has_and`
  */
-template<class Ntk>
-multi_aig_network aig_collapse( Ntk const& ntk, aig_collapse_params const& ps = {} )
+template<class NtkSource, class NtkDest = multi_aig_network>
+NtkDest aig_collapse( NtkSource const& ntk, aig_collapse_params const& ps = {} )
 {
-  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
-  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
-  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
-  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
-  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
-  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
-  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
-  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
-  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
-  static_assert( has_clone_node_v<Ntk>, "Ntk does not implement the clone_node method" );
-  static_assert( has_create_pi_v<Ntk>, "Ntk does not implement the create_pi method" );
-  static_assert( has_create_po_v<Ntk>, "Ntk does not implement the create_po method" );
-  static_assert( has_create_not_v<Ntk>, "Ntk does not implement the create_not method" );
-  static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
+  static_assert( is_network_type_v<NtkSource>, "NtkSource is not a network type" );
+  static_assert( has_get_node_v<NtkSource>, "NtkSource does not implement the get_node method" );
+  static_assert( has_node_to_index_v<NtkSource>, "NtkSource does not implement the node_to_index method" );
+  static_assert( has_get_constant_v<NtkSource>, "NtkSource does not implement the get_constant method" );
+  static_assert( has_foreach_node_v<NtkSource>, "NtkSource does not implement the foreach_node method" );
+  static_assert( has_foreach_pi_v<NtkSource>, "NtkSource does not implement the foreach_pi method" );
+  static_assert( has_foreach_po_v<NtkSource>, "NtkSource does not implement the foreach_po method" );
+  static_assert( has_is_pi_v<NtkSource>, "NtkSource does not implement the is_pi method" );
+  static_assert( has_is_constant_v<NtkSource>, "NtkSource does not implement the is_constant method" );
+  static_assert( has_clone_node_v<NtkSource>, "NtkSource does not implement the clone_node method" );
+  static_assert( has_create_pi_v<NtkSource>, "NtkSource does not implement the create_pi method" );
+  static_assert( has_create_po_v<NtkSource>, "NtkSource does not implement the create_po method" );
+  static_assert( has_create_not_v<NtkSource>, "NtkSource does not implement the create_not method" );
+  static_assert( has_is_complemented_v<NtkSource>, "NtkSource does not implement the is_complemented method" );
+  static_assert( has_create_nary_and_v<NtkDest>, "NtkDest does not implement the is_complemented method" );
+  static_assert( has_create_pi_v<NtkDest>, "NtkDest does not implement the create_pi method" );
+  static_assert( has_create_po_v<NtkDest>, "NtkDest does not implement the create_po method" );
 
-  detail::aig_collapse_impl p( ntk, ps );
-  multi_aig_network res = p.run();
+
+
+  detail::aig_collapse_impl<NtkSource, NtkDest> p( ntk, ps );
+  NtkDest res = p.run();
 
   return res;
 }
