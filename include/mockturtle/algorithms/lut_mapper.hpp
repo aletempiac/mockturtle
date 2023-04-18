@@ -1210,6 +1210,7 @@ private:
     auto& rcuts = *lcuts[fanin];
     rcuts = *lcuts[0];
 
+    /* TODO: do not use cuts but "merges": remember only which cuts fanins and cuts are merged */
     for ( auto i = 1; i < fanin; ++i )
     {
       merge_cuts2_subset<DO_AREA, ELA>( rcuts, n, i, sort, preprocess );
@@ -1295,7 +1296,10 @@ private:
         }
 
         /* TODO: change with a new approach */
-        compute_cut_data<ELA>( new_cut, n, true );
+        if ( cut_size > ps.cut_enumeration_ps.cut_size )
+          compute_cut_data_decompose<ELA>( new_cut, n, true );
+        else
+          compute_cut_data<ELA>( new_cut, n, true );
 
         /* TODO: check required time */
         if constexpr ( DO_AREA )
@@ -1885,6 +1889,104 @@ private:
       cut->data.area_flow = area_flow;
       cut->data.edge_flow = edge_flow;
     }
+  }
+
+  template<bool ELA>
+  void compute_cut_data_decompose( cut_t& cut, node const& n, bool recompute_cut_cost )
+  {
+    uint32_t lut_area;
+    uint32_t lut_delay;
+
+    if ( recompute_cut_cost )
+    {
+    //   if constexpr ( StoreFunction )
+    //   {
+    //     if constexpr ( !std::is_same<LUTCostFn, lut_unitary_cost>::value )
+    //     {
+    //       if ( auto it = truth_tables_cost.find( cut->func_id ); it != truth_tables_cost.end() )
+    //       {
+    //         std::tie( lut_area, lut_delay ) = it->second;
+    //       }
+    //       else
+    //       {
+    //         auto cost = lut_cost( truth_tables[cut->func_id] );
+    //         if ( truth_tables[cut->func_id].num_vars() <= ps.cost_cache_vars )
+    //         {
+    //           /* cache it */
+    //           truth_tables_cost[cut->func_id] = cost;
+    //         }
+    //         lut_area = cost.first;
+    //         lut_delay = cost.second;
+    //       }
+    //     }
+    //     else
+    //     {
+    //       std::tie( lut_area, lut_delay ) = lut_cost( truth_tables[cut->func_id] );
+    //     }
+    //   }
+    //   else
+    //   {
+    //     std::tie( lut_area, lut_delay ) = lut_cost( cut.size() );
+    //   }
+    }
+    else
+    {
+      lut_area = cut->data.lut_area;
+      lut_delay = cut->data.lut_delay;
+    }
+
+    // if constexpr ( ELA )
+    // {
+    //   uint32_t delay{ 0 };
+    //   for ( auto leaf : cut )
+    //   {
+    //     const auto& best_leaf_cut = cuts[leaf][0];
+    //     delay = std::max( delay, best_leaf_cut->data.delay );
+    //   }
+
+    //   cut->data.delay = lut_delay + delay;
+    //   cut->data.lut_area = lut_area;
+    //   cut->data.lut_delay = lut_delay;
+    //   if ( ps.edge_optimization )
+    //   {
+    //     cut->data.area_flow = static_cast<float>( cut_ref( cut ) );
+    //     cut->data.edge_flow = static_cast<float>( cut_edge_deref( cut ) );
+    //   }
+    //   else
+    //   {
+    //     cut->data.area_flow = static_cast<float>( cut_measure_mffc( cut ) );
+    //     cut->data.edge_flow = 0;
+    //   }
+    // }
+    // else
+    // {
+    //   uint32_t delay{ 0 };
+
+    //   float area_flow = static_cast<float>( lut_area );
+    //   float edge_flow = cut.size();
+
+    //   for ( auto leaf : cut )
+    //   {
+    //     const auto& best_leaf_cut = cuts[leaf][0];
+    //     delay = std::max( delay, best_leaf_cut->data.delay );
+    //     if ( node_match[leaf].map_refs > 0 && leaf != 0 )
+    //     {
+    //       area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
+    //       edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
+    //     }
+    //     else
+    //     {
+    //       area_flow += best_leaf_cut->data.area_flow;
+    //       edge_flow += best_leaf_cut->data.edge_flow;
+    //     }
+    //   }
+
+    //   cut->data.delay = lut_delay + delay;
+    //   cut->data.lut_area = lut_area;
+    //   cut->data.lut_delay = lut_delay;
+    //   cut->data.area_flow = area_flow;
+    //   cut->data.edge_flow = edge_flow;
+    // }
   }
 
   void add_zero_cut( uint32_t index, bool phase )
