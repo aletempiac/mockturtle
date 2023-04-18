@@ -106,6 +106,12 @@ struct lut_map_params
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ true };
 
+  /*! \brief Decomposes multi-input ANDs */
+  bool decompose_multi{ false };
+
+  /*! \brief Maximum large cut size for multi-input ANDs */
+  uint32_t large_cut_size{ 32 };
+
   /*! \brief Maps by collapsing MFFCs */
   bool collapse_mffcs{ false };
 
@@ -180,6 +186,25 @@ public:
   lut_cut_set()
   {
     clear();
+  }
+
+  /*! \brief Assignment operator.
+   */
+  lut_cut_set& operator=( lut_cut_set const& other )
+  {
+    if ( this != &other )
+    {
+      _pcend = _pend = _pcuts.begin();
+
+      auto it = other.begin();
+      while( it != other.end() )
+      {
+        **_pend++ = **it++;
+        ++_pcend;
+      }
+    }
+
+    return *this;
   }
 
   /*! \brief Clears a cut set.
@@ -518,9 +543,12 @@ template<class Ntk, bool StoreFunction, class LUTCostFn>
 class lut_map_impl
 {
 public:
-  static constexpr uint32_t max_cut_num = 250;
-  using cut_t = cut_type<StoreFunction, cut_enumeration_lut_cut>;
+  static constexpr uint32_t max_cut_num = 32;
+  static constexpr uint32_t max_cut_data_decomp = 32;
+  static constexpr uint32_t max_cut_size = 16;
+  using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
+  using decomp_cut_set_t = std::array<lut_cut_set<cut_t, max_cut_num>, max_cut_data_decomp>;
   using node = typename Ntk::node;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using TT = kitty::dynamic_truth_table;
@@ -697,7 +725,14 @@ private:
         }
         else
         {
-          compute_best_cut<DO_AREA, ELA>( n, sort, preprocess );
+          if ( ps.decompose_multi && ntk.fanin_size( n ) > Ntk::min_fanin_size == 2 )
+          {
+            compute_best_cut_decompose<DO_AREA, ELA>( n, sort, preprocess );
+          }
+          else
+          {
+            compute_best_cut<DO_AREA, ELA>( n, sort, preprocess );
+          }
         }
       }
       else
@@ -1151,6 +1186,155 @@ private:
       {
         cut_ref( rcuts[0] );
       }
+    }
+  }
+
+  template<bool DO_AREA, bool ELA>
+  void compute_best_cut_decompose( node const& n, lut_cut_sort_type const sort, bool preprocess )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    cut_t best_cut;
+
+    /* TODO: have to rember which cuts are used for merging to pack them right */
+
+    /* compute all the possible cuts between the first 2 fanins */
+    const auto fanin = ntk.fanin_size( n );
+    uint32_t pairs{ 1 };
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
+    } );
+    lcuts[fanin] = &cuts[index];
+
+    /* load cut set of child 0 into rcuts */
+    auto& rcuts = *lcuts[fanin];
+    rcuts = *lcuts[0];
+
+    for ( auto i = 1; i < fanin; ++i )
+    {
+      merge_cuts2_subset<DO_AREA, ELA>( rcuts, n, i, sort, preprocess );
+      move_dcuts( rcuts, sort );
+    }
+
+    // if constexpr ( DO_AREA )
+    // {
+    //   if ( iteration != 0 && node_data.map_refs > 0 )
+    //   {
+    //     cut_deref( rcuts[0] );
+    //   }
+    // }
+
+    // /* recompute the data of the best cut */
+    // if ( iteration != 0 )
+    // {
+    //   best_cut = rcuts[0];
+    //   compute_cut_data<ELA>( best_cut, n, true );
+    // }
+
+    /* clear cuts */
+    rcuts.clear();
+
+    /* insert the previous best cut */
+    // if ( iteration != 0 && !preprocess )
+    // {
+    //   rcuts.simple_insert( best_cut, sort );
+    // }
+
+    cuts_total += rcuts.size();
+
+    /* replace the new best cut with previous one */
+    if ( preprocess && rcuts[0]->data.delay > node_data.required )
+      rcuts.replace( 0, best_cut );
+
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+
+    if constexpr ( DO_AREA )
+    {
+      if ( iteration != 0 && node_data.map_refs > 0 )
+      {
+        cut_ref( rcuts[0] );
+      }
+    }
+  }
+
+  template<bool DO_AREA, bool ELA>
+  void merge_cuts2_subset( cut_set_t& rcuts, node const& n, uint32_t child, lut_cut_sort_type const sort, bool preprocess )
+  {
+    uint32_t index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+
+    cut_t new_cut;
+    std::vector<cut_t const*> vcuts( 2 );
+
+    /* cuts loaded in rcuts and combining with lcuts[child] into dcuts */
+    for ( auto const& c1 : rcuts )
+    {
+      for ( auto const& c2 : *lcuts[child] )
+      {
+        if ( !c1->merge( *c2, new_cut, ps.large_cut_size ) )
+        {
+          continue;
+        }
+
+        uint32_t const cut_size = new_cut.size();
+
+        if ( ps.remove_dominated_cuts && dcuts[cut_size].is_dominated( new_cut ) )
+        {
+          continue;
+        }
+
+        if constexpr ( StoreFunction )
+        {
+          vcuts[0] = c1;
+          vcuts[1] = c2;
+          new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        }
+
+        /* TODO: change with a new approach */
+        compute_cut_data<ELA>( new_cut, n, true );
+
+        /* TODO: check required time */
+        if constexpr ( DO_AREA )
+        {
+          if ( preprocess || new_cut->data.delay <= node_data.required )
+          {
+            if ( ps.remove_dominated_cuts )
+              dcuts[cut_size].insert( new_cut, false, sort );
+            else
+              dcuts[cut_size].simple_insert( new_cut, sort );
+          }
+        }
+        else
+        {
+          if ( ps.remove_dominated_cuts )
+            dcuts[cut_size].insert( new_cut, false, sort );
+          else
+            dcuts[cut_size].simple_insert( new_cut, sort );
+        }
+      }
+    }
+
+    for ( auto i = 0; i < max_cut_data_decomp; ++i )
+    {
+      /* limit the maximum number of cuts */
+      dcuts[i].limit( ps.cut_enumeration_ps.cut_limit );
+    }
+  }
+
+  void move_dcuts( cut_set_t& rcuts, lut_cut_sort_type const sort )
+  {
+    rcuts.clear();
+    for ( auto i = 0; i < max_cut_data_decomp; ++i )
+    {
+      for ( auto& c : dcuts[i] )
+      {
+        rcuts.simple_insert( *c, sort );
+      }
+      dcuts[i].clear();
     }
   }
 
@@ -1949,6 +2133,8 @@ private:
   cut_merge_t lcuts;            /* cut merger container */
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
+
+  decomp_cut_set_t dcuts;       /* cut set for multi-input modes decomposition */
 };
 #pragma endregion
 
