@@ -300,8 +300,6 @@ NtkDest aig_collapse( NtkSource const& ntk, aig_collapse_params const& ps = {} )
   static_assert( has_create_pi_v<NtkDest>, "NtkDest does not implement the create_pi method" );
   static_assert( has_create_po_v<NtkDest>, "NtkDest does not implement the create_po method" );
 
-
-
   detail::aig_collapse_impl<NtkSource, NtkDest> p( ntk, ps );
   NtkDest res = p.run();
 
