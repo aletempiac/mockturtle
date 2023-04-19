@@ -423,13 +423,11 @@ public:
       if constexpr ( is_bool_f )
       {
         if ( !fn( p ) )
-        {
           return;
-        }
-        else
-        {
-          fn( p );
-        }
+      }
+      else
+      {
+        fn( p );
       }
     }
 
