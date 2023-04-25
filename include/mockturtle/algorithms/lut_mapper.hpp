@@ -1210,8 +1210,6 @@ private:
     auto& node_data = node_match[index];
     cut_t best_cut;
 
-    /* TODO: have to rember which cuts are used for merging to pack them right */
-
     /* compute all the possible cuts between the first 2 fanins */
     const auto fanin = ntk.fanin_size( n );
     uint32_t pairs{ 1 };
@@ -1219,63 +1217,97 @@ private:
       lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
     } );
     lcuts[fanin] = &cuts[index];
+    auto& rcuts = *lcuts[fanin];
+
+    if constexpr ( DO_AREA )
+    {
+      if ( iteration != 0 && node_data.map_refs > 0 )
+      {
+        cut_deref( rcuts[0] );
+      }
+    }
+
+    /* recompute the data of the best cut */
+    if ( iteration != 0 )
+    {
+      best_cut = rcuts[0];
+      compute_cut_data<ELA>( best_cut, n, true );
+    }
+
+    /* clear cuts */
+    rcuts.clear();
+
+    /* insert the previous best cut */
+    if ( iteration != 0 && !preprocess )
+    {
+      rcuts.simple_insert( best_cut, sort );
+    }
 
     /* load cut set of child 0 into rcuts */
     /* TODO: implement a better data structure with cut prioritization */
     init_dcuts();
 
-    // auto& rcuts = *lcuts[fanin];
-    // rcuts = *lcuts[0];
-
     /* TODO: do not use cuts but "merges": remember only which cuts fanins and cuts are merged */
     for ( auto i = 1; i < fanin; ++i )
     {
       merge_cuts2_subset<DO_AREA, ELA>( n, i, sort, preprocess );
-      // move_dcuts( rcuts, sort );
     }
 
-    // if constexpr ( DO_AREA )
-    // {
-    //   if ( iteration != 0 && node_data.map_refs > 0 )
-    //   {
-    //     cut_deref( rcuts[0] );
-    //   }
-    // }
+    /* create official cuts */
+    cut_t new_cut;
+    for ( auto const& dcut : dcuts )
+    {
+      dcut_merge( n, dcut, new_cut, fanin );
 
-    // /* recompute the data of the best cut */
-    // if ( iteration != 0 )
-    // {
-    //   best_cut = rcuts[0];
-    //   compute_cut_data<ELA>( best_cut, n, true );
-    // }
+      // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+      // {
+      //   continue;
+      // }
 
-    /* clear cuts */
+      compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), false );
 
-    /* insert the previous best cut */
-    // if ( iteration != 0 && !preprocess )
-    // {
-    //   rcuts.simple_insert( best_cut, sort );
-    // }
+      /* check required time */
+      if constexpr ( DO_AREA )
+      {
+        if ( preprocess || new_cut->data.delay <= node_data.required )
+        {
+          if ( ps.remove_dominated_cuts )
+            rcuts.insert( new_cut, false, sort );
+          else
+            rcuts.simple_insert( new_cut, sort );
+        }
+      }
+      else
+      {
+        if ( ps.remove_dominated_cuts )
+          rcuts.insert( new_cut, false, sort );
+        else
+          rcuts.simple_insert( new_cut, sort );
+      }
+    }
 
-    // cuts_total += rcuts.size();
+    cuts_total += rcuts.size();
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
 
     /* replace the new best cut with previous one */
-    // if ( preprocess && rcuts[0]->data.delay > node_data.required )
-    //   rcuts.replace( 0, best_cut );
+    if ( preprocess && rcuts[0]->data.delay > node_data.required )
+      rcuts.replace( 0, best_cut );
 
-    // /* add trivial cut */
-    // if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
-    // {
-    //   add_unit_cut( index );
-    // }
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
 
-    // if constexpr ( DO_AREA )
-    // {
-    //   if ( iteration != 0 && node_data.map_refs > 0 )
-    //   {
-    //     cut_ref( rcuts[0] );
-    //   }
-    // }
+    if constexpr ( DO_AREA )
+    {
+      if ( iteration != 0 && node_data.map_refs > 0 )
+      {
+        cut_ref( rcuts[0] );
+      }
+    }
   }
 
   void init_dcuts()
@@ -1310,57 +1342,17 @@ private:
       {
         /* create the cut */
         new_cut.cut_pointers[child] = j++;
-        dcut_merge( n, new_cut, child + 1 );
-        compute_cut_data_decompose<ELA>( new_cut, n, child + 1 );
+        packing( n, new_cut, child + 1 );
+        decomposition_cut_data<ELA>( new_cut, n, child + 1 );
+
+        /* skip too large cuts */
+        if ( new_cut.size > max_cut_size )
+          continue;
 
         dlcuts.push_back( new_cut );
 
         if ( dlcuts.size() >= max_cut_num )
           break;
-
-        // if ( !c1->merge( *c2, new_cut, ps.large_cut_size ) )
-        // {
-        //   continue;
-        // }
-
-        // uint32_t const cut_size = new_cut.size();
-
-        // if ( ps.remove_dominated_cuts && dcuts[cut_size].is_dominated( new_cut ) )
-        // {
-        //   continue;
-        // }
-
-        // if constexpr ( StoreFunction )
-        // {
-        //   vcuts[0] = c1;
-        //   vcuts[1] = c2;
-        //   new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
-        // }
-
-        /* TODO: change with a new approach */
-        // if ( cut_size > ps.cut_enumeration_ps.cut_size )
-        //   compute_cut_data_decompose<ELA>( new_cut, n, true );
-        // else
-        //   compute_cut_data<ELA>( new_cut, n, true );
-
-        /* TODO: check required time */
-        // if constexpr ( DO_AREA )
-        // {
-        //   if ( preprocess || new_cut->data.delay <= node_data.required )
-        //   {
-        //     if ( ps.remove_dominated_cuts )
-        //       dcuts[cut_size].insert( new_cut, false, sort );
-        //     else
-        //       dcuts[cut_size].simple_insert( new_cut, sort );
-        //   }
-        // }
-        // else
-        // {
-        //   if ( ps.remove_dominated_cuts )
-        //     dcuts[cut_size].insert( new_cut, false, sort );
-        //   else
-        //     dcuts[cut_size].simple_insert( new_cut, sort );
-        // }
       }
 
       if ( dlcuts.size() >= max_cut_num )
@@ -1385,15 +1377,9 @@ private:
     } );
 
     dcuts = dlcuts;
-
-    // for ( auto i = 0; i < max_cut_data_decomp; ++i )
-    // {
-    //   /* limit the maximum number of cuts */
-    //   dcuts[i].limit( ps.cut_enumeration_ps.cut_limit );
-    // }
   }
 
-  void dcut_merge( node const& n, adaptive_cut_t& new_cut, uint32_t leaves )
+  void packing( node const& n, adaptive_cut_t& new_cut, uint32_t leaves )
   {
     /* TODO: do set merge for small cuts: fast using signatures? */
 
@@ -1486,22 +1472,114 @@ private:
     new_cut.size = size;
   }
 
-  inline uint32_t get_fanin_index( node const n, uint32_t i )
+  void dcut_merge( node const& n, adaptive_cut_t const& cut, cut_t& new_cut, uint32_t num_leaves )
   {
-    return ntk._storage->nodes[n].children[i].data;
-  }
+    /* perform bin-packing */
+    packs.clear();
+    bins.clear();
 
-  void move_dcuts( cut_set_t& rcuts, lut_cut_sort_type const sort )
-  {
-    rcuts.clear();
-    for ( auto i = 0; i < max_cut_data_decomp; ++i )
+    /* save indexes for variable swapping */
+    std::array<uint32_t, max_cut_data_decomp> indexes;
+    std::iota( indexes.begin(), indexes.begin() + num_leaves, 0 );
+
+    /* sort cut sizes in decreasing order */
+    for ( uint32_t i = 0; i < num_leaves; ++i )
     {
-      for ( auto& c : dcuts[i] )
-      {
-        rcuts.simple_insert( *c, sort );
-      }
-      dcuts[i].clear();
+      packs.push_back( ( *lcuts[i] )[cut.cut_pointers[i]].size() );
     }
+    std::sort( indexes.begin(), indexes.begin() + num_leaves, [&]( auto const& a, auto const& b ) {
+      return packs[a] > packs[b];
+    } );
+
+    /* create cuts for bins */
+    std::vector<cut_t> bins_cuts;
+
+    /* perform 0-level bin-packing */
+    for ( uint32_t i = 0; i < num_leaves; ++i )
+    {
+      cut_t leaf_cut = ( *lcuts[i] )[cut.cut_pointers[i]];
+      uint32_t j = 0;
+      while ( j < bins_cuts.size() )
+      {
+        if ( bins_cuts[j].merge( leaf_cut, bins_cuts[j], ps.cut_enumeration_ps.cut_size ) )
+        {
+          bins[j] = bins_cuts[j].size();
+          break;
+        }
+        ++j;
+      }
+
+      if ( j == bins_cuts.size() )
+      {
+        bins_cuts.push_back( leaf_cut );
+        bins.push_back( leaf_cut.size() );
+      }
+    }
+
+    uint32_t area = bins_cuts.size();
+    uint32_t roots = bins_cuts.size();
+    uint32_t level = 1;
+
+    /* perform multi-level bin-packing */
+    std::sort( bins.begin(), bins.end(), std::greater<uint32_t>() );
+
+    /* check fully-packable */
+    uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins.back();
+    if ( roots != 1 && roots - 1 <= max_available )
+    {
+      roots = 1;
+      ++level;
+    }
+
+    uint32_t i;
+    uint32_t unconnected = 1;
+    for ( i = 1; i < bins.size() && roots != 1; ++i )
+    {
+      if ( bins[i] < ps.cut_enumeration_ps.cut_size )
+      {
+        uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - bins[i], unconnected );
+        bins[i] += connect;
+        unconnected -= connect - 1;
+        roots -= connect - 1;
+        ++level;
+
+        /* check terminal condition minimizing delay */
+        if ( roots != 1 && roots - 1 <= max_available )
+        {
+          roots = 1;
+          ++level;
+          break;
+        }
+      }
+      else
+      {
+        ++unconnected;
+      }
+    }
+
+    /* add balanced LUTs */
+    while( roots != 1 )
+    {
+      roots = std::ceil( static_cast<float>( roots ) / ps.cut_enumeration_ps.cut_size );
+      ++level;
+      area += roots;
+    }
+
+    /* write  implementation cost */
+    new_cut->data.lut_delay = level;
+    new_cut->data.lut_area = area;
+
+    /* create cut */
+    uint32_t size = 0;
+    std::array<uint32_t, max_cut_size> leaves;
+
+    for ( auto const& leaf_cut : bins_cuts )
+    {
+      for ( auto leaf : leaf_cut )
+        leaves[size++] = leaf;
+    }
+
+    new_cut.set_leaves( leaves.begin(), leaves.begin() + size );
   }
 
   template<bool DO_AREA, bool ELA>
@@ -2054,37 +2132,90 @@ private:
   }
 
   template<bool ELA>
-  void compute_cut_data_decompose( adaptive_cut_t& cut, node const& n, uint32_t leaves )
+  void decomposition_cut_data( adaptive_cut_t& cut, node const& n, uint32_t num_leaves )
   {
     uint32_t lut_area = cut.data.lut_area;
     uint32_t lut_delay = cut.data.lut_delay;
 
-    uint32_t delay{ 0 };
-    float area_flow = static_cast<float>( lut_area );
-    float edge_flow = cut.size;
-
-    for ( uint32_t i = 0; i < leaves; ++i )
+    if constexpr ( ELA )
     {
-      for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
+      uint32_t delay{ 0 };
+      uint32_t exact_area = lut_area;
+      for ( uint32_t i = 0; i < num_leaves; ++i )
       {
-        const auto& best_leaf_cut = cuts[leaf][0];
-        delay = std::max( delay, best_leaf_cut->data.delay );
-        if ( node_match[leaf].map_refs > 0 && leaf != 0 )
+        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
         {
-          area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
-          edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
-        }
-        else
-        {
-          area_flow += best_leaf_cut->data.area_flow;
-          edge_flow += best_leaf_cut->data.edge_flow;
+          const auto& best_leaf_cut = cuts[leaf][0];
+          delay = std::max( delay, best_leaf_cut->data.delay );
+
+          /* compute exact area */
+          if ( ntk.is_ci( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
+          {
+            continue;
+          }
+
+          /* Recursive referencing if leaf was not referenced */
+          if ( node_match[leaf].map_refs++ == 0u )
+          {
+            exact_area += cut_ref( best_leaf_cut );
+          }
         }
       }
-    }
 
-    cut.data.delay = lut_delay + delay;
-    cut.data.area_flow = area_flow;
-    cut.data.edge_flow = edge_flow;
+      cut.data.delay = lut_delay + delay;
+      cut.data.area_flow = static_cast<float>( exact_area );
+
+      /* dereference cut */
+      exact_area = cut.size;
+      for ( uint32_t i = 0; i < num_leaves; ++i )
+      {
+        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
+        {
+          if ( ntk.is_ci( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
+          {
+            continue;
+          }
+
+          /* Recursive referencing if leaf was not referenced */
+          if ( --node_match[leaf].map_refs == 0u )
+          {
+            exact_area += cut_edge_deref( cuts[leaf][0] );
+          }
+        }
+      }
+
+      if ( ps.edge_optimization )
+        cut.data.edge_flow = static_cast<float>( exact_area );
+      else
+        cut.data.edge_flow = 0;
+    }
+    else
+    {
+      uint32_t delay{ 0 };
+      float area_flow = static_cast<float>( lut_area );
+      float edge_flow = cut.size;
+      for ( uint32_t i = 0; i < num_leaves; ++i )
+      {
+        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
+        {
+          const auto& best_leaf_cut = cuts[leaf][0];
+          delay = std::max( delay, best_leaf_cut->data.delay );
+          if ( node_match[leaf].map_refs > 0 && leaf != 0 )
+          {
+            area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
+            edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
+          }
+          else
+          {
+            area_flow += best_leaf_cut->data.area_flow;
+            edge_flow += best_leaf_cut->data.edge_flow;
+          }
+        }
+      }
+      cut.data.delay = lut_delay + delay;
+      cut.data.area_flow = area_flow;
+      cut.data.edge_flow = edge_flow;
+    }
   }
 
   void add_zero_cut( uint32_t index, bool phase )

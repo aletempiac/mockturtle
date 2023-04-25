@@ -77,30 +77,33 @@ int main()
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
     ps.cut_enumeration_ps.cut_limit = 8u;
-    ps.recompute_cuts = false;
+    ps.recompute_cuts = true;
     ps.area_oriented_mapping = true;
-    ps.cut_expansion = false;
+    ps.cut_expansion = true;
 
     /* FLOW1: map AIG */
-    klut_network klut1;
+    // klut_network klut1;
     lut_map_stats st1;
-    // mapping_view<aig_network, false> mapped_aig{ aig };
-    // lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st1 );
-    // const auto klut1 = *collapse_mapped_network<klut_network>( mapped_aig );
+    mapping_view<aig_network, false> mapped_aig{ aig };
+    lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st1 );
+    const auto klut1 = *collapse_mapped_network<klut_network>( mapped_aig );
 
     /* FLOW2: map collapsed AIG */
+    ps.recompute_cuts = false;
+    ps.cut_expansion = false;
     ps.decompose_multi = true;
     lut_map_stats st2;
     mapping_view<multi_aig_network, false> mapped_multi_aig{ multi_aig };
     lut_map<decltype( mapped_multi_aig ), false>( mapped_multi_aig, ps, &st2 );
-    const auto klut2 = *collapse_mapped_network<klut_network>( mapped_multi_aig );
+    // const auto klut2 = *collapse_mapped_network<klut_network>( mapped_multi_aig );
 
     uint32_t const flow1_luts = klut1.num_gates();
     uint32_t const flow1_depth = depth_view( klut1 ).depth();
-    uint32_t const flow2_luts = klut2.num_gates();
-    uint32_t const flow2_depth = depth_view( klut2 ).depth();
+    uint32_t const flow2_luts = st2.area;
+    uint32_t const flow2_depth = st2.delay;
 
-    auto const cec = benchmark == "hyp" ? true : abc_cec( klut2, benchmark );
+    // auto const cec = benchmark == "hyp" ? true : abc_cec( klut2, benchmark );
+    auto const cec = true;
 
     exp( benchmark, initial_size, initial_depth, collapsed_size, collapsed_depth, flow1_luts, flow1_depth, to_seconds( st1.time_total ), flow2_luts, flow2_depth, to_seconds( st2.time_total ), cec );
   }
