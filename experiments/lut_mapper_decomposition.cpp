@@ -49,10 +49,10 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, uint32_t, uint32_t, double, bool> exp(
       "lut_mapper_d", "benchmark", "size", "depth", "size_c", "depth_c", "luts", "lut_depth", "time", "luts_d", "luts_depth_d", "time_d", "equivalent_d" );
 
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iscas_benchmarks() )
   {
-    if ( benchmark == "hyp" )
-      continue;
+    // if ( benchmark == "hyp" )
+    //   continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
@@ -77,17 +77,19 @@ int main()
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
     ps.cut_enumeration_ps.cut_limit = 8u;
-    ps.recompute_cuts = true;
-    ps.area_oriented_mapping = false;
-    ps.cut_expansion = true;
+    ps.recompute_cuts = false;
+    ps.area_oriented_mapping = true;
+    ps.cut_expansion = false;
 
     /* FLOW1: map AIG */
+    klut_network klut1;
     lut_map_stats st1;
-    mapping_view<aig_network, false> mapped_aig{ aig };
-    lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st1 );
-    const auto klut1 = *collapse_mapped_network<klut_network>( mapped_aig );
+    // mapping_view<aig_network, false> mapped_aig{ aig };
+    // lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st1 );
+    // const auto klut1 = *collapse_mapped_network<klut_network>( mapped_aig );
 
     /* FLOW2: map collapsed AIG */
+    ps.decompose_multi = true;
     lut_map_stats st2;
     mapping_view<multi_aig_network, false> mapped_multi_aig{ multi_aig };
     lut_map<decltype( mapped_multi_aig ), false>( mapped_multi_aig, ps, &st2 );
