@@ -46,11 +46,15 @@
 #include "../networks/klut.hpp"
 #include "../utils/cost_functions.hpp"
 #include "../utils/cuts.hpp"
+#include "../utils/node_map.hpp"
 #include "../utils/stopwatch.hpp"
 #include "../utils/truth_table_cache.hpp"
+#include "../views/color_view.hpp"
+#include "../views/fanout_view.hpp"
 #include "../views/mapping_view.hpp"
 #include "../views/mffc_view.hpp"
 #include "../views/topo_view.hpp"
+#include "../views/window_view.hpp"
 #include "cut_enumeration.hpp"
 #include "simulation.hpp"
 
@@ -106,8 +110,8 @@ struct lut_map_params
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ true };
 
-  /*! \brief Decomposes multi-input ANDs */
-  bool decompose_multi{ false };
+  /*! \brief Decomposes multi-input ANDs/XORs */
+  bool multi_decomposition{ false };
 
   /*! \brief Maximum large cut size for multi-input ANDs */
   uint32_t large_cut_size{ 32 };
@@ -167,6 +171,20 @@ struct cut_enumeration_lut_cut
   uint32_t lut_delay{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
+};
+
+/* wide cut data */
+template<uint32_t CutSize>
+struct cut_enumeration_wide_cut
+{
+  uint32_t delay{ 0 };
+  uint32_t lut_area{ 0 };
+  uint32_t lut_delay{ 0 };
+  float area_flow{ 0 };
+  float edge_flow{ 0 };
+  
+  std::array<uint32_t, CutSize> pin_delay;
+  std::vector<uint64_t> lut_roots;
 };
 
 enum class lut_cut_sort_type
@@ -553,19 +571,24 @@ template<class Ntk, bool StoreFunction, class LUTCostFn>
 class lut_map_impl
 {
 public:
-  static constexpr uint32_t max_cut_num = 32;
+  static constexpr uint32_t max_cut_num = 16;
+  static constexpr uint32_t max_cut_size = 32;
+  static constexpr uint32_t max_wide_cut_num = 32;
+  static constexpr uint32_t max_wide_cut_size = 32;
   static constexpr uint32_t max_cut_data_decomp = 32;
-  static constexpr uint32_t max_cut_size = 16;
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
-  // using decomp_cut_set_t = std::array<lut_cut_set<cut_t, max_cut_num>, max_cut_data_decomp>;
-  using adaptive_cut_t = adaptive_cut_merger<max_cut_data_decomp>;
+  using wide_cut_t = cut<max_wide_cut_size, cut_data<false, cut_enumeration_wide_cut<max_wide_cut_size>>>;
+  using wide_cut_set_t = lut_cut_set<wide_cut_t, max_wide_cut_num>;
+  using adaptive_cut_t = adaptive_cut_merger<max_wide_cut_size>;
   using decomp_cut_set_t = std::vector<adaptive_cut_t>;
   using node = typename Ntk::node;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
+  using wide_cut_merge_t = typename std::array<wide_cut_set_t*, Ntk::max_fanin_size + 1>;
   using TT = kitty::dynamic_truth_table;
   using tt_cache = truth_table_cache<TT>;
   using cost_cache = std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>;
+  using lut_info = std::pair<kitty::dynamic_truth_table, std::vector<signal<klut_network>>>;
 
 public:
   explicit lut_map_impl( Ntk& ntk, lut_map_params const& ps, lut_map_stats& st )
@@ -595,9 +618,35 @@ public:
     }
   }
 
-  void run()
+  klut_network run()
   {
     stopwatch t( st.time_total );
+
+    /* compute and save topological order */
+    topo_order.reserve( ntk.size() );
+    topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
+      topo_order.push_back( n );
+
+      if constexpr ( Ntk::min_fanin_size != Ntk::max_fanin_size )
+      {
+        if ( ntk.fanin_size( n ) > Ntk::min_fanin_size )
+          ++multi_gates;
+      }
+    } );
+
+    perform_mapping();
+    return create_lut_network();
+  }
+
+  void run_inplace()
+  {
+    stopwatch t( st.time_total );
+
+    if ( ps.multi_decomposition )
+    {
+      std::cerr << "[i] MAP ERROR: multi-input decompositions are not supported in \"inplace\" mapping\n" << std::endl;
+      return;
+    }
 
     /* compute and save topological order */
     topo_order.reserve( ntk.size() );
@@ -611,6 +660,13 @@ public:
       return;
     }
 
+    perform_mapping();
+    derive_mapping();
+  }
+
+private:
+  void perform_mapping()
+  {
     /* init the data structure */
     init_nodes();
     init_cuts();
@@ -675,12 +731,8 @@ public:
       }
       ++i;
     }
-
-    /* generate the output network */
-    derive_mapping();
   }
 
-private:
   void init_nodes()
   {
     ntk.foreach_node( [this]( auto const& n ) {
@@ -704,13 +756,22 @@ private:
       add_unit_cut( ntk.node_to_index( n ) );
     } );
 
-    bins.reserve( max_cut_data_decomp );
+    if ( ps.multi_decomposition && multi_gates )
+    {
+      wide_cuts = std::vector<wide_cut_set_t>( multi_gates );
+      wide_cut_index = std::vector<uint32_t>( Ntk.size(), UINT32_MAX );
+      dcuts.reserve( max_cut_data_decomp );
+      dlcuts.reserve( max_cut_data_decomp );
+      bins.reserve( max_wide_cut_size );
+      packs.reserve( max_wide_cut_size );
+    }
   }
 
   template<bool DO_AREA, bool ELA>
   void compute_mapping( lut_cut_sort_type const sort, bool preprocess, bool recompute_cuts )
   {
     cuts_total = 0;
+    multi_gates = 0;
     for ( auto const& n : topo_order )
     {
       if constexpr ( !ELA )
@@ -739,7 +800,7 @@ private:
         }
         else
         {
-          if ( ps.decompose_multi && ntk.fanin_size( n ) > Ntk::min_fanin_size )
+          if ( ps.multi_decomposition && ntk.fanin_size( n ) > Ntk::min_fanin_size )
           {
             compute_best_cut_decompose<DO_AREA, ELA>( n, sort, preprocess );
           }
@@ -1208,7 +1269,13 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    cut_t best_cut;
+    wide_cut_t best_cut;
+
+    /* assign wide cut set index during the first iteration */
+    if ( iteration == 0 )
+    {
+      wide_cut_index[index] = multi_gates++;
+    }
 
     /* compute all the possible cuts between the first 2 fanins */
     const auto fanin = ntk.fanin_size( n );
@@ -1301,6 +1368,8 @@ private:
       add_unit_cut( index );
     }
 
+    /* TODO: copy wide cut set into cut set -> add best cut first, then add smaller cuts for propagation + unit cut */
+
     if constexpr ( DO_AREA )
     {
       if ( iteration != 0 && node_data.map_refs > 0 )
@@ -1346,12 +1415,12 @@ private:
         decomposition_cut_data<ELA>( new_cut, n, child + 1 );
 
         /* skip too large cuts */
-        if ( new_cut.size > max_cut_size )
+        if ( new_cut.size > max_wide_cut_size )
           continue;
 
         dlcuts.push_back( new_cut );
 
-        if ( dlcuts.size() >= max_cut_num )
+        if ( dlcuts.size() >= max_cut_data_decomp )
           break;
       }
 
@@ -1479,7 +1548,7 @@ private:
     bins.clear();
 
     /* save indexes for variable swapping */
-    std::array<uint32_t, max_cut_data_decomp> indexes;
+    std::array<uint32_t, max_wide_cut_size> indexes;
     std::iota( indexes.begin(), indexes.begin() + num_leaves, 0 );
 
     /* sort cut sizes in decreasing order */
@@ -1962,39 +2031,6 @@ private:
     return count;
   }
 
-  void derive_mapping()
-  {
-    ntk.clear_mapping();
-
-    for ( auto const& n : topo_order )
-    {
-      if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
-        continue;
-
-      const auto index = ntk.node_to_index( n );
-      if ( node_match[index].map_refs == 0 )
-        continue;
-
-      std::vector<node> nodes;
-      auto const& best_cut = cuts[index][0];
-
-      for ( auto const& l : best_cut )
-      {
-        nodes.push_back( ntk.index_to_node( l ) );
-      }
-      ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
-
-      if constexpr ( StoreFunction )
-      {
-        ntk.set_cell_function( n, truth_tables[best_cut->func_id] );
-      }
-    }
-
-    st.area = area;
-    st.delay = delay;
-    st.edges = edges;
-  }
-
   void mark_cut_volume_rec( node const& n )
   {
     if ( ntk.visited( n ) == ntk.trav_id() )
@@ -2442,28 +2478,319 @@ private:
     node_to_value[n] = ntk.compute( n, fanin_values.begin(), fanin_values.end() );
   }
 
+#pragma region Dump network
+  klut_network create_lut_network()
+  {
+    klut_network res;
+    node_map<signal<klut_network>, Ntk> node_to_signal( ntk );
+
+    /* special map for output drivers to perform some optimizations */
+    enum class driver_type : uint32_t
+    {
+      none = 0,
+      pos = 1,
+      neg = 2,
+      mixed = 3
+    };
+    node_map<driver_type, Ntk> node_driver_type( ntk, driver_type::none );
+
+    /* opposites are filled for nodes with mixed driver types, since they have
+       two nodes in the network. */
+    std::unordered_map<node, signal<klut_network>> opposites;
+
+    /* initial driver types */
+    ntk.foreach_po( [&]( auto const& f ) {
+      switch ( node_driver_type[f] )
+      {
+      case driver_type::none:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::neg : driver_type::pos;
+        break;
+      case driver_type::pos:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::mixed : driver_type::pos;
+        break;
+      case driver_type::neg:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::neg : driver_type::mixed;
+        break;
+      case driver_type::mixed:
+      default:
+        break;
+      }
+    } );
+
+    /* TODO: change -- it could be that internal nodes also point to an output driver node */
+    ntk.foreach_node( [&]( auto const n ) {
+      if ( ntk.is_constant( n ) || ntk.is_pi( n ) || node_match[ntk.node_to_index( n )].map_refs == 0 )
+        return;
+
+      auto const& best_cut = cuts[ntk.node_to_index( n )][0];
+      for ( auto const& l : best_cut )
+      {
+        if ( node_driver_type[ntk.index_to_node( l )] == driver_type::neg )
+        {
+          node_driver_type[ntk.index_to_node( l )] = driver_type::mixed;
+        }
+      }
+    } );
+
+    /* constants */
+    auto add_constant_to_map = [&]( bool value ) {
+      const auto n = ntk.get_node( ntk.get_constant( value ) );
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        node_to_signal[n] = res.get_constant( value );
+        break;
+
+      case driver_type::neg:
+        node_to_signal[n] = res.get_constant( !value );
+        break;
+
+      case driver_type::mixed:
+        node_to_signal[n] = res.get_constant( value );
+        opposites[n] = res.get_constant( !value );
+        break;
+      }
+    };
+
+    add_constant_to_map( false );
+    if ( ntk.get_node( ntk.get_constant( false ) ) != ntk.get_node( ntk.get_constant( true ) ) )
+    {
+      add_constant_to_map( true );
+    }
+
+    /* primary inputs */
+    ntk.foreach_pi( [&]( auto n ) {
+      signal<klut_network> res_signal;
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res_signal;
+        break;
+
+      case driver_type::neg:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res.create_not( res_signal );
+        break;
+
+      case driver_type::mixed:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res_signal;
+        opposites[n] = res.create_not( node_to_signal[n] );
+        break;
+      }
+    } );
+
+    /* TODO: add sequential compatibility */
+    fanout_view<Ntk> fanout_ntk{ ntk };
+    fanout_ntk.clear_visited();
+    color_view<fanout_view<Ntk>> color_ntk{ fanout_ntk };
+
+    for ( auto const& n : topo_order )
+    {
+      if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
+        continue;
+
+      const auto index = ntk.node_to_index( n );
+      if ( node_match[index].map_refs == 0 )
+        continue;
+
+      auto const& best_cut = cuts[index][0];
+
+      /* if wide cut, perform decomposition */
+      kitty::dynamic_truth_table tt;
+      std::vector<signal<klut_network>> children;
+      if ( best_cut.size() > ps.cut_enumeration_ps.cut_size )
+      {
+        std::tie( tt, children ) = create_lut_decompose( color_ntk, n, node_to_signal );
+      }
+      else
+      {
+        std::tie( tt, children ) = create_lut( color_ntk, n, node_to_signal );
+      }
+
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        node_to_signal[n] = res.create_node( children, tt );
+        break;
+
+      case driver_type::neg:
+        node_to_signal[n] = res.create_node( children, ~tt );
+        break;
+
+      case driver_type::mixed:
+        node_to_signal[n] = res.create_node( children, tt );
+        opposites[n] = res.create_node( children, ~tt );
+        break;
+      }
+    }
+
+    /* outputs */
+    ntk.foreach_po( [&]( auto const& f ) {
+      if ( ntk.is_complemented( f ) && node_driver_type[f] == driver_type::mixed )
+        res.create_po( opposites[ntk.get_node( f )] );
+      else
+        res.create_po( node_to_signal[f] );
+    } );
+
+    st.area = area;
+    st.delay = delay;
+    st.edges = edges;
+
+    return res;
+  }
+
+  inline lut_info create_lut( color_view<fanout_view<Ntk>>& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  {
+    auto const& best_cut = cuts[ntk.node_to_index( n )][0];
+
+    std::vector<signal<klut_network>> children;
+    for ( auto const& l : best_cut )
+    {
+      children.push_back( node_to_signal[ntk.index_to_node( l )] );
+    }
+
+    kitty::dynamic_truth_table tt;
+
+    if constexpr ( StoreFunction )
+    {
+      tt = truth_tables[best_cut->func_id];
+    }
+    else
+    {
+      /* compute function constructing a window */
+      std::vector<node> roots{ n };
+      std::vector<node> leaves;
+
+      for ( auto const& l : best_cut )
+      {
+        leaves.push_back( ntk.index_to_node( l ) );
+      }
+
+      std::vector<node> gates{ collect_nodes( color_ntk, leaves, roots ) };
+      window_view window_ntk{ color_ntk, leaves, roots, gates };
+
+      using SimNtk = mockturtle::window_view<mockturtle::color_view<mockturtle::fanout_view<Ntk>>>;
+      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
+      unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
+
+      simulate_nodes( window_ntk, node_to_value, sim );
+
+      tt = node_to_value[n];
+    }
+
+    return { tt, children };
+  }
+
+  inline lut_info create_lut_decompose( color_view<fanout_view<Ntk>>& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  {
+    auto const& best_cut = cuts[ntk.node_to_index( n )][0];
+
+    std::vector<signal<klut_network>> children;
+    for ( auto const& l : best_cut )
+    {
+      children.push_back( node_to_signal[ntk.index_to_node( l )] );
+    }
+
+    kitty::dynamic_truth_table tt;
+
+    if constexpr ( StoreFunction )
+    {
+      tt = truth_tables[best_cut->func_id];
+    }
+    else
+    {
+      /* compute function constructing a window */
+      std::vector<node> roots{ n };
+      std::vector<node> leaves;
+
+      for ( auto const& l : best_cut )
+      {
+        leaves.push_back( ntk.index_to_node( l ) );
+      }
+
+      std::vector<node> gates{ collect_nodes( color_ntk, leaves, roots ) };
+      window_view window_ntk{ color_ntk, leaves, roots, gates };
+
+      using SimNtk = mockturtle::window_view<mockturtle::color_view<mockturtle::fanout_view<Ntk>>>;
+      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
+      unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
+
+      simulate_nodes( window_ntk, node_to_value, sim );
+
+      tt = node_to_value[n];
+    }
+
+    return { tt, children };
+  }
+
+  void derive_mapping()
+  {
+    ntk.clear_mapping();
+
+    for ( auto const& n : topo_order )
+    {
+      if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
+        continue;
+
+      const auto index = ntk.node_to_index( n );
+      if ( node_match[index].map_refs == 0 )
+        continue;
+
+      std::vector<node> nodes;
+      auto const& best_cut = cuts[index][0];
+
+      for ( auto const& l : best_cut )
+      {
+        nodes.push_back( ntk.index_to_node( l ) );
+      }
+      ntk.add_to_mapping( n, nodes.begin(), nodes.end() );
+
+      if constexpr ( StoreFunction )
+      {
+        ntk.set_cell_function( n, truth_tables[best_cut->func_id] );
+      }
+    }
+
+    st.area = area;
+    st.delay = delay;
+    st.edges = edges;
+  }
+#pragma endregion
+
 private:
   Ntk& ntk;
   lut_map_params const& ps;
   lut_map_stats& st;
 
-  uint32_t iteration{ 0 };       /* current mapping iteration */
-  uint32_t area_iteration{ 0 };  /* current area iteration */
-  uint32_t delay{ 0 };           /* current delay of the mapping */
-  uint32_t area{ 0 };            /* current area of the mapping */
-  uint32_t edges{ 0 };           /* current edges of the mapping */
-  uint32_t cuts_total{ 0 };      /* current computed cuts */
-  const float epsilon{ 0.005f }; /* epsilon */
+  uint32_t iteration{ 0 };        /* current mapping iteration */
+  uint32_t area_iteration{ 0 };   /* current area iteration */
+  uint32_t delay{ 0 };            /* current delay of the mapping */
+  uint32_t area{ 0 };             /* current area of the mapping */
+  uint32_t edges{ 0 };            /* current edges of the mapping */
+  uint32_t cuts_total{ 0 };       /* current computed cuts */
+  uint32_t multi_gates{ 0 };       /* number of detected multi-input ANDs */
+  const float epsilon{ 0.005f };  /* epsilon */
   LUTCostFn lut_cost{};
 
   std::vector<node> topo_order;
   std::vector<uint32_t> tmp_visited;
   std::vector<node_lut> node_match;
 
-  std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
-  cut_merge_t lcuts;            /* cut merger container */
-  tt_cache truth_tables;        /* cut truth tables */
-  cost_cache truth_tables_cost; /* truth tables cost */
+  std::vector<cut_set_t> cuts;            /* compressed representation of cuts */
+  std::vector<wide_cut_set_t> wide_cuts;  /* compressed representation of wide cuts */
+  cut_merge_t lcuts;                      /* cut merger container */
+  wide_cut_merge_t lwidecuts;             /* wide cut merger container */
+  std::vector<uint32_t> wide_cut_index;   /* wide cut set index for nodes */
+  tt_cache truth_tables;                  /* cut truth tables */
+  cost_cache truth_tables_cost;           /* truth tables cost */
 
   decomp_cut_set_t dcuts;       /* cut set for multi-input modes decomposition */
   decomp_cut_set_t dlcuts;      /* cut merger for multi-input modes decomposition */
@@ -2477,10 +2804,74 @@ private:
 /*! \brief LUT mapper.
  *
  * This function implements a LUT mapping algorithm.  It is controlled by one
+ * template argument `ComputeTruth` (defaulted to `false`) which controls
+ * whether the LUT function is computed or the mapping is structural. In the
+ * former case, truth tables are computed during cut enumeration,
+ * which requires more runtime.
+ * 
+ * This function returns a k-LUT network.
+ *
+ * The template `LUTCostFn` sets the cost function to evaluate depth and
+ * size of a truth table given its support size if `ComputeTruth` is set
+ * to false, or its function if `ComputeTruth` is set to true.
+ * 
+ * This implementation offers more options such as delay oriented mapping
+ * and edges minimization compared to the command `lut_mapping`.
+ *
+ * **Required network functions:**
+ * - `size`
+ * - `is_ci`
+ * - `is_constant`
+ * - `node_to_index`
+ * - `index_to_node`
+ * - `get_node`
+ * - `foreach_co`
+ * - `foreach_node`
+ * - `fanout_size`
+ */
+template<class Ntk, bool ComputeTruth = false, class LUTCostFn = lut_unitary_cost>
+klut_network lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
+  static_assert( has_is_ci_v<Ntk>, "Ntk does not implement the is_ci method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_index_to_node_v<Ntk>, "Ntk does not implement the index_to_node method" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_foreach_ci_v<Ntk>, "Ntk does not implement the foreach_ci method" );
+  static_assert( has_foreach_co_v<Ntk>, "Ntk does not implement the foreach_co method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_fanout_size_v<Ntk>, "Ntk does not implement the fanout_size method" );
+
+  lut_map_stats st;
+  detail::lut_map_impl<Ntk, ComputeTruth, LUTCostFn> p( ntk, ps, st );
+  auto const klut = p.run();
+
+  if ( ps.verbose )
+  {
+    st.report();
+  }
+
+  if ( pst != nullptr )
+  {
+    *pst = st;
+  }
+
+  return klut;
+}
+
+/*! \brief LUT mapper inplace.
+ *
+ * This function implements a LUT mapping algorithm.  It is controlled by one
  * template argument `StoreFunction` (defaulted to `false`) which controls
  * whether the LUT function is stored in the mapping. In that case
  * truth tables are computed during cut enumeration, which requires more
  * runtime.
+ * 
+ * The input network must be wrapped in a `mapping_view`. The computed mapping
+ * is stored in the view. In this version, some features of the mapper are
+ * disabled, such as on-the-fly decompositions, due to incompatibility.
  *
  * The template `LUTCostFn` sets the cost function to evaluate depth and
  * size of a truth table given its support size, if `StoreFunction` is set
@@ -2513,7 +2904,7 @@ private:
    \endverbatim
  */
 template<class Ntk, bool StoreFunction = false, class LUTCostFn = lut_unitary_cost>
-void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
+void lut_map_inplace( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_size_v<Ntk>, "Ntk does not implement the size method" );
@@ -2531,7 +2922,7 @@ void lut_map( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* pst = null
 
   lut_map_stats st;
   detail::lut_map_impl<Ntk, StoreFunction, LUTCostFn> p( ntk, ps, st );
-  p.run();
+  p.run_inplace();
 
   if ( ps.verbose )
   {
