@@ -1399,6 +1399,12 @@ private:
     uint32_t i = 0;
     for ( auto const& c : *lcuts[0] )
     {
+      if ( c->size() > ps.cut_enumeration_ps.cut_size )
+      {
+        ++i;
+        continue;
+      }
+
       dcuts.emplace_back( adaptive_cut_t{} );
       dcuts.back().cut_pointers[0] = i++;
     }
@@ -1422,6 +1428,12 @@ private:
       new_cut = dc1;
       for ( auto const& c2 : *lcuts[child] )
       {
+        if ( c2->size() > ps.cut_enumeration_ps.cut_size )
+        {
+          ++j;
+          continue;
+        }
+
         /* create the cut */
         new_cut.cut_pointers[child] = j++;
         packing( n, new_cut, child + 1 );
@@ -1559,6 +1571,7 @@ private:
   void dcut_merge( node const& n, adaptive_cut_t const& cut, wide_cut_t& new_cut, uint32_t num_leaves )
   {
     /* perform bin-packing */
+    bins.clear();
     packs.clear();
 
     /* save indexes for variable swapping */
@@ -1594,8 +1607,10 @@ private:
 
       if ( j == bins_cuts.size() )
       {
+        assert( leaf_cut.size() <= ps.cut_enumeration_ps.cut_size );
         bins_cuts.push_back( leaf_cut );
-        bins_cuts[j]->data.lut_delay |= static_cast<uint32_t>( 1 ) << pack_indexes[i];
+        bins_cuts[j]->data.lut_delay = static_cast<uint32_t>( 1 ) << pack_indexes[i];
+        bins_cuts[j]->data.lut_area = 0;
       }
     }
 
@@ -1604,7 +1619,7 @@ private:
     uint32_t level = 1;
 
     /* allocate pointers for reordering */
-    std::vector<cut_t*> bins_pcuts( bins.size() );
+    std::vector<cut_t*> bins_pcuts( bins_cuts.size() );
     for ( uint32_t i = 0; i < bins_pcuts.size(); ++i )
       bins_pcuts[i] = &bins_cuts[i];
 
@@ -1612,21 +1627,29 @@ private:
     std::sort( bins_pcuts.begin(), bins_pcuts.end(), []( auto const& a, auto const& b ) {
       return a->size() > b->size();
     } );
+    for ( uint32_t i = 0; i < bins_pcuts.size(); ++i )
+      bins.push_back( bins_pcuts[i]->size() );
 
     /* check fully-packable */
-    uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins_pcuts.back()->size();
+    uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins.back();
     if ( roots != 1 && roots - 1 <= max_available )
     {
+      bins[bins_pcuts.size() - 1] += roots - 1;
       roots = 1;
       ++level;
-      /* TODO: connect LUTs */
+      /* connect LUTs */
+      for ( uint32_t i = 0; i < bins_pcuts.size() - 1; ++i )
+      {
+        ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << i;
+      }
     }
 
     uint32_t i;
     uint32_t unconnected = 1;
+    std::vector<bool> connected( bins_pcuts.size(), false );
     for ( i = 1; i < bins_pcuts.size() && roots != 1; ++i )
     {
-      uint32_t cut_size = bins_pcuts[i]->size();
+      uint32_t cut_size = bins[i];
       if ( cut_size < ps.cut_enumeration_ps.cut_size )
       {
         uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - cut_size, unconnected );
@@ -1635,15 +1658,27 @@ private:
         roots -= connect - 1;
         ++level;
 
-        /* TODO: connect LUTs */
+        for ( uint32_t j = 0; j < i && connect != 0; ++j )
+        {
+          if ( connected[j] )
+            continue;
+          connected[j] = true;
+          ( *bins_pcuts[i] )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
+          --connect;
+        }
 
         /* check terminal condition minimizing delay */
         if ( roots != 1 && roots - 1 <= max_available )
         {
+          bins[bins_pcuts.size() - 1] += roots - 1;
           roots = 1;
-          ++level;
 
-          /* TODO: connect LUTs */
+          for ( uint32_t j = 0; j < bins_pcuts.size() - 1; ++j )
+          {
+            if ( connected[j] )
+              continue;
+            ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
+          }
           break;
         }
       }
