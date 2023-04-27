@@ -180,6 +180,7 @@ struct cut_enumeration_wide_cut
   uint32_t delay{ 0 };
   uint32_t lut_area{ 0 };
   uint32_t lut_delay{ 0 };
+  uint32_t lut_edges{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
   
@@ -1617,12 +1618,16 @@ private:
 
     uint32_t area = bins_cuts.size();
     uint32_t roots = bins_cuts.size();
+    uint32_t edges = 0;
     // std::vector<uint32_t> delays( bins_cuts.size(), 1u );
 
     /* allocate pointers for reordering */
     std::vector<cut_t*> bins_pcuts( bins_cuts.size() );
     for ( uint32_t i = 0; i < bins_pcuts.size(); ++i )
+    {
       bins_pcuts[i] = &bins_cuts[i];
+      edges += bins_cuts[i].size();
+    }
 
     /* perform multi-level bin-packing */
     std::sort( bins_pcuts.begin(), bins_pcuts.end(), []( auto const& a, auto const& b ) {
@@ -1758,6 +1763,7 @@ private:
     /* write  implementation cost */
     new_cut->data.lut_delay = 1;
     new_cut->data.lut_area = area;
+    new_cut->data.lut_edges = edges + area;
 
     /* compute pin-to-pin delay */
     compute_wide_cut_pin_delay( new_cut, bins_pcuts );
@@ -2129,7 +2135,11 @@ private:
   template<typename CutType = cut_t>
   uint32_t cut_edge_deref( CutType const& cut )
   {
-    uint32_t count = cut.size();
+    uint32_t count;
+    if constexpr ( std::is_same<CutType, wide_cut_t>::value )
+      count = cut->data.lut_edges;
+    else
+      count = cut.size();
 
     for ( auto leaf : cut )
     {
@@ -2318,7 +2328,7 @@ private:
     else
     {
       float area_flow = static_cast<float>( lut_area );
-      float edge_flow = cut.size();
+      float edge_flow = cut->data.lut_edges;
 
       uint32_t ctr = 0;
       for ( auto leaf : cut )
