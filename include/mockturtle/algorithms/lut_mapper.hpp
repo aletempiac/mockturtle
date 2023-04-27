@@ -183,7 +183,6 @@ struct cut_enumeration_wide_cut
   float area_flow{ 0 };
   float edge_flow{ 0 };
   
-  std::array<uint32_t, CutSize> pin_delay;
   std::vector<uint64_t> lut_roots;
 };
 
@@ -1616,7 +1615,6 @@ private:
 
     uint32_t area = bins_cuts.size();
     uint32_t roots = bins_cuts.size();
-    uint32_t level = 1;
 
     /* allocate pointers for reordering */
     std::vector<cut_t*> bins_pcuts( bins_cuts.size() );
@@ -1630,13 +1628,12 @@ private:
     for ( uint32_t i = 0; i < bins_pcuts.size(); ++i )
       bins.push_back( bins_pcuts[i]->size() );
 
-    /* check fully-packable */
+    /* check fully-packable using the last LUT */
     uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins.back();
     if ( roots != 1 && roots - 1 <= max_available )
     {
       bins[bins_pcuts.size() - 1] += roots - 1;
       roots = 1;
-      ++level;
       /* connect LUTs */
       for ( uint32_t i = 0; i < bins_pcuts.size() - 1; ++i )
       {
@@ -1644,63 +1641,61 @@ private:
       }
     }
 
+    /* check if it cannot be packed but a top LUT can map the network */
+    bool skip_multi_level_packing = false;
+    if ( roots != 1 && roots <= ps.cut_enumeration_ps.cut_size )
+    {
+      /* check availability */
+      uint32_t availability = 0;
+      for ( uint32_t i = 1; i < bins_pcuts.size(); ++i )
+      {
+        availability += bins[i] - ps.cut_enumeration_ps.cut_size;
+      }
+      if ( availability < roots - 1 )
+        skip_multi_level_packing = true;
+    }
+
     uint32_t i;
     uint32_t unconnected = 1;
     std::vector<bool> connected( bins_pcuts.size(), false );
-    for ( i = 1; i < bins_pcuts.size() && roots != 1; ++i )
+    for ( i = 1; i < bins_pcuts.size() && roots != 1 && !skip_multi_level_packing; ++i )
     {
       uint32_t cut_size = bins[i];
-      if ( cut_size < ps.cut_enumeration_ps.cut_size )
+      if ( cut_size >= ps.cut_enumeration_ps.cut_size )
       {
-        uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - cut_size, unconnected );
-        bins[i] += connect;
-        unconnected -= connect - 1;
-        roots -= connect - 1;
-        ++level;
+        ++unconnected;
+        continue;
+      }
 
-        for ( uint32_t j = 0; j < i && connect != 0; ++j )
+      uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - cut_size, unconnected );
+      bins[i] += connect;
+      unconnected -= connect;
+      roots -= connect;
+
+      for ( uint32_t j = 0; j < i && connect != 0; ++j )
+      {
+        if ( connected[j] )
+          continue;
+        connected[j] = true;
+        ( *bins_pcuts[i] )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
+        --connect;
+      }
+
+      /* check terminal condition minimizing delay */
+      if ( roots != 1 && roots - 1 <= max_available )
+      {
+        bins[bins_pcuts.size() - 1] += roots - 1;
+        roots = 1;
+
+        for ( uint32_t j = 0; j < bins_pcuts.size() - 1; ++j )
         {
           if ( connected[j] )
             continue;
-          connected[j] = true;
-          ( *bins_pcuts[i] )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
-          --connect;
+          ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
         }
-
-        /* check terminal condition minimizing delay */
-        if ( roots != 1 && roots - 1 <= max_available )
-        {
-          bins[bins_pcuts.size() - 1] += roots - 1;
-          roots = 1;
-
-          for ( uint32_t j = 0; j < bins_pcuts.size() - 1; ++j )
-          {
-            if ( connected[j] )
-              continue;
-            ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
-          }
-          break;
-        }
-      }
-      else
-      {
-        ++unconnected;
+        break;
       }
     }
-
-    /* add balanced LUTs */
-    while( roots != 1 )
-    {
-      roots = std::ceil( static_cast<float>( roots ) / ps.cut_enumeration_ps.cut_size );
-      ++level;
-      area += roots;
-
-      /* TODO: create LUTs */
-    }
-
-    /* write  implementation cost */
-    new_cut->data.lut_delay = level;
-    new_cut->data.lut_area = area;
 
     /* create cut */
     uint32_t size = 0;
@@ -1713,6 +1708,40 @@ private:
     }
 
     new_cut.set_leaves( leaves.begin(), leaves.begin() + size );
+
+    /* add LUT connection info */
+    for ( auto const& bin : bins_pcuts )
+    {
+      uint64_t lut_fanin = static_cast<uint64_t>( ( *bin )->data.lut_area ) << 32;
+      lut_fanin |= static_cast<uint64_t>( ( *bin )->data.lut_delay );
+      new_cut->data.lut_roots.push_back( lut_fanin );
+    }
+
+    /* add top LUTs until roots are 1 */
+    uint32_t k = 0;
+    while( roots != 1 )
+    {
+      bins.push_back( 0 );
+      connected.push_back( false );
+      ++area;
+      ++roots;
+      /* find unconnected LUTs */
+      uint64_t lut_fanin = 0;
+      for ( ; k < bins.size() - 1 && bins.back() <= ps.cut_enumeration_ps.cut_size; ++k )
+      {
+        if ( connected[k] )
+          continue;
+        connected[k] = true;
+        lut_fanin |= static_cast<uint64_t>( 1 ) << k;
+        ++bins.back();
+        --roots;
+      }
+      new_cut->data.lut_roots.push_back( lut_fanin << 32 );
+    }
+
+    /* write  implementation cost */
+    new_cut->data.lut_delay = 1;
+    new_cut->data.lut_area = area;
   }
 
   template<bool DO_AREA, bool ELA>
