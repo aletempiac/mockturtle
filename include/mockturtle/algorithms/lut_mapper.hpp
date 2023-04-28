@@ -3148,7 +3148,7 @@ private:
       /* add ANDs with additional variables */
       for ( uint32_t i = 0; i < connections; ++i )
       {
-        tt &= kitty::nth_var<kitty::dynamic_truth_table>( tt.num_vars(), tt.num_vars() - connections - 1 );
+        tt &= kitty::nth_var<kitty::dynamic_truth_table>( tt.num_vars(), tt.num_vars() - i - 1 );
       }
     }
 
