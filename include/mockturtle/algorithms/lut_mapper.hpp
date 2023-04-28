@@ -1571,6 +1571,9 @@ private:
 
   void dcut_merge( node const& n, adaptive_cut_t const& cut, wide_cut_t& new_cut, uint32_t num_leaves )
   {
+    /* clear new_cut fields */
+    new_cut->data.lut_roots.clear();
+
     /* perform bin-packing */
     bins.clear();
     packs.clear();
@@ -1601,7 +1604,6 @@ private:
         if ( bins_cuts[j].merge( leaf_cut, bins_cuts[j], ps.cut_enumeration_ps.cut_size ) )
         {
           bins_cuts[j]->data.lut_delay |= static_cast<uint32_t>( 1 ) << pack_indexes[i];
-          // bins_cuts[j]->data.delay = std::max( bins_cuts[j]->data.delay, leaf_cut->data.delay );
           break;
         }
         ++j;
@@ -1619,7 +1621,6 @@ private:
     uint32_t area = bins_cuts.size();
     uint32_t roots = bins_cuts.size();
     uint32_t edges = 0;
-    // std::vector<uint32_t> delays( bins_cuts.size(), 1u );
 
     /* allocate pointers for reordering */
     std::vector<cut_t*> bins_pcuts( bins_cuts.size() );
@@ -1646,9 +1647,7 @@ private:
       for ( uint32_t i = 0; i < bins_pcuts.size() - 1; ++i )
       {
         ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << i;
-        // ( *bins_pcuts.back() )->data.delay = std::max( ( *bins_pcuts.back() )->data.delay, ( *bins_pcuts[i] )->data.delay + 1 );
       }
-      // delays.back() = 2;
     }
 
     /* check if it cannot be packed but a top LUT can map the network */
@@ -1688,8 +1687,6 @@ private:
           continue;
         connected[j] = true;
         ( *bins_pcuts[i] )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
-        // delays[i] = std::max( delays[i], delays[j] + 1 );
-        // ( *bins_pcuts[i] )->data.delay = std::max( ( *bins_pcuts[i] )->data.delay, ( *bins_pcuts[j] )->data.delay + 1 );
         --connect;
       }
 
@@ -1704,8 +1701,6 @@ private:
           if ( connected[j] )
             continue;
           ( *bins_pcuts.back() )->data.lut_area |= static_cast<uint32_t>( 1 ) << j;
-          // delays.back() = std::max( delays.back(), delays[j] + 1 );
-          // ( *bins_pcuts.back() )->data.delay = std::max( ( *bins_pcuts.back() )->data.delay, ( *bins_pcuts[j] )->data.delay + 1 );
         }
         break;
       }
@@ -1733,7 +1728,6 @@ private:
       uint64_t lut_fanin = static_cast<uint64_t>( ( *bin )->data.lut_area ) << 32;
       lut_fanin |= static_cast<uint64_t>( ( *bin )->data.lut_delay );
       new_cut->data.lut_roots.push_back( lut_fanin );
-      // delays[k++] = ( *bin )->data.delay;
     }
 
     /* add top LUTs until roots are 1 */
@@ -1742,7 +1736,6 @@ private:
     {
       bins.push_back( 0 );
       connected.push_back( false );
-      // delays.push_back( 0 );
       ++area;
       ++roots;
       /* find unconnected LUTs */
@@ -1753,7 +1746,6 @@ private:
           continue;
         connected[k] = true;
         lut_fanin |= static_cast<uint64_t>( 1 ) << k;
-        // delays.back() = std::max( delays.back(), delay[k] + 1 );
         ++bins.back();
         --roots;
       }
@@ -2296,11 +2288,6 @@ private:
   template<bool ELA>
   void compute_wide_cut_data( wide_cut_t& cut, node const& n )
   {
-    uint32_t lut_area;
-    uint32_t lut_delay;
-
-    std::tie( lut_area, lut_delay ) = lut_cost( 1 );
-
     if constexpr ( ELA )
     {
       uint32_t delay{ 0 };
@@ -2310,10 +2297,8 @@ private:
         const auto& best_leaf_cut = cuts[leaf][0];
         delay = std::max( delay, best_leaf_cut->data.delay + cut->data.pin_delays[ctr++] );
       }
+      cut->data.delay = delay;
 
-      cut->data.delay = lut_delay + delay;
-      cut->data.lut_area = lut_area;
-      cut->data.lut_delay = lut_delay;
       if ( ps.edge_optimization )
       {
         cut->data.area_flow = static_cast<float>( cut_ref<wide_cut_t>( cut ) );
@@ -2327,7 +2312,8 @@ private:
     }
     else
     {
-      float area_flow = static_cast<float>( lut_area );
+      uint32_t delay{ 0 };
+      float area_flow = static_cast<float>( cut->data.lut_area );
       float edge_flow = cut->data.lut_edges;
 
       uint32_t ctr = 0;
@@ -2348,8 +2334,6 @@ private:
       }
 
       cut->data.delay = delay;
-      cut->data.lut_area = lut_area;
-      cut->data.lut_delay = lut_delay;
       cut->data.area_flow = area_flow;
       cut->data.edge_flow = edge_flow;
     }
@@ -2444,7 +2428,7 @@ private:
 
   void compute_wide_cut_pin_delay( wide_cut_t& cut, std::vector<cut_t*> const& pcuts )
   {
-    uint32_t lut_i = cut->data.lut_area - 1;
+    uint32_t lut_i = cut->data.lut_roots.size() - 1;
     uint64_t lut_connections = cut->data.lut_roots.back();
 
     /* check immediate connections */
@@ -2474,7 +2458,7 @@ private:
     for ( auto const& l : cut )
     {
       assert( ntk.value( ntk.index_to_node( l ) ) );
-      cut->data.pin_delays[i] = ntk.value( ntk.index_to_node( l ) );
+      cut->data.pin_delays[i++] = ntk.value( ntk.index_to_node( l ) );
     }
   }
 
@@ -3048,11 +3032,11 @@ private:
   tt_cache truth_tables;                  /* cut truth tables */
   cost_cache truth_tables_cost;           /* truth tables cost */
 
-  decomp_cut_set_t dcuts;             /* cut set for multi-input modes decomposition */
-  decomp_cut_set_t dlcuts;            /* cut merger for multi-input modes decomposition */
-  std::vector<uint32_t> bins;         /* bin containers for bin-packing */
-  std::vector<uint32_t> packs;        /* packs for bin-packing */
-  pack_index_list pack_indexes;       /* indexes used to sort packs */
+  decomp_cut_set_t dcuts;       /* cut set for multi-input modes decomposition */
+  decomp_cut_set_t dlcuts;      /* cut merger for multi-input modes decomposition */
+  std::vector<uint32_t> bins;   /* bin containers for bin-packing */
+  std::vector<uint32_t> packs;  /* packs for bin-packing */
+  pack_index_list pack_indexes; /* indexes used to sort packs */
 };
 #pragma endregion
 
