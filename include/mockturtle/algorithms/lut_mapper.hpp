@@ -186,6 +186,7 @@ struct cut_enumeration_wide_cut
   
   std::vector<uint64_t> lut_roots;
   std::array<uint32_t, CutSize> pin_delays;
+  std::vector<uint8_t> lut_leaves;
 };
 
 enum class lut_cut_sort_type
@@ -1577,6 +1578,7 @@ private:
   {
     /* clear new_cut fields */
     new_cut->data.lut_roots.clear();
+    new_cut->data.lut_leaves.clear();
 
     /* perform bin-packing */
     bins.clear();
@@ -1599,14 +1601,16 @@ private:
 
     /* TODO: verify correctness */
     /* perform 0-level bin-packing: use the LUT delay field to annotate which nodes are merged */
+    cut_t merge_cut;
     for ( uint32_t i = 0; i < num_leaves; ++i )
     {
       cut_t leaf_cut = ( *lcuts[pack_indexes[i]] )[cut.cut_pointers[pack_indexes[i]]];
       uint32_t j = 0;
       while ( j < bins_cuts.size() )
       {
-        if ( bins_cuts[j].merge( leaf_cut, bins_cuts[j], ps.cut_enumeration_ps.cut_size ) )
+        if ( bins_cuts[j].merge( leaf_cut, merge_cut, ps.cut_enumeration_ps.cut_size ) )
         {
+          bins_cuts[j].set_leaves( merge_cut.begin(), merge_cut.end() );
           bins_cuts[j]->data.lut_delay |= static_cast<uint32_t>( 1 ) << pack_indexes[i];
           break;
         }
@@ -1645,7 +1649,7 @@ private:
     uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins.back();
     if ( roots != 1 && roots - 1 <= max_available )
     {
-      bins[bins_pcuts.size() - 1] += roots - 1;
+      bins.back() += roots - 1;
       roots = 1;
       /* connect LUTs */
       for ( uint32_t i = 0; i < bins_pcuts.size() - 1; ++i )
@@ -1662,7 +1666,7 @@ private:
       uint32_t availability = 0;
       for ( uint32_t i = 1; i < bins_pcuts.size(); ++i )
       {
-        availability += bins[i] - ps.cut_enumeration_ps.cut_size;
+        availability += ps.cut_enumeration_ps.cut_size - bins[i];
       }
       if ( availability < roots - 1 )
         skip_multi_level_packing = true;
@@ -1695,9 +1699,10 @@ private:
       }
 
       /* check terminal condition minimizing delay */
+      max_available = ps.cut_enumeration_ps.cut_size - bins.back();
       if ( roots != 1 && roots - 1 <= max_available )
       {
-        bins[bins_pcuts.size() - 1] += roots - 1;
+        bins.back() += roots - 1;
         roots = 1;
 
         for ( uint32_t j = 0; j < bins_pcuts.size() - 1; ++j )
@@ -1714,13 +1719,14 @@ private:
     uint32_t size = 0;
     std::array<uint32_t, max_cut_size> leaves;
 
-    for ( auto const& leaf_cut : bins_cuts )
+    for ( auto const& leaf_cut : bins_pcuts )
     {
-      for ( auto leaf : leaf_cut )
+      for ( auto leaf : *leaf_cut )
       {
         leaves[size++] = leaf;
         ntk.set_value( ntk.node_to_index( leaf ), 0 );
       }
+      new_cut->data.lut_leaves.push_back( leaf_cut->size() );
     }
 
     new_cut.set_leaves( leaves.begin(), leaves.begin() + size );
@@ -3023,9 +3029,10 @@ private:
     /* go for each LUT in topological order */
     std::vector<signal<klut_network>> children;
     kitty::dynamic_truth_table tt;
+    uint32_t leaf_p = 0;
     for ( uint32_t i = 0; i < best_cut->data.lut_roots.size(); ++i )
     {
-      std::tie( tt, children ) = compute_function_lut_decompose( color_ntk, n, node_to_signal, best_cut, fanin_nodes, leaves, luts_signal, i );
+      std::tie( tt, children ) = compute_function_lut_decompose( color_ntk, n, node_to_signal, best_cut, fanin_nodes, leaves, luts_signal, i, leaf_p );
 
       if ( i == best_cut->data.lut_roots.size() - 1 )
         break;
@@ -3038,69 +3045,81 @@ private:
   }
 
   inline lut_info compute_function_lut_decompose(
-    color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, wide_cut_t const& cut, std::vector<signal<Ntk>> const& fanin_nodes, std::vector<node> const& leaves, std::vector<signal<klut_network>> const& luts_signal, uint32_t lut_i )
+    color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, wide_cut_t const& cut, std::vector<signal<Ntk>> const& fanin_nodes, std::vector<node> const& leaves, std::vector<signal<klut_network>> const& luts_signal, uint32_t lut_i, uint32_t& leaf_p )
   {
-    ntk.incr_trav_id();
+    // ntk.incr_trav_id();
     uint64_t lut_connections = cut->data.lut_roots[lut_i];
 
-    /* physical input nodes of the LUT */
     std::vector<node> roots;
     std::vector<signal<Ntk>> roots_sig;
+    kitty::dynamic_truth_table tt;
+    std::vector<signal<klut_network>> children;
 
-    /* mark leaves */
-    for ( auto l : leaves )
-      ntk.incr_value( l );
-
-    /* mark immediate connections */
+    /* compute function for logic merging  */
     if ( lut_connections & UINT32_MAX )
     {
+      /* mark leaves */
+      // for ( auto l : leaves )
+      //   ntk.incr_value( l );
+
       for ( uint32_t i = 0; i < fanin_nodes.size(); ++i )
       {
         if ( ( lut_connections >> i ) & 1 )
         {
           roots.push_back( ntk.get_node( fanin_nodes[i] ) );
           roots_sig.push_back( fanin_nodes[i] );
-          mark_tfi_rec( ntk.get_node( fanin_nodes[i] ) );
+          // mark_tfi_rec( ntk.get_node( fanin_nodes[i] ) );
         }
       }
+
+      // /* unmark and select leaves */
+      std::vector<node> tfi_leaves;
+      // for ( auto l : leaves )
+      // {
+      //   ntk.decr_value( l );
+      //   if ( ntk.visited( l ) == ntk.trav_id() )
+      //   {
+      //     tfi_leaves.push_back( l );
+      //     /* avoid duplicates */
+      //     ntk.set_visited( l, ntk.trav_id() - 1 );
+      //   }
+      // }
+      uint32_t max_leaf = leaf_p + cut->data.lut_leaves[lut_i];
+      while ( leaf_p < max_leaf )
+      {
+        tfi_leaves.push_back( leaves[leaf_p] );
+        ++leaf_p;
+      }
+
+      /* simulate */
+      std::vector<node> gates{ collect_nodes( color_ntk, tfi_leaves, roots ) };
+      window_view window_ntk{ color_ntk, tfi_leaves, roots, gates };
+
+      using SimNtk = window_view<color_ntk_t>;
+      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
+      unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
+
+      simulate_nodes( window_ntk, node_to_value, sim );
+
+      /* compute truth table, TODO: extend to XOR */
+      tt = ntk.is_complemented( roots_sig[0] ) ? ~node_to_value[roots_sig[0]] : node_to_value[roots_sig[0]];
+      for ( uint32_t i = 1; i < roots_sig.size(); ++i )
+      {
+        tt &= ntk.is_complemented( roots_sig[i] ) ? ~node_to_value[roots_sig[i]] : node_to_value[roots_sig[i]];
+      }
+
+      /* compute children */
+      for ( auto const& l : tfi_leaves )
+      {
+        children.push_back( node_to_signal[l] );
+      }
+
+      assert( children.size() <= ps.cut_enumeration_ps.cut_size );
     }
 
-    /* unmark and select leaves */
-    std::vector<node> tfi_leaves;
-    for ( auto l : leaves )
-    {
-      ntk.decr_value( l );
-      if ( ntk.visited( l ) == ntk.trav_id() )
-        tfi_leaves.push_back( l );
-    }
-
-    /* simulate */
-    std::vector<node> gates{ collect_nodes( color_ntk, tfi_leaves, roots ) };
-    window_view window_ntk{ color_ntk, tfi_leaves, roots, gates };
-
-    using SimNtk = window_view<color_ntk_t>;
-    default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
-    unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
-
-    simulate_nodes( window_ntk, node_to_value, sim );
-
-    /* compute truth table, TODO: extend to XOR */
-    kitty::dynamic_truth_table tt = ntk.is_complemented( roots_sig[0] ) ? ~node_to_value[roots_sig[0]] : node_to_value[roots_sig[0]];
-    for ( uint32_t i = 1; i < roots_sig.size(); ++i )
-    {
-      tt &= ntk.is_complemented( roots_sig[i] ) ? ~node_to_value[roots_sig[i]] : node_to_value[roots_sig[i]];
-    }
-
-    /* compute children */
-    std::vector<signal<klut_network>> children;
-    for ( auto const& l : tfi_leaves )
-    {
-      children.push_back( node_to_signal[l] );
-    }
-
-    /* check LUTs connections */
+    /* add LUTs connections */
     uint32_t in_luts = static_cast<uint32_t>( lut_connections >> 32 );
-    uint32_t luts_connections = 0;
+    uint32_t connections = 0;
     if ( in_luts )
     {
       for ( uint32_t i = 0; i < lut_i; ++i )
@@ -3109,18 +3128,27 @@ private:
         {
           assert( i < luts_signal.size() );
           children.push_back( luts_signal[i] );
-          ++luts_connections;
+          ++connections;
         }
       }
 
-      /* extend truth table with additional vars */
-      tt = kitty::extend_to( tt, tt.num_vars() + lut_connections );
+      /* create or extend truth table with additional vars */
+      if ( tt.num_vars() == 0 )
+      {
+        tt = kitty::dynamic_truth_table( connections );
+        tt = ~tt;
+      }
+      else
+      {
+        tt = kitty::extend_to( tt, tt.num_vars() + connections );
+      }
+      
       assert( tt.num_vars() <= ps.cut_enumeration_ps.cut_size );
 
       /* add ANDs with additional variables */
-      for ( uint32_t i = 0; i < lut_connections; ++i )
+      for ( uint32_t i = 0; i < connections; ++i )
       {
-        tt &= kitty::nth_var<kitty::dynamic_truth_table>( tt.num_vars(), tt.num_vars() - lut_connections - 1 );
+        tt &= kitty::nth_var<kitty::dynamic_truth_table>( tt.num_vars(), tt.num_vars() - connections - 1 );
       }
     }
 
