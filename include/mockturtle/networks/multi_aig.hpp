@@ -420,6 +420,16 @@ public:
   }
 #pragma endregion
 
+#pragma region Create arbitrary functions
+  signal clone_node( multi_aig_network const& other, node const& source, std::vector<signal> const& children )
+  {
+    (void)other;
+    (void)source;
+    assert( children.size() == 2u );
+    return create_nary_and( children );
+  }
+#pragma endregion
+
 #pragma region Restructuring
   inline bool is_dead( node const& n ) const
   {

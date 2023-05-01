@@ -217,6 +217,15 @@ public:
     _choice_phase->at( idrep2 ) = Ntk::make_signal( rep2 ) ^ inv;
   }
 
+  void reset_choices()
+  {
+    for ( auto i = 0u; i < Ntk::size(); i++ )
+    {
+      _choice_repr->at( i ) = Ntk::index_to_node( i );
+      _choice_phase->at( i ) = Ntk::make_signal( Ntk::index_to_node( i ) );
+    }
+  }
+
   /* Set sig as an equivalence representative of n without including n in the choice list */
   void set_representative( node const& n, signal const& sig )
   {
