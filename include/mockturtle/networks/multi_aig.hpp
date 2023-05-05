@@ -425,7 +425,6 @@ public:
   {
     (void)other;
     (void)source;
-    assert( children.size() == 2u );
     return create_nary_and( children );
   }
 #pragma endregion

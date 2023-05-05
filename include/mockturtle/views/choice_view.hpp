@@ -34,6 +34,7 @@
 
 #include <cassert>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -217,15 +218,6 @@ public:
     _choice_phase->at( idrep2 ) = Ntk::make_signal( rep2 ) ^ inv;
   }
 
-  void reset_choices()
-  {
-    for ( auto i = 0u; i < Ntk::size(); i++ )
-    {
-      _choice_repr->at( i ) = Ntk::index_to_node( i );
-      _choice_phase->at( i ) = Ntk::make_signal( Ntk::index_to_node( i ) );
-    }
-  }
-
   /* Set sig as an equivalence representative of n without including n in the choice list */
   void set_representative( node const& n, signal const& sig )
   {
@@ -240,6 +232,11 @@ public:
     }
     _choice_repr->at( Ntk::node_to_index( n ) ) = repr;
     _choice_phase->at( Ntk::node_to_index( n ) ) = Ntk::make_signal( n ) ^ ( Ntk::is_complemented( sig ) ^ c );
+  }
+
+  bool has_choice( node const& n )
+  {
+    return _choice_repr->at( Ntk::node_to_index( n ) ) != n || Ntk::get_node( _choice_phase->at( Ntk::node_to_index( n ) ) ) != n ;
   }
 
   void update_choice_representative( node const& n )
@@ -409,25 +406,48 @@ public:
   template<typename Fn>
   void foreach_choice( node const& n, Fn&& fn ) const
   {
-    auto p = n;
-    if ( !fn( p ) )
+    constexpr auto is_bool_f = std::is_invocable_r_v<bool, Fn, node>;
+    constexpr auto is_void_f = std::is_invocable_r_v<void, Fn, node>;
+
+    static_assert( is_bool_f || is_void_f );
+
+    node p = n;
+    if constexpr ( is_bool_f )
     {
-      return;
+      if ( !fn( p ) )
+        return;
     }
+    else
+    {
+      fn( p );
+    }
+
     while ( Ntk::node_to_index( p ) != Ntk::node_to_index( _choice_repr->at( Ntk::node_to_index( p ) ) ) )
     {
       p = _choice_repr->at( Ntk::node_to_index( p ) );
-      if ( !fn( p ) )
+      if constexpr ( is_bool_f )
       {
-        return;
+        if ( !fn( p ) )
+          return;
+      }
+      else
+      {
+        fn( p );
       }
     }
+
     p = Ntk::get_node( _choice_phase->at( Ntk::node_to_index( p ) ) );
+
     while ( Ntk::node_to_index( p ) != Ntk::node_to_index( n ) )
     {
-      if ( !fn( p ) )
+      if constexpr ( is_bool_f )
       {
-        return;
+        if ( !fn( p ) )
+          return;
+      }
+      else
+      {
+        fn( p );
       }
       p = _choice_repr->at( Ntk::node_to_index( p ) );
     }
