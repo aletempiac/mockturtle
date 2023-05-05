@@ -50,12 +50,9 @@
 #include "../utils/stopwatch.hpp"
 #include "../utils/truth_table_cache.hpp"
 #include "../views/choice_view.hpp"
-#include "../views/color_view.hpp"
-#include "../views/fanout_view.hpp"
 #include "../views/mapping_view.hpp"
 #include "../views/mffc_view.hpp"
 #include "../views/topo_view.hpp"
-#include "../views/window_view.hpp"
 #include "cut_enumeration.hpp"
 #include "simulation.hpp"
 
@@ -576,7 +573,7 @@ class lut_map_impl
 public:
   static constexpr uint32_t max_cut_num = 16;
   static constexpr uint32_t max_cut_size = 6;
-  static constexpr uint32_t max_wide_cut_num = 32;
+  static constexpr uint32_t max_wide_cut_num = 1;
   static constexpr uint32_t max_wide_cut_size = 32;
   static constexpr uint32_t max_cut_data_decomp = 32;
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
@@ -1383,9 +1380,6 @@ private:
           wide_set.simple_insert( new_cut, sort );
       }
     }
-
-    /* limit the maximum number of cuts */
-    wide_set.limit( ps.cut_enumeration_ps.cut_limit );
 
     /* replace the new best cut with previous one */
     if ( !preprocess || wide_set[0]->data.delay <= node_data.required )
@@ -3065,11 +3059,6 @@ private:
     } );
 
     /* TODO: add sequential compatibility */
-    ntk.clear_values();
-    // fanout_view<Ntk> fanout_ntk{ ntk };
-    ntk.clear_visited();
-    color_ntk_t color_ntk{ ntk };
-
     for ( auto const& n : topo_order )
     {
       if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
@@ -3091,9 +3080,9 @@ private:
       // else
       // {
       if constexpr ( has_foreach_choice_v<Ntk> )
-        std::tie( tt, children ) = create_lut_choice( color_ntk, n, node_to_signal );
+        std::tie( tt, children ) = create_lut_choice( n, node_to_signal );
       else
-        std::tie( tt, children ) = create_lut( color_ntk, n, node_to_signal );
+        std::tie( tt, children ) = create_lut( n, node_to_signal );
       // }
 
       switch ( node_driver_type[n] )
@@ -3130,7 +3119,7 @@ private:
     return res;
   }
 
-  inline lut_info create_lut( color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  inline lut_info create_lut( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
   {
     auto const& best_cut = cuts[ntk.node_to_index( n )][0];
 
@@ -3148,31 +3137,45 @@ private:
     }
     else
     {
-      /* compute function constructing a window */
-      std::vector<node> roots{ n };
-      std::vector<node> leaves;
+      /* recursively compute the function for each choice until success */
+      ntk.incr_trav_id();
+      unordered_node_map<kitty::dynamic_truth_table, Ntk> node_to_value( ntk );
 
-      for ( auto const& l : best_cut )
+      /* add constants */
+      node_to_value[ntk.get_node( ntk.get_constant( false ) )] = kitty::dynamic_truth_table( best_cut.size() );
+      ntk.set_visited( ntk.get_node( ntk.get_constant( false ) ), ntk.trav_id() );
+      if ( ntk.get_node( ntk.get_constant( false ) ) != ntk.get_node( ntk.get_constant( true ) ) )
       {
-        leaves.push_back( ntk.index_to_node( l ) );
+        node_to_value[ntk.get_node( ntk.get_constant( true ) )] = ~kitty::dynamic_truth_table( best_cut.size() );
+        ntk.set_visited( ntk.get_node( ntk.get_constant( true ) ), ntk.trav_id() );
       }
 
-      std::vector<node> gates{ collect_nodes( color_ntk, leaves, roots ) };
-      window_view window_ntk{ color_ntk, leaves, roots, gates };
+      /* add leaves */
+      uint32_t ctr = 0;
+      for ( uint32_t leaf : best_cut )
+      {
+        kitty::dynamic_truth_table tt_leaf( best_cut.size() );
+        kitty::create_nth_var( tt_leaf, ctr++ );
+        node_to_value[ntk.index_to_node( leaf )] = tt_leaf;
+        ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
+      }
 
-      using SimNtk = window_view<color_ntk_t>;
-      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
-      unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
+      /* recursively compute the function */     
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        compute_function_rec( ntk.get_node( f ), node_to_value );
+      } );
 
-      simulate_nodes( window_ntk, node_to_value, sim );
-
-      tt = node_to_value[n];
+      std::vector<kitty::dynamic_truth_table> tts;
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        tts.push_back( node_to_value[ntk.get_node( f )] );
+      } );
+      tt = ntk.compute( n, tts.begin(), tts.end() );
     }
 
     return { tt, children };
   }
 
-  inline lut_info create_lut_choice( color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  inline lut_info create_lut_choice( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
   {
     auto const& best_cut = cuts[ntk.node_to_index( n )][0];
 
@@ -3246,6 +3249,30 @@ private:
     return { tt, children };
   }
 
+  void compute_function_rec( node const& n, unordered_node_map<kitty::dynamic_truth_table, Ntk>& node_to_value )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+    {
+      assert( node_to_value.has( n ) );
+      return;
+    }
+
+    assert( !ntk.is_pi( n ) );
+    ntk.set_visited( n, ntk.trav_id() );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      compute_function_rec( ntk.get_node( f ), node_to_value );
+    } );
+    
+    /* compute the function */
+    std::vector<kitty::dynamic_truth_table> tts;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      tts.push_back( node_to_value[ntk.get_node( f )] );
+    } );
+
+    node_to_value[n] = ntk.compute( n, tts.begin(), tts.end() );
+  }
+
   bool compute_function_choice_rec( node const& n, unordered_node_map<kitty::dynamic_truth_table, Ntk>& node_to_value )
   {
     bool choice_success = false;
@@ -3258,9 +3285,6 @@ private:
 
       if ( ntk.is_pi( g ) )
         return false;
-
-      // if ( node_match[ntk.node_to_index( g )].map_refs != 0 )
-      //   return true;
 
       ntk.set_visited( g, ntk.trav_id() );
 
@@ -3278,8 +3302,6 @@ private:
       std::vector<kitty::dynamic_truth_table> tts;
       ntk.foreach_fanin( g, [&]( auto const& f ) {
         tts.push_back( node_to_value[ntk.get_node( f )] );
-        // kitty::print_hex( tts.back() );
-        // std::cout << "\n";
       } );
       auto tt = ntk.compute( g, tts.begin(), tts.end() );
 
