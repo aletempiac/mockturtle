@@ -172,7 +172,7 @@ struct cut_enumeration_lut_cut
 };
 
 /* wide cut data */
-template<uint32_t CutSize, uint32_t MaxLeaves>
+template<uint32_t CutSize>
 struct cut_enumeration_wide_cut
 {
   uint32_t delay{ 0 };
@@ -181,20 +181,9 @@ struct cut_enumeration_wide_cut
   uint32_t lut_edges{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
-
-  /* saves for each LUT which children index has been used */
+  
   std::vector<uint64_t> lut_roots;
-  /* saves the level0 LUTs cuts for dynamic merging */
-  std::vector<cut<MaxLeaves>> level0_luts;
-
   std::array<uint32_t, CutSize> pin_delays;
-  std::vector<uint8_t> lut_leaves;
-
-  /* saves which cut (index) has been used for merging */
-  std::array<uint32_t, CutSize> cut_pointers;
-
-  /* saves the delay of each LUT */
-  std::array<uint32_t, MaxLeaves> delay_luts;
 };
 
 enum class lut_cut_sort_type
@@ -214,25 +203,6 @@ public:
   lut_cut_set()
   {
     clear();
-  }
-
-  /*! \brief Copy constructor.
-   */
-  lut_cut_set( lut_cut_set const& other )
-  {
-    if ( this != &other )
-    {
-      _pcend = _pend = _pcuts.begin();
-
-      auto it = other.begin();
-      while( it != other.end() )
-      {
-        **_pend++ = **it++;
-        ++_pcend;
-      }
-    }
-
-    return *this;
   }
 
   /*! \brief Assignment operator.
@@ -603,24 +573,23 @@ public:
   static constexpr uint32_t max_cut_num = 16;
   static constexpr uint32_t max_cut_size = 6;
   static constexpr uint32_t max_wide_cut_num = 1;
-  static constexpr uint32_t max_wide_cut_gen_num = 4;
   static constexpr uint32_t max_wide_cut_size = 32;
+  static constexpr uint32_t max_cut_data_decomp = 32;
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
-  using wide_cut_t = cut<max_wide_cut_size, cut_data<false, cut_enumeration_wide_cut<max_wide_cut_size, max_cut_size>>>;
+  using wide_cut_t = cut<max_wide_cut_size, cut_data<false, cut_enumeration_wide_cut<max_wide_cut_size>>>;
   using wide_cut_set_t = lut_cut_set<wide_cut_t, max_wide_cut_num>;
-  using wide_cut_set_gen_t = lut_cut_set<wide_cut_t, max_wide_cut_gen_num>;
   using adaptive_cut_t = adaptive_cut_merger<max_wide_cut_size>;
   using decomp_cut_set_t = std::vector<adaptive_cut_t>;
-  using adaptive_cut_set_container_t = std::array<wide_cut_set_gen_t, max_wide_cut_size>;
-
   using node = typename Ntk::node;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
+  using wide_cut_merge_t = typename std::array<wide_cut_set_t*, Ntk::max_fanin_size + 1>;
   using TT = kitty::dynamic_truth_table;
   using tt_cache = truth_table_cache<TT>;
   using cost_cache = std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>;
   using lut_info = std::pair<kitty::dynamic_truth_table, std::vector<signal<klut_network>>>;
   using pack_index_list = std::array<uint32_t, max_wide_cut_size>;
+  using color_ntk_t = color_view<Ntk>;
 
 public:
   explicit lut_map_impl( Ntk& ntk, lut_map_params const& ps, lut_map_stats& st )
@@ -784,8 +753,8 @@ private:
 
     if ( ps.multi_decomposition )
     {
-      dcuts.reserve( max_wide_cut_size );
-      dlcuts.reserve( max_wide_cut_size );
+      dcuts.reserve( max_cut_data_decomp );
+      dlcuts.reserve( max_cut_data_decomp );
       bins.reserve( max_wide_cut_size );
       packs.reserve( max_wide_cut_size );
       topo_order2.reserve( 2 * ntk.size() );
@@ -813,7 +782,7 @@ private:
 
       if ( ntk.is_constant( n ) || ntk.is_ci( n ) )
       {
-        if ( ps.multi_decomposition && decompose )
+        if ( ps.multi_decomposition )
           topo_order2.push_back( n );
         continue;
       }
@@ -849,12 +818,12 @@ private:
         update_cut_data<DO_AREA, ELA>( n, sort );
       }
 
-      if ( ps.multi_decomposition && decompose )
+      if ( ps.multi_decomposition )
           topo_order2.push_back( n );
     }
 
     /* commit the new order with the additional nodes */
-    if ( ps.multi_decomposition && decompose )
+    if ( ps.multi_decomposition )
     {
       topo_order = topo_order2;
       topo_order2.clear();
@@ -1176,7 +1145,6 @@ private:
     /* recompute the data of the best cut */
     if ( iteration != 0 && !is_new )
     {
-      assert( rcuts.size() );
       best_cut = rcuts[0];
       compute_cut_data<ELA>( best_cut, n, true );
     }
@@ -1368,72 +1336,55 @@ private:
     } );
     lcuts[fanin] = &rcuts;
 
-    std::vector<uint32_t> children_sorted( fanin );
-    std::iota( children_sorted.begin(), children_sorted.end(), 0 );
-
-    if constexpr ( !DO_AREA )
-    {
-      auto const& children_data = ntk._storage->nodes[index].children;
-      std::sort( children_sorted.begin(), children_sorted.end(), [&]( auto const& a, auto const& b ) {
-        return cuts[children_data[a].index][0]->data.delay < cuts[children_data[b].index][0]->data.delay;
-      } );
-    }
-
     /* load cut set of child 0 into rcuts */
     /* TODO: implement a better data structure with cut prioritization */
     wide_set.clear();
-    init_dcuts( children_sorted[0] );
+    init_dcuts();
 
     /* TODO: accurate area and delay computation */
-    adaptive_cut_set_container_t* source_container = &adaptive_container1;
-    adaptive_cut_set_container_t* dest_container = &adaptive_container2;
     for ( auto i = 1; i < fanin; ++i )
     {
-      // merge_cuts2_subset<DO_AREA, ELA>( n, children_sorted[i], sort, preprocess );
-      merge_adaptive_cuts<DO_AREA, ELA>( n, children_sorted[i], source_container, dest_container, sort, preprocess );
-      std::swap( source_container, dest_container );
+      merge_cuts2_subset<DO_AREA, ELA>( n, i, sort, preprocess );
     }
 
     /* create official cuts */
-    // wide_cut_t new_cut;
-    // for ( auto const& dcut : dcuts )
-    // {
-    //   dcut_merge( n, dcut, new_cut, fanin );
+    wide_cut_t new_cut;
+    for ( auto const& dcut : dcuts )
+    {
+      dcut_merge( n, dcut, new_cut, fanin );
 
-    //   // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
-    //   // {
-    //   //   continue;
-    //   // }
+      // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+      // {
+      //   continue;
+      // }
 
-    //   compute_wide_cut_data<ELA>( new_cut, ntk.index_to_node( index ) );
+      compute_wide_cut_data<ELA>( new_cut, ntk.index_to_node( index ) );
 
-    //   /* check required time */
-    //   if constexpr ( DO_AREA )
-    //   {
-    //     if ( preprocess || new_cut->data.delay <= node_data.required )
-    //     {
-    //       if ( ps.remove_dominated_cuts )
-    //         wide_set.insert( new_cut, false, sort );
-    //       else
-    //         wide_set.simple_insert( new_cut, sort );
-    //     }
-    //   }
-    //   else
-    //   {
-    //     if ( ps.remove_dominated_cuts )
-    //       wide_set.insert( new_cut, false, sort );
-    //     else
-    //       wide_set.simple_insert( new_cut, sort );
-    //   }
-    // }
-
-    wide_cut_t best_wide_cut = get_best_adaptive_cut<ELA>( n, source_container, sort );
+      /* check required time */
+      if constexpr ( DO_AREA )
+      {
+        if ( preprocess || new_cut->data.delay <= node_data.required )
+        {
+          if ( ps.remove_dominated_cuts )
+            wide_set.insert( new_cut, false, sort );
+          else
+            wide_set.simple_insert( new_cut, sort );
+        }
+      }
+      else
+      {
+        if ( ps.remove_dominated_cuts )
+          wide_set.insert( new_cut, false, sort );
+        else
+          wide_set.simple_insert( new_cut, sort );
+      }
+    }
 
     /* replace the new best cut with previous one */
-    if ( !preprocess || best_wide_cut->data.delay <= node_data.required )
+    if ( !preprocess || wide_set[0]->data.delay <= node_data.required )
     {
       /* add AND nodes to represent the decomposition */
-      decompose_wide_cut<DO_AREA, ELA>( n, best_wide_cut, sort, preprocess );
+      decompose_wide_cut<DO_AREA, ELA>( n, wide_set[0], sort, preprocess );
     }
 
     commit_decomposition( n, rcuts, sort );
@@ -1480,40 +1431,21 @@ private:
     }
   }
 
-  void init_dcuts( uint32_t child )
+  void init_dcuts()
   {
     dcuts.clear();
 
-    /* clear adaptive container */
-    for ( uint32_t j = 0; j < max_wide_cut_size; ++j )
-      adaptive_container1[j].clear();
-
-    /* load cuts in the container */
     uint32_t i = 0;
-    wide_cut_t new_cut;
-    cut<max_cut_size> level0_cut;
-    for ( auto const& c : *lcuts[child] )
+    for ( auto const& c : *lcuts[0] )
     {
-      /* TODO: remove dcuts code */
+      if ( c->size() > ps.cut_enumeration_ps.cut_size )
+      {
+        ++i;
+        continue;
+      }
+
       dcuts.emplace_back( adaptive_cut_t{} );
-      dcuts.back().cut_pointers[0] = i;
-
-      new_cut->data.level0_luts.clear();
-      new_cut->data.lut_roots.clear();
-      new_cut.set_leaves( c->begin(), c->end() );
-      level0_cut.set_leaves( c->begin(), c->end() );
-      new_cut->data.delay = ( *c )->data.delay;
-      new_cut->data.lut_area = ( *c )->data.lut_area;
-      new_cut->data.lut_delay = ( *c )->data.lut_delay;
-      new_cut->data.lut_edges = c->size();
-      new_cut->data.area_flow = ( *c )->data.area_flow;
-      new_cut->data.edge_flow = ( *c )->data.edge_flow;
-      new_cut->data.cut_pointers[child] = i;
-      new_cut->data.level0_luts.push_back( level0_cut );
-      new_cut->data.lut_roots.push_back( 1 << child );
-
-      adaptive_container1[c->size() - 1].simple_insert( new_cut );
-      ++i;
+      dcuts.back().cut_pointers[0] = i++;
     }
   }
 
@@ -1552,7 +1484,7 @@ private:
 
         dlcuts.push_back( new_cut );
 
-        if ( dlcuts.size() >= max_wide_cut_size )
+        if ( dlcuts.size() >= max_cut_data_decomp )
           break;
       }
 
@@ -1621,120 +1553,6 @@ private:
     dcuts = dlcuts;
   }
 
-  template<bool DO_AREA, bool ELA>
-  void merge_adaptive_cuts( node const& n, uint32_t child, adaptive_cut_set_container_t* source_container, adaptive_cut_set_container_t* dest_container, lut_cut_sort_type const sort, bool preprocess )
-  {
-    uint32_t index = ntk.node_to_index( n );
-    auto& node_data = node_match[index];
-
-    wide_cut_t new_cut;
-    cut<max_cut_size> c2_converted;
-
-    /* clear dest data structure */
-    for ( uint32_t j = 0; j < max_wide_cut_size; ++j )
-      dest_container->at( j ).clear();
-
-    /* combine source_countainer cuts with lcuts[child] */
-    for ( uint32_t i = 0; i < max_wide_cut_size; ++i )
-    {
-      for ( auto const& c1 : source_container->at( i ) )
-      {
-        for ( auto const& c2 : *lcuts[child] )
-        {
-          new_cut = *c1;
-          /* convert c2 */
-          c2_converted.set_leaves( c2->begin(), c2->end() );
-
-          /* create the cut */
-          if ( !adaptive_cut_merge<DO_AREA, ELA>( n, new_cut, c2_converted, child ) )
-            continue;
-
-          // new_cut.cut_pointers[child] = j++;
-          // packing( n, new_cut, child + 1 );
-          // decomposition_cut_data<ELA>( new_cut, n, child + 1 );
-          if ( ps.remove_dominated_cuts )
-            dest_container->at( new_cut.size() - 1 ).insert( new_cut, false, sort );
-          else
-            dest_container->at( new_cut.size() - 1 ).simple_insert( new_cut, sort );
-        }
-      }
-    }
-  }
-
-  template<bool ELA>
-  wide_cut_t get_best_adaptive_cut( node const& n, adaptive_cut_set_container_t* source_container, lut_cut_sort_type const sort )
-  {
-    wide_cut_t const* best_cut_p = nullptr;
-    for ( uint32_t i = 0; i < max_wide_cut_size; ++i )
-    {
-      if ( source_container->at( i ).size() == 0 )
-        continue;
-      
-      if ( best_cut_p == nullptr || source_container->at( i ).compare( source_container->at( i )[0], *best_cut_p, sort ) )
-      {
-        best_cut_p = &( source_container->at( i )[0] );
-      }
-    }
-
-    assert( best_cut_p != nullptr );
-
-    /* allocate reordering data*/
-    wide_cut_t best_cut = *best_cut_p;
-    auto& level0_luts = best_cut->data.level0_luts;
-    std::vector<uint32_t> order( level0_luts.size() );
-    std::iota( order.begin(), order.end(), 0 );
-    
-    /* sort by size */
-    std::sort( order.begin(), order.end(), [&]( auto const& a, auto const& b ) {
-      return level0_luts[a].size() > level0_luts[b].size();
-    } );
-
-    std::vector<cut<max_cut_size>> cuts_ordered;
-    std::vector<uint64_t> lut_roots_ordered;
-
-    for ( auto const i : order )
-    {
-      cuts_ordered.push_back( level0_luts[i] );
-      lut_roots_ordered.push_back( best_cut->data.lut_roots[i] );
-    }
-
-    /* finalize internal connections by recomputing bin packing */
-    bins.clear();
-    packs.clear();
-
-    for ( uint32_t i = 0; i < level0_luts.size(); ++i )
-    {
-      bins.push_back( cuts_ordered[i].size() );
-      packs.push_back( 0 );
-    }
-
-    std::vector<cut<max_cut_size>*> bins_pcuts( level0_luts.size() );
-    for ( uint32_t i = 0; i < level0_luts.size(); ++i )
-    {
-      bins_pcuts[i] = &( cuts_ordered[i] );
-    }
-
-    compute_bin_packing_multilevel( bins_pcuts );
-
-    /* copy packing field */
-    for ( uint32_t i = 1; i < level0_luts.size(); ++i )
-    {
-      lut_roots_ordered[i] |= static_cast<uint64_t>( packs[i] ) << 32;
-    }
-    for ( uint32_t i = level0_luts.size(); i < packs.size(); ++i )
-    {
-      lut_roots_ordered.push_back( static_cast<uint64_t>( packs[i] ) << 32 );
-    }
-
-    /* copy */
-    level0_luts = cuts_ordered;
-    best_cut->data.lut_roots = lut_roots_ordered;
-
-    compute_wide_cut_data2<ELA>( best_cut, n, bins_pcuts );
-
-    return best_cut;
-  }
-
   void packing( node const& n, adaptive_cut_t& new_cut, uint32_t leaves )
   {
     /* TODO: do set merge for small cuts: fast using signatures? */
@@ -1796,8 +1614,8 @@ private:
       {
         uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - bins[i], unconnected );
         bins[i] += connect;
-        unconnected -= connect;
-        roots -= connect;
+        unconnected -= connect - 1;
+        roots -= connect - 1;
         ++level;
 
         /* check terminal condition minimizing delay */
@@ -1828,198 +1646,10 @@ private:
     new_cut.size = size;
   }
 
-  template<bool DO_AREA, bool ELA>
-  bool adaptive_cut_merge( node const& n, wide_cut_t& new_cut, cut<max_cut_size> const& cut_add, uint32_t child_index )
-  {
-    uint32_t size = new_cut.size();
-    uint32_t size_before = new_cut.size();
-
-    /* perform 0-level bin-packing */
-    bool add_new_level0_lut = true;
-    cut<max_cut_size> res_cut;
-    for ( uint32_t i = 0; i < new_cut->data.level0_luts.size(); ++i )
-    {
-      if ( new_cut->data.level0_luts[i].merge( cut_add, res_cut, ps.cut_enumeration_ps.cut_size ) )
-      {
-        add_new_level0_lut = false;
-        size += res_cut.size() - new_cut->data.level0_luts[i].size();
-        new_cut->data.level0_luts[i] = res_cut;
-        new_cut->data.lut_roots[i] |= UINT64_C( 1 ) << child_index;
-        break;
-        /* TODO: update delay cost */
-      }
-    }
-
-    /* add a new level-0 LUT */
-    if ( add_new_level0_lut )
-    {
-      new_cut->data.level0_luts.push_back( cut_add );
-      new_cut->data.lut_roots.push_back( UINT64_C( 1 ) << child_index );
-      size += cut_add.size();
-    }
-
-    if ( size > max_wide_cut_size )
-      return false;
-
-    /* write_leaves */
-    std::vector<uint32_t> leaves;
-    leaves.reserve( size );
-    for ( auto const& c : new_cut->data.level0_luts )
-    {
-      for ( uint32_t l : c )
-        leaves.push_back( l );
-    }
-    new_cut.set_leaves( leaves.begin(), leaves.end() );
-
-    assert( new_cut.size() <= max_wide_cut_size );
-
-    /* estimate the cost of multi-level bin-packing */
-    compute_bin_packing<ELA>( n, new_cut );
-    return true;
-  }
-
-  template<bool ELA>
-  void compute_bin_packing( node const& n, wide_cut_t& new_cut )
-  {
-    /* perform bin-packing */
-    bins.clear();
-    packs.clear();
-
-    /* allocate pointers for reordering */
-    std::vector<cut<max_cut_size>*> bins_pcuts( new_cut->data.level0_luts.size() );
-    for ( uint32_t i = 0; i < new_cut->data.level0_luts.size(); ++i )
-    {
-      bins_pcuts[i] = &( new_cut->data.level0_luts[i] );
-    }
-
-    /* TODO: implement for delay */
-
-    /* sort by size */
-    std::sort( bins_pcuts.begin(), bins_pcuts.end(), []( auto const& a, auto const& b ) {
-      return a->size() > b->size();
-    } );
-
-    for ( uint32_t i = 0; i < bins_pcuts.size(); ++i )
-    {
-      bins.push_back( bins_pcuts[i]->size() );
-      packs.push_back( 0 );
-    }
-
-    /* perform multi-level bin-packing */
-    uint32_t area = compute_bin_packing_multilevel( bins_pcuts );
-
-    new_cut->data.lut_delay = 1;
-    new_cut->data.lut_area = area;
-    new_cut->data.lut_edges = new_cut.size() + area - 1;
-
-    compute_wide_cut_data2<ELA>( new_cut, n, bins_pcuts );
-  }
-
-  uint32_t compute_bin_packing_multilevel( std::vector<cut<max_cut_size>*> const bins_pcuts )
-  {
-    /* stats */
-    uint32_t area = bins.size();
-    uint32_t roots = bins.size();
-
-    /* check fully-packable */
-    uint32_t max_available = ps.cut_enumeration_ps.cut_size - bins.back();
-    if ( roots != 1 && roots - 1 <= max_available )
-    {
-      bins.back() += roots - 1;
-      roots = 1;
-      for ( uint32_t i = 0; i < bins_pcuts.size() - 1; ++i )
-      {
-        packs.back() |= static_cast<uint32_t>( 1 ) << i; 
-      }
-    }
-
-    /* check if it cannot be packed but a top LUT can map the network */
-    bool skip_multi_level_packing = false;
-    if ( roots != 1 && roots <= ps.cut_enumeration_ps.cut_size )
-    {
-      /* check availability */
-      uint32_t availability = 0;
-      for ( uint32_t i = 1; i < bins_pcuts.size(); ++i )
-      {
-        availability += ps.cut_enumeration_ps.cut_size - bins[i];
-      }
-      if ( availability < roots - 1 )
-        skip_multi_level_packing = true;
-    }
-
-    uint32_t i;
-    uint32_t unconnected = 1;
-    std::vector<bool> connected( bins_pcuts.size(), false );
-    for ( i = 1; i < bins_pcuts.size() && roots != 1 && !skip_multi_level_packing; ++i )
-    {
-      uint32_t cut_size = bins[i];
-      if ( cut_size >= ps.cut_enumeration_ps.cut_size )
-      {
-        ++unconnected;
-        continue;
-      }
-
-      uint32_t connect = std::min( ps.cut_enumeration_ps.cut_size - cut_size, unconnected );
-      bins[i] += connect;
-      unconnected -= connect;
-      roots -= connect;
-
-      for ( uint32_t j = 0; j < i && connect != 0; ++j )
-      {
-        if ( connected[j] )
-          continue;
-        connected[j] = true;
-        packs[i] |= static_cast<uint32_t>( 1 ) << j;
-        --connect;
-      }
-
-      /* check terminal condition minimizing delay */
-      max_available = ps.cut_enumeration_ps.cut_size - bins.back();
-      if ( roots != 1 && roots - 1 <= max_available )
-      {
-        bins.back() += roots - 1;
-        roots = 1;
-
-        for ( uint32_t j = 0; j < bins_pcuts.size() - 1; ++j )
-        {
-          if ( connected[j] )
-            continue;
-          packs.back() |= static_cast<uint32_t>( 1 ) << j;
-        }
-        break;
-      }
-    }
-
-    /* add top LUTs until roots are 1 */
-    uint32_t k = 0;
-    while( roots != 1 )
-    {
-      bins.push_back( 0 );
-      packs.push_back( 0 );
-      connected.push_back( false );
-      ++area;
-      ++roots;
-      /* find unconnected LUTs */
-      uint64_t lut_fanin = 0;
-      for ( ; k < bins.size() - 1 && bins.back() <= ps.cut_enumeration_ps.cut_size; ++k )
-      {
-        if ( connected[k] )
-          continue;
-        connected[k] = true;
-        packs.back() |= static_cast<uint32_t>( 1 ) << k;
-        ++bins.back();
-        --roots;
-      }
-    }
-
-    return area;
-  }
-
   void dcut_merge( node const& n, adaptive_cut_t const& cut, wide_cut_t& new_cut, uint32_t num_leaves )
   {
     /* clear new_cut fields */
     new_cut->data.lut_roots.clear();
-    new_cut->data.lut_leaves.clear();
 
     /* perform bin-packing */
     bins.clear();
@@ -2167,7 +1797,6 @@ private:
         leaves[size++] = leaf;
         ntk.set_value( ntk.node_to_index( leaf ), 0 );
       }
-      new_cut->data.lut_leaves.push_back( leaf_cut->size() );
     }
 
     new_cut.set_leaves( leaves.begin(), leaves.begin() + size );
@@ -2206,7 +1835,7 @@ private:
     /* write  implementation cost */
     new_cut->data.lut_delay = 1;
     new_cut->data.lut_area = area;
-    new_cut->data.lut_edges = edges + area - 1;
+    new_cut->data.lut_edges = edges + area;
 
     /* compute pin-to-pin delay */
     compute_wide_cut_pin_delay( new_cut, bins_pcuts );
@@ -2217,7 +1846,6 @@ private:
   {
     std::array<signal<Ntk>, max_wide_cut_size> lut_signals;
     std::vector<signal<Ntk>> children;
-    std::vector<uint32_t> delay_luts( max_wide_cut_size, 0 );
     children.reserve( ps.cut_enumeration_ps.cut_size );
     uint32_t ntk_size = ntk.size();
 
@@ -2227,7 +1855,7 @@ private:
       children.clear();
       uint64_t lut_connections = cut->data.lut_roots[i];
 
-      /* TODO: compute delay of LUT, create a cut */
+      /* TODO: try creating a multi-input AND here */
       /* get signal pairs to connect */
       if ( lut_connections & UINT32_MAX )
       {
@@ -2251,8 +1879,6 @@ private:
         }
 
         create_and2_decomposition( children );
-
-        /* TODO:associate LUT delay */
       }
 
       assert( children.size() == 1 );
@@ -2282,10 +1908,7 @@ private:
       /* TODO: correct the required time */
       node_data.required = node_match[ntk.node_to_index( n )].required;
 
-      if ( ps.area_oriented_mapping)
-        compute_best_cut2<DO_AREA, ELA>( g, sort, preprocess, true );
-      else
-        compute_best_cut2<false, false>( g, lut_cut_sort_type::DELAY, preprocess, true );
+      compute_best_cut2<DO_AREA, ELA>( g, sort, preprocess, true );
       topo_order2.push_back( g );
     }
   }
@@ -2947,84 +2570,6 @@ private:
       cut->data.delay = delay;
       cut->data.area_flow = area_flow;
       cut->data.edge_flow = edge_flow;
-    }
-  }
-
-  template<bool ELA>
-  void compute_wide_cut_data2( wide_cut_t& wcut, node const& n,  std::vector<cut<max_cut_size>*> const& bins_pcuts )
-  {
-    /* measure the delay */
-
-    uint32_t i = 0;
-    for ( const cut<max_cut_size>* c : bins_pcuts )
-    {
-      wcut->data.delay_luts[i] = 0;
-      for ( uint32_t leaf : *c )
-      {
-        const auto& best_leaf_cut = cuts[leaf][0];
-        wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], best_leaf_cut->data.delay );
-      }
-
-      /* add luts connections */
-      if ( packs[i] != 0 )
-      {
-        for ( uint32_t j = 0; j < i; ++j )
-        {
-          if ( ( packs[i] >> j ) & 1 )
-            wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], wcut->data.delay_luts[j] + 1 );
-        }
-      }
-      ++i;
-    }
-
-    while ( i < packs.size() )
-    {
-      wcut->data.delay_luts[i] = 0;
-      for ( uint32_t j = 0; j < i; ++j )
-      {
-        if ( ( packs[i] >> j ) & 1 )
-          wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], wcut->data.delay_luts[j] + 1 );
-      }
-      ++i;
-    }
-    wcut->data.delay = wcut->data.delay_luts[packs.size() - 1];
-
-    if constexpr ( ELA )
-    {
-      if ( ps.edge_optimization )
-      {
-        wcut->data.area_flow = static_cast<float>( cut_ref<wide_cut_t>( wcut ) );
-        wcut->data.edge_flow = static_cast<float>( cut_edge_deref<wide_cut_t>( wcut ) );
-      }
-      else
-      {
-        wcut->data.area_flow = static_cast<float>( cut_measure_mffc<wide_cut_t>( wcut ) );
-        wcut->data.edge_flow = 0;
-      }
-    }
-    else
-    {
-      float area_flow = static_cast<float>( wcut->data.lut_area );
-      float edge_flow = wcut->data.lut_edges;
-
-      uint32_t ctr = 0;
-      for ( auto leaf : wcut )
-      {
-        const auto& best_leaf_cut = cuts[leaf][0];
-        if ( node_match[leaf].map_refs > 0 && leaf != 0 )
-        {
-          area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
-          edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
-        }
-        else
-        {
-          area_flow += best_leaf_cut->data.area_flow;
-          edge_flow += best_leaf_cut->data.edge_flow;
-        }
-      }
-
-      wcut->data.area_flow = area_flow;
-      wcut->data.edge_flow = edge_flow;
     }
   }
 
@@ -3769,171 +3314,6 @@ private:
     return choice_success;
   }
 
-  // inline lut_info create_lut_decompose( klut_network res, color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
-  // {
-  //   /* access the wide cut */
-  //   assert( wide_cut_index[ntk.node_to_index( n )] != UINT32_MAX );
-  //   wide_cut_t const& best_cut = wide_cuts[wide_cut_index[ntk.node_to_index( n )]][0];
-
-  //   /* extract fanin of node */
-  //   std::vector<signal<Ntk>> fanin_nodes;
-  //   ntk.foreach_fanin( n, [&]( auto const& f ) {
-  //     fanin_nodes.push_back( f );
-  //   } );
-
-  //   /* extract leaves nodes for simulation */
-  //   std::vector<node> leaves;
-  //   for ( auto const& l : best_cut )
-  //   {
-  //     leaves.push_back( ntk.index_to_node( l ) );
-  //   }
-
-  //   std::vector<signal<klut_network>> luts_signal;
-
-  //   /* go for each LUT in topological order */
-  //   std::vector<signal<klut_network>> children;
-  //   kitty::dynamic_truth_table tt;
-  //   uint32_t leaf_p = 0;
-  //   for ( uint32_t i = 0; i < best_cut->data.lut_roots.size(); ++i )
-  //   {
-  //     std::tie( tt, children ) = compute_function_lut_decompose( color_ntk, n, node_to_signal, best_cut, fanin_nodes, leaves, luts_signal, i, leaf_p );
-
-  //     if ( i == best_cut->data.lut_roots.size() - 1 )
-  //       break;
-      
-  //     /* create the internal node */
-  //     luts_signal.push_back( res.create_node( children, tt ) );
-  //   }
-
-  //   return { tt, children };
-  // }
-
-  // inline lut_info compute_function_lut_decompose(
-  //   color_ntk_t& color_ntk, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, wide_cut_t const& cut, std::vector<signal<Ntk>> const& fanin_nodes, std::vector<node> const& leaves, std::vector<signal<klut_network>> const& luts_signal, uint32_t lut_i, uint32_t& leaf_p )
-  // {
-  //   // ntk.incr_trav_id();
-  //   uint64_t lut_connections = cut->data.lut_roots[lut_i];
-
-  //   std::vector<node> roots;
-  //   std::vector<signal<Ntk>> roots_sig;
-  //   kitty::dynamic_truth_table tt;
-  //   std::vector<signal<klut_network>> children;
-
-  //   /* compute function for logic merging  */
-  //   if ( lut_connections & UINT32_MAX )
-  //   {
-  //     /* mark leaves */
-  //     // for ( auto l : leaves )
-  //     //   ntk.incr_value( l );
-
-  //     for ( uint32_t i = 0; i < fanin_nodes.size(); ++i )
-  //     {
-  //       if ( ( lut_connections >> i ) & 1 )
-  //       {
-  //         roots.push_back( ntk.get_node( fanin_nodes[i] ) );
-  //         roots_sig.push_back( fanin_nodes[i] );
-  //         // mark_tfi_rec( ntk.get_node( fanin_nodes[i] ) );
-  //       }
-  //     }
-
-  //     // /* unmark and select leaves */
-  //     std::vector<node> tfi_leaves;
-  //     // for ( auto l : leaves )
-  //     // {
-  //     //   ntk.decr_value( l );
-  //     //   if ( ntk.visited( l ) == ntk.trav_id() )
-  //     //   {
-  //     //     tfi_leaves.push_back( l );
-  //     //     /* avoid duplicates */
-  //     //     ntk.set_visited( l, ntk.trav_id() - 1 );
-  //     //   }
-  //     // }
-  //     uint32_t max_leaf = leaf_p + cut->data.lut_leaves[lut_i];
-  //     while ( leaf_p < max_leaf )
-  //     {
-  //       tfi_leaves.push_back( leaves[leaf_p] );
-  //       ++leaf_p;
-  //     }
-
-  //     /* simulate */
-  //     std::vector<node> gates{ collect_nodes( color_ntk, tfi_leaves, roots ) };
-  //     window_view window_ntk{ color_ntk, tfi_leaves, roots, gates };
-
-  //     using SimNtk = window_view<color_ntk_t>;
-  //     default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
-  //     unordered_node_map<kitty::dynamic_truth_table, SimNtk> node_to_value( window_ntk );
-
-  //     simulate_nodes( window_ntk, node_to_value, sim );
-
-  //     /* compute truth table, TODO: extend to XOR */
-  //     tt = ntk.is_complemented( roots_sig[0] ) ? ~node_to_value[roots_sig[0]] : node_to_value[roots_sig[0]];
-  //     for ( uint32_t i = 1; i < roots_sig.size(); ++i )
-  //     {
-  //       tt &= ntk.is_complemented( roots_sig[i] ) ? ~node_to_value[roots_sig[i]] : node_to_value[roots_sig[i]];
-  //     }
-
-  //     /* compute children */
-  //     for ( auto const& l : tfi_leaves )
-  //     {
-  //       children.push_back( node_to_signal[l] );
-  //     }
-
-  //     assert( children.size() <= ps.cut_enumeration_ps.cut_size );
-  //   }
-
-  //   /* add LUTs connections */
-  //   uint32_t in_luts = static_cast<uint32_t>( lut_connections >> 32 );
-  //   uint32_t connections = 0;
-  //   if ( in_luts )
-  //   {
-  //     for ( uint32_t i = 0; i < lut_i; ++i )
-  //     {
-  //       if ( ( in_luts >> i ) & 1 )
-  //       {
-  //         assert( i < luts_signal.size() );
-  //         children.push_back( luts_signal[i] );
-  //         ++connections;
-  //       }
-  //     }
-
-  //     /* create or extend truth table with additional vars */
-  //     if ( tt.num_vars() == 0 )
-  //     {
-  //       tt = kitty::dynamic_truth_table( connections );
-  //       tt = ~tt;
-  //     }
-  //     else
-  //     {
-  //       tt = kitty::extend_to( tt, tt.num_vars() + connections );
-  //     }
-      
-  //     assert( tt.num_vars() <= ps.cut_enumeration_ps.cut_size );
-
-  //     /* add ANDs with additional variables */
-  //     for ( uint32_t i = 0; i < connections; ++i )
-  //     {
-  //       tt &= kitty::nth_var<kitty::dynamic_truth_table>( tt.num_vars(), tt.num_vars() - i - 1 );
-  //     }
-  //   }
-
-  //   return { tt, children };
-  // }
-
-  // void mark_tfi_rec( node const& n )
-  // {
-  //   if ( ntk.visited( n ) == ntk.trav_id() )
-  //     return;
-    
-  //   ntk.set_visited( n, ntk.trav_id() );
-
-  //   if ( ntk.value( n ) )
-  //     return;
-    
-  //   ntk.foreach_fanin( n, [&]( auto const& f ) {
-  //     mark_tfi_rec( ntk.get_node( f ) );
-  //   } );
-  // }
-
   void derive_mapping()
   {
     ntk.clear_mapping();
@@ -3991,11 +3371,9 @@ private:
   std::deque<cut_set_t> cuts;   /* compressed representation of cuts */
   wide_cut_set_t wide_set;      /* compressed representation of wide cuts */
   cut_merge_t lcuts;            /* cut merger container */
+  wide_cut_merge_t lwidecuts;   /* wide cut merger container */
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
-
-  adaptive_cut_set_container_t  adaptive_container1;  /* container or cut sets per size */
-  adaptive_cut_set_container_t  adaptive_container2;  /* container or cut sets per size */
 
   decomp_cut_set_t dcuts;       /* cut set for multi-input modes decomposition */
   decomp_cut_set_t dlcuts;      /* cut merger for multi-input modes decomposition */
