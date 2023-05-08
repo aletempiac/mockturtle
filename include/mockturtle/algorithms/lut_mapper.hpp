@@ -1427,7 +1427,7 @@ private:
     //   }
     // }
 
-    wide_cut_t best_wide_cut = get_best_adaptive_cut( n, source_container, sort );
+    wide_cut_t best_wide_cut = get_best_adaptive_cut<ELA>( n, source_container, sort );
 
     /* replace the new best cut with previous one */
     if ( !preprocess || best_wide_cut->data.delay <= node_data.required )
@@ -1661,6 +1661,7 @@ private:
     }
   }
 
+  template<bool ELA>
   wide_cut_t get_best_adaptive_cut( node const& n, adaptive_cut_set_container_t* source_container, lut_cut_sort_type const sort )
   {
     wide_cut_t const* best_cut_p = nullptr;
@@ -1729,7 +1730,7 @@ private:
     level0_luts = cuts_ordered;
     best_cut->data.lut_roots = lut_roots_ordered;
 
-    compute_wide_cut_data2( wcut, n, )
+    compute_wide_cut_data2<ELA>( best_cut, n, bins_pcuts );
 
     return best_cut;
   }
@@ -2251,8 +2252,7 @@ private:
 
         create_and2_decomposition( children );
 
-        /* TODO: associate LUT delay */
-
+        /* TODO:associate LUT delay */
       }
 
       assert( children.size() == 1 );
@@ -2958,11 +2958,11 @@ private:
     uint32_t i = 0;
     for ( const cut<max_cut_size>* c : bins_pcuts )
     {
-      wcut->data.lut_delay[i] = 0;
+      wcut->data.delay_luts[i] = 0;
       for ( uint32_t leaf : *c )
       {
         const auto& best_leaf_cut = cuts[leaf][0];
-        wcut->data.lut_delay[i] = std::max( wcut->data.lut_delay[i], best_leaf_cut->data.delay );
+        wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], best_leaf_cut->data.delay );
       }
 
       /* add luts connections */
@@ -2971,7 +2971,7 @@ private:
         for ( uint32_t j = 0; j < i; ++j )
         {
           if ( ( packs[i] >> j ) & 1 )
-            wcut->data.lut_delay[i] = std::max( wcut->data.lut_delay[i], wcut->data.lut_delay[j] + 1 );
+            wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], wcut->data.delay_luts[j] + 1 );
         }
       }
       ++i;
@@ -2979,15 +2979,15 @@ private:
 
     while ( i < packs.size() )
     {
-      wcut->data.lut_delay[i] = 0;
+      wcut->data.delay_luts[i] = 0;
       for ( uint32_t j = 0; j < i; ++j )
       {
         if ( ( packs[i] >> j ) & 1 )
-          wcut->data.lut_delay[i] = std::max( wcut->data.lut_delay[i], wcut->data.lut_delay[j] + 1 );
+          wcut->data.delay_luts[i] = std::max( wcut->data.delay_luts[i], wcut->data.delay_luts[j] + 1 );
       }
       ++i;
     }
-    wcut->data.delay = wcut->data.lut_delay[packs.size() - 1];
+    wcut->data.delay = wcut->data.delay_luts[packs.size() - 1];
 
     if constexpr ( ELA )
     {
