@@ -49,56 +49,54 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, uint32_t, uint32_t, double, bool> exp(
       "lut_mapper_d", "benchmark", "size", "depth", "size_c", "depth_c", "luts", "lut_depth", "time", "luts_d", "luts_depth_d", "time_d", "equivalent_d" );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
-    // if ( benchmark == "hyp" )
+    // if ( benchmark != "log2" )
     //   continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    // if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    // {
+    //   continue;
+    // }
+    if ( lorina::read_aiger( "add64.aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
 
-    aig_balance( aig, { false } );
+    // aig_balance( aig, { false } );
 
     uint32_t const initial_size = aig.num_gates();
     uint32_t const initial_depth = depth_view( aig ).depth();
 
     /* collapse logic */
     aig_collapse_params cps;
-    cps.collapse_limit = 4u;
+    cps.collapse_limit = 8u;
     multi_aig_network multi_aig = aig_collapse( aig, cps );
 
     uint32_t const collapsed_size = multi_aig.num_gates();
     uint32_t const collapsed_depth = depth_view( multi_aig ).depth();
 
     lut_map_params ps;
+    ps.edge_optimization = false;
     ps.cut_enumeration_ps.cut_size = 6u;
-    ps.cut_enumeration_ps.cut_limit = 8u;
-    ps.recompute_cuts = true;
     ps.area_oriented_mapping = true;
-    ps.cut_expansion = true;
 
     /* FLOW1: map AIG */
-    // klut_network klut1;
     lut_map_stats st1;
-    mapping_view<aig_network, false> mapped_aig{ aig };
-    lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st1 );
-    const auto klut1 = *collapse_mapped_network<klut_network>( mapped_aig );
+    const auto klut1 = lut_map( aig, ps, &st1 );
 
     /* FLOW2: map collapsed AIG */
-    ps.recompute_cuts = false;
-    ps.cut_expansion = false;
-    ps.decompose_multi = true;
+    ps.recompute_cuts = true;
+    ps.area_flow_rounds = 2;
+    ps.ela_rounds = 2;
+    ps.multi_decomposition = true;
     lut_map_stats st2;
-    mapping_view<multi_aig_network, false> mapped_multi_aig{ multi_aig };
-    lut_map<decltype( mapped_multi_aig ), false>( mapped_multi_aig, ps, &st2 );
-    // const auto klut2 = *collapse_mapped_network<klut_network>( mapped_multi_aig );
+    const auto klut2 = lut_map( multi_aig, ps, &st2 );
 
-    uint32_t const flow1_luts = klut1.num_gates();
-    uint32_t const flow1_depth = depth_view( klut1 ).depth();
+    uint32_t const flow1_luts = st1.area;
+    uint32_t const flow1_depth = st1.delay;
     uint32_t const flow2_luts = st2.area;
     uint32_t const flow2_depth = st2.delay;
 

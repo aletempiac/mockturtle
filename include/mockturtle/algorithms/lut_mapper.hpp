@@ -43,6 +43,7 @@
 #include <kitty/dynamic_truth_table.hpp>
 #include <kitty/operations.hpp>
 
+#include "cleanup.hpp"
 #include "../networks/klut.hpp"
 #include "../utils/cost_functions.hpp"
 #include "../utils/cuts.hpp"
@@ -545,6 +546,194 @@ private:
 };
 #pragma endregion
 
+#pragma region Adaptive cuts bucket
+template<typename CutType, unsigned MaxCuts>
+class adaptive_cut_set
+{
+public:
+  /*! \brief Standard constructor.
+   */
+  adaptive_cut_set()
+  {
+    clear();
+  }
+
+  /*! \brief Clears the buckets.
+   */
+  void clear()
+  {
+    _pcend = _pend = _pcuts.begin();
+    auto pit = _pcuts.begin();
+    for ( auto& c : _cuts )
+    {
+      *pit++ = &c;
+    }
+  }
+
+  template<typename Iterator>
+  CutType& add_cut( CutType const& cut_copy )
+  {
+    assert( _pend != _pcuts.end() );
+
+    auto& cut = **_pend++;
+    cut = cut_copy;
+
+    ++_pcend;
+    return cut;
+  }
+
+  static bool sort_delay( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1.data.delay < c2.data.delay )
+      return true;
+    if ( c1.data.delay > c2.data.delay )
+      return false;
+    if ( c1.size < c2.size )
+      return true;
+    if ( c1.size > c2.size )
+      return false;
+    if ( c1.data.area_flow < c2.data.area_flow - eps )
+      return true;
+    if ( c1.data.area_flow > c2.data.area_flow + eps )
+      return false;
+    return c1.data.edge_flow < c2.data.edge_flow - eps;
+  }
+
+  static bool sort_delay2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1.data.delay < c2.data.delay )
+      return true;
+    if ( c1.data.delay > c2.data.delay )
+      return false;
+    if ( c1.data.area_flow < c2.data.area_flow - eps )
+      return true;
+    if ( c1.data.area_flow > c2.data.area_flow + eps )
+      return false;
+    if ( c1.data.edge_flow < c2.data.edge_flow - eps )
+      return true;
+    if ( c1.data.edge_flow > c2.data.edge_flow + eps )
+      return false;
+    return c1.size < c2.size;
+  }
+
+  static bool sort_area( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1.data.area_flow < c2.data.area_flow - eps )
+      return true;
+    if ( c1.data.area_flow > c2.data.area_flow + eps )
+      return false;
+    if ( c1.data.edge_flow < c2.data.edge_flow - eps )
+      return true;
+    if ( c1.data.edge_flow > c2.data.edge_flow + eps )
+      return false;
+    if ( c1.size < c2.size )
+      return true;
+    if ( c1.size > c2.size )
+      return false;
+    return c1.data.delay < c2.data.delay;
+  }
+
+  static bool compare( CutType const& cut1, CutType const& cut2, lut_cut_sort_type sort = lut_cut_sort_type::NONE )
+  {
+    if ( sort == lut_cut_sort_type::DELAY )
+    {
+      return sort_delay( cut1, cut2 );
+    }
+    else if ( sort == lut_cut_sort_type::DELAY2 )
+    {
+      return sort_delay2( cut1, cut2 );
+    }
+    else if ( sort == lut_cut_sort_type::AREA )
+    {
+      return sort_area( cut1, cut2 );
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  void insert( CutType const& cut, lut_cut_sort_type sort = lut_cut_sort_type::NONE )
+  {
+    /* insert cut in a sorted way */
+    typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
+
+    if ( sort == lut_cut_sort_type::DELAY )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::DELAY2 )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay2( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+    else /* NONE */
+    {
+      ipos == _pend;
+    }
+
+    /* too many cuts, we need to remove one */
+    if ( _pend == _pcuts.end() )
+    {
+      /* cut to be inserted is worse than all the others, return */
+      if ( ipos == _pend )
+      {
+        return;
+      }
+      else
+      {
+        /* remove last cut */
+        --_pend;
+        --_pcend;
+      }
+    }
+
+    /* copy cut */
+    **_pend = cut;
+
+    if ( ipos != _pend )
+    {
+      auto it = _pend;
+      while ( it > ipos )
+      {
+        std::swap( *it, *( it - 1 ) );
+        --it;
+      }
+    }
+
+    /* update iterators */
+    _pcend++;
+    _pend++;
+  }
+
+  auto begin() const { return _pcuts.begin(); }
+
+  auto end() const { return _pcend; }
+
+  auto begin() { return _pcuts.begin(); }
+
+  auto end() { return _pend; }
+
+  auto size() const { return _pcend - _pcuts.begin(); }
+
+  auto const& operator[]( uint32_t index ) const { return *_pcuts[index]; }
+
+  auto const& best() const { return *_pcuts[0]; }
+
+private:
+  std::array<CutType, MaxCuts> _cuts;
+  std::array<CutType*, MaxCuts> _pcuts;
+  typename std::array<CutType*, MaxCuts>::const_iterator _pcend{ _pcuts.begin() };
+  typename std::array<CutType*, MaxCuts>::iterator _pend{ _pcuts.begin() };
+};
+#pragma endregion
+
 #pragma region Cut merger data
 template<uint32_t CutSize>
 struct adaptive_cut_merger
@@ -580,13 +769,16 @@ public:
   static constexpr uint32_t max_cut_num = 16;
   static constexpr uint32_t max_cut_size = 6;
   static constexpr uint32_t max_wide_cut_num = 1;
+  static constexpr uint32_t max_gate_fanin = 32;
   static constexpr uint32_t max_wide_cut_size = 32;
-  static constexpr uint32_t max_cut_data_decomp = 64;
+  static constexpr uint32_t max_cut_data_decomp_bucket = 8;
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
   using wide_cut_t = cut<max_wide_cut_size, cut_data<false, cut_enumeration_wide_cut<max_wide_cut_size>>>;
   using wide_cut_set_t = lut_cut_set<wide_cut_t, max_wide_cut_num>;
-  using adaptive_cut_t = adaptive_cut_merger<max_wide_cut_size>;
+  using adaptive_cut_t = adaptive_cut_merger<max_gate_fanin>;
+  using adaptive_cut_set_t = adaptive_cut_set<adaptive_cut_t, max_cut_data_decomp_bucket>;
+  using adaptive_buckets_t = std::array<adaptive_cut_set_t, max_wide_cut_size>;
   using decomp_cut_set_t = std::vector<adaptive_cut_t>;
   using node = typename Ntk::node;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
@@ -596,7 +788,6 @@ public:
   using cost_cache = std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>;
   using lut_info = std::pair<kitty::dynamic_truth_table, std::vector<signal<klut_network>>>;
   using pack_index_list = std::array<uint32_t, max_wide_cut_size>;
-  using color_ntk_t = color_view<Ntk>;
 
 public:
   explicit lut_map_impl( Ntk& ntk, lut_map_params const& ps, lut_map_stats& st )
@@ -760,8 +951,6 @@ private:
 
     if ( ps.multi_decomposition )
     {
-      dcuts.reserve( max_cut_data_decomp );
-      dlcuts.reserve( max_cut_data_decomp );
       bins.reserve( max_wide_cut_size );
       bins_ext.reserve( max_wide_cut_size );
       packs.reserve( max_wide_cut_size );
@@ -1326,6 +1515,12 @@ private:
         rcuts.replace( 0, best_cut );
       }
 
+      /* add trivial cut */
+      if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+      {
+        add_unit_cut( index );
+      }
+
       if constexpr ( DO_AREA )
       {
         if ( iteration != 0 && node_data.map_refs > 0 )
@@ -1346,49 +1541,60 @@ private:
     /* load cut set of child 0 into rcuts */
     /* TODO: implement a better data structure with cut prioritization */
     wide_set.clear();
+
+    adaptive_buckets_t *source = &dcuts1;
+    adaptive_buckets_t *dest = &dcuts2;
     init_dcuts();
 
-    /* TODO: accurate area and delay computation */
-    for ( auto i = 1; i < fanin; ++i )
+    for ( uint32_t i = 1; i < fanin; ++i )
     {
-      merge_cuts2_subset<DO_AREA, ELA>( n, i, sort, preprocess );
+      merge_cuts2_subset<DO_AREA, ELA>( n, source, dest, i, sort, preprocess );
+      std::swap( source, dest );
     }
 
     /* create official cuts */
     wide_cut_t new_cut;
     uint32_t limit = 0;
-    for ( auto const& dcut : dcuts )
+    for ( uint32_t i = fanin - 1; i < max_wide_cut_size; ++i )
     {
-      dcut_merge( n, dcut, new_cut, fanin );
-
-      // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
-      // {
-      //   continue;
-      // }
-
-      compute_wide_cut_data<ELA>( new_cut, ntk.index_to_node( index ) );
-
-      /* check required time */
-      if constexpr ( DO_AREA )
+      for ( auto const& dcut : source->at( i ) )
       {
-        if ( preprocess || new_cut->data.delay <= node_data.required )
+        dcut_merge( n, *dcut, new_cut, fanin );
+
+        // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+        // {
+        //   continue;
+        // }
+
+        compute_wide_cut_data<ELA>( new_cut, ntk.index_to_node( index ) );
+
+        // assert( dcut->data.lut_area >= new_cut->data.lut_area );
+        // assert( dcut->data.delay >= new_cut->data.delay );
+        // assert( dcut->data.area_flow >= new_cut->data.area_flow - epsilon );
+        // assert( dcut->data.edge_flow >= new_cut->data.edge_flow - epsilon);
+
+        /* check required time */
+        if constexpr ( DO_AREA )
         {
-          if ( ps.remove_dominated_cuts )
-            wide_set.insert( new_cut, false, sort );
-          else
+          if ( preprocess || new_cut->data.delay <= node_data.required )
+          {
+            // if ( ps.remove_dominated_cuts )
+              // wide_set.insert( new_cut, false, sort );
+            // else
+              wide_set.simple_insert( new_cut, sort );
+          }
+        }
+        else
+        {
+          // if ( ps.remove_dominated_cuts )
+            // wide_set.insert( new_cut, false, sort );
+          // else
             wide_set.simple_insert( new_cut, sort );
         }
-      }
-      else
-      {
-        if ( ps.remove_dominated_cuts )
-          wide_set.insert( new_cut, false, sort );
-        else
-          wide_set.simple_insert( new_cut, sort );
-      }
 
-      // if ( limit++ > ps.cut_enumeration_ps.cut_limit )
-      //   break;
+        // if ( limit++ > ps.cut_enumeration_ps.cut_limit )
+        //   break;
+      }
     }
 
     /* replace the new best cut with previous one */
@@ -1405,6 +1611,12 @@ private:
       rcuts.replace( 0, best_cut );
     }
 
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+
     if constexpr ( DO_AREA )
     {
       if ( iteration != 0 && node_data.map_refs > 0 )
@@ -1413,6 +1625,7 @@ private:
       }
     }
   }
+
 
   void commit_decomposition( node const& n, cut_set_t& rcuts, lut_cut_sort_type const sort )
   {
@@ -1434,152 +1647,67 @@ private:
 
     /* limit the maximum number of cuts */
     rcuts.limit( ps.cut_enumeration_ps.cut_limit );
-
-    /* add trivial cut */
-    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
-    {
-      add_unit_cut( ntk.node_to_index( n ) );
-    }
   }
 
   void init_dcuts()
   {
-    dcuts.clear();
+    uint32_t i;
 
-    uint32_t i = 0;
+    /* clear the buckets from cuts */
+    for ( i = 0; i < max_wide_cut_size; ++i )
+      dcuts1[i].clear();
+
+    /* insert cuts */
+    i = 0;
     for ( auto const& c : *lcuts[0] )
     {
-      if ( c->size() > ps.cut_enumeration_ps.cut_size )
-      {
-        ++i;
-        continue;
-      }
-
-      dcuts.emplace_back( adaptive_cut_t{} );
-      dcuts.back().cut_pointers[0] = i++;
-      dcuts.back().data = ( *c )->data;
-      dcuts.back().size = c->size();
+      adaptive_cut_t acut;
+      acut.cut_pointers[0] = i++;
+      acut.data = ( *c )->data;
+      acut.size = c->size();
+      dcuts1[c->size() - 1].insert( acut );
     }
   }
 
   template<bool DO_AREA, bool ELA>
-  void merge_cuts2_subset( node const& n, uint32_t child, lut_cut_sort_type const sort, bool preprocess )
+  void merge_cuts2_subset( node const& n, adaptive_buckets_t *source, adaptive_buckets_t *dest, uint32_t child, lut_cut_sort_type const sort, bool preprocess )
   {
     uint32_t index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
 
     adaptive_cut_t new_cut;
-    std::vector<cut_t const*> vcuts( 2 );
-    dlcuts.clear();
 
-    /* cuts loaded in dcuts and combining with lcuts[child] into dcuts */
-    uint32_t i = 0;
-    for ( auto const& dc1 : dcuts )
+    /* clear the dest buckets from cuts */
+    for ( uint32_t i = 0; i < max_wide_cut_size; ++i )
+      dest->at( i ).clear();
+
+    
+    for ( uint32_t i = 0; i < max_wide_cut_size; ++i )
     {
-      uint32_t j = 0;
-      for ( auto const& c2 : *lcuts[child] )
+      for ( auto const& dc1 : source->at( i ) )
       {
-        /* skip large cuts exceeding max_cut_data_decomp */
-        if ( dc1.size + c2->size() > max_wide_cut_size )
+        uint32_t j = 0;
+        for ( auto const& c2 : *lcuts[child] )
         {
-          ++j;
-          continue;
+          /* skip large cuts exceeding max_wide_cut_size */
+          if ( dc1->size + c2->size() > max_wide_cut_size )
+          {
+            ++j;
+            continue;
+          }
+
+          /* create the cut */
+          new_cut = *dc1;
+          new_cut.cut_pointers[child] = j++;
+          compute_packing_data<ELA>( n, new_cut, child + 1 );
+
+          dest->at( new_cut.size - 1 ).insert( new_cut );
         }
-
-        /* create the cut */
-        new_cut = dc1;
-        new_cut.cut_pointers[child] = j++;
-
-        // new_cut.data.lut_delay = 1; 
-        // new_cut.data.lut_area = 1;
-        // new_cut.data.delay = std::max( new_cut.data.delay, ( *c2 )->data.delay );
-        // new_cut.data.area_flow += ( *c2 )->data.area_flow;
-        // new_cut.data.edge_flow += ( *c2 )->data.edge_flow;
-        // new_cut.size += c2->size();
-
-        compute_packing_data( n, new_cut, child + 1 );
-        // decomposition_cut_data<ELA>( new_cut, n, child + 1 );
-
-        dlcuts.push_back( new_cut );
-
-        if ( dlcuts.size() >= max_cut_data_decomp )
-          break;
       }
-
-      if ( dlcuts.size() >= max_cut_data_decomp )
-        break;
     }
-
-    /* check input sizes don't exceed 32 */
-    bool check;
-    for ( uint32_t i = 0; i < max_cut_data_decomp; ++i )
-      if ( dlcuts[i].size <= max_wide_cut_size )
-        check = true;
-
-    assert( check );
-    assert( dlcuts.size() > 0 );
-
-    constexpr auto eps = 0.005f;
-
-    /* TODO: upgrade for delay */
-    if ( sort == lut_cut_sort_type::AREA )
-    {
-      std::sort( dlcuts.begin(), dlcuts.end(), [&]( auto const& c1, auto const& c2 ) {
-        if ( c1.data.area_flow < c2.data.area_flow - eps )
-          return true;
-        if ( c1.data.area_flow > c2.data.area_flow + eps )
-          return false;
-        if ( c1.data.edge_flow < c2.data.edge_flow - eps )
-          return true;
-        if ( c1.data.edge_flow > c2.data.edge_flow + eps )
-          return false;
-        if ( c1.size < c2.size )
-          return true;
-        if ( c1.size > c2.size )
-          return false;
-        return c1.data.delay < c2.data.delay;
-      } );
-    }
-    else if ( sort == lut_cut_sort_type::DELAY )
-    {
-      std::sort( dlcuts.begin(), dlcuts.end(), [&]( auto const& c1, auto const& c2 ) {
-        if ( c1.data.delay < c2.data.delay )
-          return true;
-        if ( c1.data.delay > c2.data.delay )
-          return false;
-        if ( c1.size < c2.size )
-          return true;
-        if ( c1.size > c2.size )
-          return false;
-        if ( c1.data.area_flow < c2.data.area_flow - eps )
-          return true;
-        if ( c1.data.area_flow > c2.data.area_flow + eps )
-          return false;
-        return c1.data.edge_flow < c2.data.edge_flow - eps;
-      } );
-    }
-    else
-    {
-      std::sort( dlcuts.begin(), dlcuts.end(), [&]( auto const& c1, auto const& c2 ) {
-        if ( c1.data.delay < c2.data.delay )
-          return true;
-        if ( c1.data.delay > c2.data.delay )
-          return false;
-        if ( c1.data.area_flow < c2.data.area_flow - eps )
-          return true;
-        if ( c1.data.area_flow > c2.data.area_flow + eps )
-          return false;
-        if ( c1.data.edge_flow < c2.data.edge_flow - eps )
-          return true;
-        if ( c1.data.edge_flow > c2.data.edge_flow + eps )
-          return false;
-        return c1.size < c2.size;
-      } );
-    }
-
-    dcuts = dlcuts;
   }
 
+  template<bool ELA>
   void compute_packing_data( node const& n, adaptive_cut_t& new_cut, uint32_t leaves )
   {
     uint32_t size = 0;
@@ -1591,29 +1719,54 @@ private:
     for ( uint32_t i = 0; i < leaves; ++i )
     {
       cut_t const& cut = ( *lcuts[i] )[new_cut.cut_pointers[i]];
-      uint32_t cut_size = cut.size() ;
+      uint32_t cut_size = cut.size();
+
       uint32_t j = 0;
       while ( j < bins_ext.size() )
       {
         if ( bins_ext[j].size + cut_size <= ps.cut_enumeration_ps.cut_size )
-        {
-          bins_ext[j].size += cut_size;
-          bins_ext[j].delay = std::max( bins_ext[j].delay, cut->data.delay );
           break;
-        }
         ++j;
       }
 
       if ( j == bins_ext.size() )
-      {
         bins_ext.emplace_back();
-        bins_ext.back().size = cut_size;
-        bins_ext.back().delay = cut->data.delay;
+
+      uint32_t cut_delay = cut->data.delay;
+      float cut_area_flow = cut->data.area_flow - cut->data.lut_area;
+      float cut_edge_flow = cut->data.edge_flow;
+
+      /* compute cost if trivial cut */
+      if ( cut.size() == 1 )
+      {
+        cut_delay = ( *lcuts[i] )[0]->data.delay + 1;
+        
+        if constexpr ( ELA )
+        {
+          cut_area_flow = ( *lcuts[i] )[0]->data.area_flow;
+          cut_edge_flow = ( *lcuts[i] )[0]->data.edge_flow + 1;
+        }
+        else
+        {
+          uint32_t leaf = *( cut.begin() );
+          if ( node_match[leaf].map_refs > 0 )
+          {
+            cut_area_flow = ( *lcuts[i] )[0]->data.area_flow / node_match[leaf].est_refs;
+            cut_edge_flow = ( *lcuts[i] )[0]->data.edge_flow / node_match[leaf].est_refs + 1;
+          }
+          else
+          {
+            cut_area_flow = ( *lcuts[i] )[0]->data.area_flow;
+            cut_edge_flow = ( *lcuts[i] )[0]->data.edge_flow + 1;
+          }
+        }
       }
 
       size += cut_size;
-      area_flow += cut->data.area_flow * node_match[ntk._storage->nodes[n].children[i].index].est_refs - 1;
-      edge_flow += cut->data.edge_flow * node_match[ntk._storage->nodes[n].children[i].index].est_refs - 1;
+      bins_ext[j].size += cut_size;
+      bins_ext[j].delay = std::max( bins_ext[j].delay, cut_delay );
+      area_flow += cut_area_flow;
+      edge_flow += cut_edge_flow;
     }
 
     uint32_t area = bins_ext.size();
@@ -1634,9 +1787,23 @@ private:
         bins_ext.back().delay = std::max( bins_ext.back().delay, bins_ext[i].delay + 1 );
     }
 
+    /* check if it cannot be packed but a top LUT can map the network */
+    bool skip_multi_level_packing = false;
+    if ( roots != 1 && roots <= ps.cut_enumeration_ps.cut_size )
+    {
+      /* check availability */
+      uint32_t availability = 0;
+      for ( uint32_t i = 1; i < bins_ext.size(); ++i )
+      {
+        availability += ps.cut_enumeration_ps.cut_size - bins_ext[i].size;
+      }
+      if ( availability < roots - 1 )
+        skip_multi_level_packing = true;
+    }
+
     uint32_t i;
     uint32_t unconnected = 1u;
-    for ( i = 1; i < bins_ext.size() && roots != 1; ++i )
+    for ( i = 1; i < bins_ext.size() && roots != 1 && !skip_multi_level_packing; ++i )
     {
       if ( bins_ext[i].size < ps.cut_enumeration_ps.cut_size )
       {
@@ -1657,6 +1824,7 @@ private:
         }
 
         /* check terminal condition minimizing delay */
+        max_available = ps.cut_enumeration_ps.cut_size - bins.back();
         if ( roots != 1 && roots - 1 <= max_available )
         {
           roots = 1;
@@ -1723,9 +1891,9 @@ private:
     {
       packs.push_back( ( *lcuts[i] )[cut.cut_pointers[i]].size() );
     }
-    std::sort( pack_indexes.begin(), pack_indexes.begin() + num_leaves, [this]( auto const& a, auto const& b ) {
-      return packs[a] > packs[b];
-    } );
+    // std::sort( pack_indexes.begin(), pack_indexes.begin() + num_leaves, [this]( auto const& a, auto const& b ) {
+    //   return packs[a] > packs[b];
+    // } );
 
     /* create cuts for bins */
     std::vector<cut_t> bins_cuts;
@@ -1895,7 +2063,7 @@ private:
     /* write  implementation cost */
     new_cut->data.lut_delay = 1;
     new_cut->data.lut_area = area;
-    new_cut->data.lut_edges = edges + area;
+    new_cut->data.lut_edges = edges + area - 1;
 
     /* compute pin-to-pin delay */
     compute_wide_cut_pin_delay( new_cut, bins_pcuts );
@@ -2633,89 +2801,6 @@ private:
     }
   }
 
-  template<bool ELA>
-  void decomposition_cut_data( adaptive_cut_t& cut, node const& n, uint32_t num_leaves )
-  {
-    uint32_t lut_area = cut.data.lut_area;
-
-    if constexpr ( ELA )
-    {
-      uint32_t delay{ 0 };
-      uint32_t exact_area = lut_area;
-      for ( uint32_t i = 0; i < num_leaves; ++i )
-      {
-        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
-        {
-          const auto& best_leaf_cut = cuts[leaf][0];
-          delay = std::max( delay, best_leaf_cut->data.delay );
-
-          /* compute exact area */
-          if ( ntk.is_ci( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
-          {
-            continue;
-          }
-
-          /* Recursive referencing if leaf was not referenced */
-          if ( node_match[leaf].map_refs++ == 0u )
-          {
-            exact_area += cut_ref( best_leaf_cut );
-          }
-        }
-      }
-
-      cut.data.area_flow = static_cast<float>( exact_area );
-
-      /* dereference cut */
-      exact_area = cut.size;
-      for ( uint32_t i = 0; i < num_leaves; ++i )
-      {
-        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
-        {
-          if ( ntk.is_ci( ntk.index_to_node( leaf ) ) || ntk.is_constant( ntk.index_to_node( leaf ) ) )
-          {
-            continue;
-          }
-
-          /* Recursive referencing if leaf was not referenced */
-          if ( --node_match[leaf].map_refs == 0u )
-          {
-            exact_area += cut_edge_deref( cuts[leaf][0] );
-          }
-        }
-      }
-
-      if ( ps.edge_optimization )
-        cut.data.edge_flow = static_cast<float>( exact_area );
-      else
-        cut.data.edge_flow = 0;
-    }
-    else
-    {
-      /* edge flow considers internal LUTs */
-      float area_flow = static_cast<float>( lut_area );
-      float edge_flow = cut.size + cut.data.lut_area - 1;
-      for ( uint32_t i = 0; i < num_leaves; ++i )
-      {
-        for ( auto const& leaf : ( *lcuts[i] )[cut.cut_pointers[i]] )
-        {
-          const auto& best_leaf_cut = cuts[leaf][0];
-          if ( node_match[leaf].map_refs > 0 && leaf != 0 )
-          {
-            area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
-            edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
-          }
-          else
-          {
-            area_flow += best_leaf_cut->data.area_flow;
-            edge_flow += best_leaf_cut->data.edge_flow;
-          }
-        }
-      }
-      cut.data.area_flow = area_flow;
-      cut.data.edge_flow = edge_flow;
-    }
-  }
-
   void compute_wide_cut_pin_delay( wide_cut_t& cut, std::vector<cut_t*> const& pcuts )
   {
     uint32_t lut_i = cut->data.lut_roots.size() - 1;
@@ -3431,8 +3516,8 @@ private:
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
 
-  decomp_cut_set_t dcuts;           /* cut set for multi-input modes decomposition */
-  decomp_cut_set_t dlcuts;          /* cut merger for multi-input modes decomposition */
+  adaptive_buckets_t dcuts1;        /* cut set for multi-input modes decomposition */
+  adaptive_buckets_t dcuts2;        /* cut merger for multi-input modes decomposition */
   std::vector<uint32_t> bins;       /* bin containers for bin-packing */
   std::vector<bin_data> bins_ext;   /* delay for bin containers */
   std::vector<uint32_t> packs;      /* packs for bin-packing */
