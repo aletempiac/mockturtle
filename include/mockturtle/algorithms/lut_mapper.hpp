@@ -316,11 +316,7 @@ public:
       return true;
     if ( c1->data.delay > c2->data.delay )
       return false;
-      if ( c1.size() < c2.size() )
-      return true;
-    if ( c1.size() > c2.size() )
-      return false;
-    return c1->data.edge_flow < c2->data.edge_flow - eps;
+    return c1.size() < c2.size();
   }
 
   static bool sort_area2( CutType const& c1, CutType const& c2 )
@@ -652,6 +648,20 @@ public:
       return true;
     if ( c1.data.area_flow > c2.data.area_flow + eps )
       return false;
+    if ( c1.data.delay < c2.data.delay )
+      return true;
+    if ( c1.data.delay > c2.data.delay )
+      return false;
+    return c1.size < c2.size;
+  }
+
+  static bool sort_area2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1.data.area_flow < c2.data.area_flow - eps )
+      return true;
+    if ( c1.data.area_flow > c2.data.area_flow + eps )
+      return false;
     if ( c1.data.edge_flow < c2.data.edge_flow - eps )
       return true;
     if ( c1.data.edge_flow > c2.data.edge_flow + eps )
@@ -677,6 +687,10 @@ public:
     {
       return sort_area( cut1, cut2 );
     }
+    else if ( sort == lut_cut_sort_type::AREA2 )
+    {
+      return sort_area2( cut1, cut2 );
+    }
     else
     {
       return false;
@@ -699,6 +713,10 @@ public:
     else if ( sort == lut_cut_sort_type::AREA )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA2 )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area2( *a, *b ); } );
     }
     else /* NONE */
     {
@@ -888,7 +906,7 @@ private:
   void perform_mapping()
   {
     /* define area sorting function */
-    lut_cut_sort_type area_sort = ( ps.edge_optimization ) ? lut_cut_sort_type::AREA2 : lut_cut_sort_type::AREA;
+    lut_cut_sort_type area_sort = ( ps.area_oriented_mapping && !ps.edge_optimization ) ? lut_cut_sort_type::AREA : lut_cut_sort_type::AREA2;
 
     /* init the data structure */
     init_nodes();
@@ -1222,6 +1240,18 @@ private:
 
       if ( node_match[index].map_refs == 0 )
         continue;
+      
+      /* propagate required to choice nodes */
+      if constexpr ( has_foreach_choice_v<Ntk> )
+      {
+        if ( ntk.has_choice( *it ) )
+        {
+          assert( ntk.is_choice_representative( *it ) );
+          ntk.foreach_choice( *it, [&]( auto const& g ) {
+            node_match[ntk.node_to_index( g )].required = node_match[index].required;
+          } );
+        }
+      }
 
       for ( auto leaf : cuts[index][0] )
       {
@@ -1627,8 +1657,8 @@ private:
       }
     }
 
-    /* replace the new best cut with previous one */
-    if ( !preprocess || wide_set[0]->data.delay <= node_data.required )
+    /* decompose the new wide cut */
+    if ( wide_set.size() && ( !preprocess || wide_set[0]->data.delay <= node_data.required ) )
     {
       /* add AND nodes to represent the decomposition */
       decompose_wide_cut<DO_AREA, ELA>( n, wide_set[0], sort, preprocess );
