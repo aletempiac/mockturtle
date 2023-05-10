@@ -101,7 +101,7 @@ struct lut_map_params
   uint32_t ela_rounds{ 2u };
 
   /*! \brief Use edge count reduction. */
-  bool edge_optimization{ true };
+  bool edge_optimization{ false };
 
   /*! \brief Try to expand the cuts. */
   bool cut_expansion{ true };
@@ -192,6 +192,7 @@ enum class lut_cut_sort_type
   DELAY,
   DELAY2,
   AREA,
+  AREA2,
   NONE
 };
 
@@ -311,6 +312,24 @@ public:
       return true;
     if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
+    if ( c1->data.delay < c2->data.delay )
+      return true;
+    if ( c1->data.delay > c2->data.delay )
+      return false;
+      if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return c1->data.edge_flow < c2->data.edge_flow - eps;
+  }
+
+  static bool sort_area2( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
+      return true;
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
+      return false;
     if ( c1->data.edge_flow < c2->data.edge_flow - eps )
       return true;
     if ( c1->data.edge_flow > c2->data.edge_flow + eps )
@@ -343,6 +362,10 @@ public:
     else if ( sort == lut_cut_sort_type::AREA )
     {
       return sort_area( cut1, cut2 );
+    }
+    else if ( sort == lut_cut_sort_type::AREA2 )
+    {
+      return sort_area2( cut1, cut2 );
     }
     else
     {
@@ -378,6 +401,10 @@ public:
     else if ( sort == lut_cut_sort_type::AREA )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::AREA2 )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area2( *a, *b ); } );
     }
     else /* NONE */
     {
@@ -771,7 +798,7 @@ public:
   static constexpr uint32_t max_wide_cut_num = 1;
   static constexpr uint32_t max_gate_fanin = 32;
   static constexpr uint32_t max_wide_cut_size = 32;
-  static constexpr uint32_t max_cut_data_decomp_bucket = 8;
+  static constexpr uint32_t max_cut_data_decomp_bucket = 4;
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
   using wide_cut_t = cut<max_wide_cut_size, cut_data<false, cut_enumeration_wide_cut<max_wide_cut_size>>>;
@@ -860,6 +887,9 @@ public:
 private:
   void perform_mapping()
   {
+    /* define area sorting function */
+    lut_cut_sort_type area_sort = ( ps.edge_optimization ) ? lut_cut_sort_type::AREA2 : lut_cut_sort_type::AREA;
+
     /* init the data structure */
     init_nodes();
     init_cuts();
@@ -875,7 +905,7 @@ private:
         compute_required_time();
         compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true, false );
         compute_required_time();
-        compute_mapping<true, false>( lut_cut_sort_type::AREA, true, true, false );
+        compute_mapping<true, false>( area_sort, true, true, false );
       }
       else
       {
@@ -885,7 +915,7 @@ private:
     else
     {
       compute_required_time();
-      compute_mapping<true, false>( lut_cut_sort_type::AREA, false, true, true );
+      compute_mapping<true, false>( area_sort, false, true, true );
     }
 
     if ( ps.cut_expansion )
@@ -900,7 +930,7 @@ private:
     while ( i < ps.area_flow_rounds )
     {
       compute_required_time();
-      compute_mapping<true, false>( lut_cut_sort_type::AREA, false, ps.recompute_cuts, i == 0 );
+      compute_mapping<true, false>( area_sort, false, ps.recompute_cuts, i == 0 );
 
       if ( ps.cut_expansion )
       {
@@ -915,7 +945,7 @@ private:
     while ( i < ps.ela_rounds )
     {
       compute_required_time();
-      compute_mapping<true, true>( lut_cut_sort_type::AREA, false, ps.recompute_cuts, false );
+      compute_mapping<true, true>( area_sort, false, ps.recompute_cuts, false );
 
       if ( ps.cut_expansion )
       {
