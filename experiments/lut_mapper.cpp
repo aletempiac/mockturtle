@@ -49,7 +49,7 @@ int main()
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -59,15 +59,14 @@ int main()
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.recompute_cuts = true;
     ps.area_oriented_mapping = false;
+    ps.edge_optimization = true;
     ps.cut_expansion = true;
     lut_map_stats st;
-    mapping_view<aig_network, false> mapped_aig{ aig };
-    lut_map<decltype( mapped_aig ), false>( mapped_aig, ps, &st );
-    const auto klut = *collapse_mapped_network<klut_network>( mapped_aig );
+    const auto klut = lut_map( aig, ps, &st );
 
     depth_view<klut_network> klut_d{ klut };
 
-    auto const cec = benchmark == "hyp" ? true : abc_cec( klut, benchmark );
+    auto const cec = true;
 
     exp( benchmark, klut.num_gates(), klut_d.depth(), st.edges, to_seconds( st.time_total ), cec );
   }

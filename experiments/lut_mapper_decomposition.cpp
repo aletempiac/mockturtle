@@ -49,6 +49,7 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, uint32_t, uint32_t, double, bool> exp(
       "lut_mapper_d", "benchmark", "size", "depth", "size_c", "depth_c", "luts", "lut_depth", "time", "luts_d", "luts_depth_d", "time_d", "equivalent_d" );
 
+  // adder | bar | arbiter | cavlc | experiments::sin
   for ( auto const& benchmark : epfl_benchmarks() )
   {
     // if ( benchmark != "log2" )
@@ -56,14 +57,14 @@ int main()
 
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    // if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
-    // {
-    //   continue;
-    // }
-    if ( lorina::read_aiger( "add64.aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
+    // if ( lorina::read_aiger( "add64.aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    // {
+    //   continue;
+    // }
 
     // aig_balance( aig, { false } );
 
@@ -79,18 +80,15 @@ int main()
     uint32_t const collapsed_depth = depth_view( multi_aig ).depth();
 
     lut_map_params ps;
-    ps.edge_optimization = false;
     ps.cut_enumeration_ps.cut_size = 6u;
     ps.area_oriented_mapping = true;
+    ps.verbose = false;
 
     /* FLOW1: map AIG */
     lut_map_stats st1;
     const auto klut1 = lut_map( aig, ps, &st1 );
 
     /* FLOW2: map collapsed AIG */
-    ps.recompute_cuts = true;
-    ps.area_flow_rounds = 2;
-    ps.ela_rounds = 2;
     ps.multi_decomposition = true;
     lut_map_stats st2;
     const auto klut2 = lut_map( multi_aig, ps, &st2 );
