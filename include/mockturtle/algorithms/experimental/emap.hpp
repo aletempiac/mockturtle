@@ -953,12 +953,12 @@ private:
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
         match_multi_add_cuts<DO_AREA>( n );
-        if constexpr ( DO_AREA )
-        {
-          bool multi_success = match_multioutput<DO_AREA>( n );
-          if ( multi_success )
-            multi_node_update<DO_AREA>( n );
-        }
+        // if constexpr ( DO_AREA )
+        // {
+        //   bool multi_success = match_multioutput<DO_AREA>( n );
+        //   if ( multi_success )
+        //     multi_node_update<DO_AREA>( n );
+        // }
       }
     }
 
@@ -1518,7 +1518,7 @@ private:
     unsigned other_phase = use_phase ^ 1;
 
     assert( node_data.best_supergate[0] != nullptr || node_data.best_supergate[1] != nullptr );
-    assert( node_data.map_refs[0] || node_data.map_refs[1] );
+    // assert( node_data.map_refs[0] || node_data.map_refs[1] );
 
     /* propagate required time over the output inverter if present */
     if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
@@ -4504,13 +4504,13 @@ private:
       return;
 
     /* solve the TFI dependency first */
-    node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
-    if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
-    {
-      multi_topo_sort_rec( choice_ntk, dependency_node );
-      assert( ntk.visited( n ) == ntk.trav_id() );
-      return;
-    }
+    // node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
+    // if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
+    // {
+    //   multi_topo_sort_rec( choice_ntk, dependency_node );
+    //   assert( ntk.visited( n ) == ntk.trav_id() );
+    //   return;
+    // }
 
     /* get the representative (smallest index) */
     node<Ntk> repr = choice_ntk.get_choice_representative( n );
