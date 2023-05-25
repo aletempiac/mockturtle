@@ -623,14 +623,17 @@ private:
 #pragma endregion
 
 #pragma region Hashing
+template<uint32_t max_multioutput_cut_size>
 struct emap_triple_hash
 {
-  inline uint64_t operator()( const std::array<uint32_t, 3>& p ) const
+  inline uint64_t operator()( const std::array<uint32_t, max_multioutput_cut_size>& p ) const
   {
     uint64_t seed = hash_block( p[0] );
 
-    hash_combine( seed, hash_block( p[1] ) );
-    hash_combine( seed, hash_block( p[2] ) );
+    for ( uint32_t i = 1; i < max_multioutput_cut_size; ++i )
+    {
+      hash_combine( seed, hash_block( p[i] ) );
+    }
 
     return seed;
   }
@@ -699,7 +702,7 @@ public:
   using multi_cut_t = typename multi_cuts_t::cut_t;
   using multi_leaves_set_t = std::array<uint32_t, max_multioutput_cut_size>;
   using multi_output_set_t = std::vector<multi_match_data>;
-  using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash>;
+  using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash<max_multioutput_cut_size>>;
   using multi_match_t = std::array<multi_match_data, max_multioutput_output_size>;
   using multi_cut_set_t = std::vector<std::array<cut_t, max_multioutput_output_size>>;
   using multi_matches_t = std::vector<multi_match_t>;
@@ -949,16 +952,16 @@ private:
       /* try to drop one phase */
       match_drop_phase<DO_AREA, false>( n, 0 );
 
-      /* try a multi-output match */
+      /* load and try a multi-output matches */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
         match_multi_add_cuts<DO_AREA>( n );
-        // if constexpr ( DO_AREA )
-        // {
-        //   bool multi_success = match_multioutput<DO_AREA>( n );
-        //   if ( multi_success )
-        //     multi_node_update<DO_AREA>( n );
-        // }
+        if constexpr ( DO_AREA )
+        {
+          bool multi_success = match_multioutput<DO_AREA>( n );
+          if ( multi_success )
+            multi_node_update<DO_AREA>( n );
+        }
       }
     }
 
@@ -4085,7 +4088,7 @@ private:
     /* Multi-output matching */
     multi_enumerate_matches( multi_cuts );
     multi_compute_matches( multi_cuts );
-    multi_filter_and_match( multi_cuts ); /* it also adds the tuple for node mapping */
+    multi_filter_and_match<true>( multi_cuts ); /* it also adds the tuple for node mapping */
   }
 
   void multi_init_topo_order()
@@ -4187,10 +4190,9 @@ private:
       return a.first[2] > b.first[2];
     } );
 
-    /* combine and match: specific code for adders */
+    /* combine and match: specific code for 2-output cells */
     for ( auto it : class_list )
     {
-      /* try half adder and full adder */
       for ( uint32_t i = 0; i < it.second.size() - 1; ++i )
       {
         multi_match_data data_i = it.second[i];
@@ -4205,12 +4207,12 @@ private:
           uint32_t cut_index_j = data_j.cut_index;
           auto const& cut_j = multi_cuts.cuts( index_j )[cut_index_j];
 
-          /* not compatible */
+          /* not compatible -> TODO: change */
           if ( cut_i->data.id == cut_j->data.id )
             continue;
 
           /* check compatibility */
-          if ( !multi_check_compatibility( index_i, index_j, cut_i ) )
+          if ( !multi_check_partally_dangling( index_i, index_j, cut_i ) )
             continue;
 
           multi_node_match.push_back( { data_i, data_j } );
@@ -4220,6 +4222,7 @@ private:
   }
 
   /* Experimental code */
+  template<bool OverlapFilter>
   void multi_filter_and_match( multi_cuts_t const& multi_cuts )
   {
     multi_matches_t multi_node_match_tmp;
@@ -4240,10 +4243,17 @@ private:
 
       assert( index1 < index2 );
 
-      /* remove overlapping multi-output gates */
-      /* TODO: this constraint could be relaxed -> 1 output has be be part of maximum one output tuple */
-      if ( multi_gate_check_overlapping( index1, index2, cut1 ) )
-        continue;
+      /* remove incompatible multi-output cuts */
+      if constexpr ( OverlapFilter )
+      {
+        if ( multi_gate_check_overlapping( index1, index2, cut1 ) )
+          continue;
+      }
+      else
+      {
+        if ( multi_gate_check_incompatible( index1, index2 ) )
+          continue;
+      }
 
       /* copy cuts */
       cut_t new_cut1, new_cut2;
@@ -4258,7 +4268,14 @@ private:
         continue;
 
       /* mark multioutput gate */
-      multi_gate_mark_visited( index1, index2, cut1 );
+      if constexpr ( OverlapFilter )
+      {
+        multi_gate_mark_visited( index1, index2, cut1 );
+      }
+      else
+      {
+        multi_gate_mark_compatibility( index1, index2, multi_cut_set.size() );
+      }
 
       /* add cut */
       multi_cut_set.push_back( cut_pair );
@@ -4326,7 +4343,7 @@ private:
     return true;
   }
 
-  inline bool multi_check_compatibility( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
+  inline bool multi_check_partally_dangling( uint32_t index1, uint32_t index2, multi_cut_t const& cut1 )
   {
     bool valid = true;
 
@@ -4374,6 +4391,22 @@ private:
     }
 
     return contained;
+  }
+
+  inline bool multi_gate_check_incompatible( uint32_t index1, uint32_t index2 )
+  {
+    /* check cut assigned cut outputs */
+    uint32_t current_assignment = node_match[index1].best_cut[0];
+    if ( current_assignment != node_match[index2].best_cut[0] )
+      return true;
+
+    return false;
+  }
+
+  inline void multi_gate_mark_compatibility( uint32_t index1, uint32_t index2, uint32_t mark_value )
+  {
+    node_match[index1].best_cut[0] = mark_value;
+    node_match[index2].best_cut[0] = mark_value;
   }
 
   inline void multi_gate_mark_visited( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
@@ -4487,7 +4520,8 @@ private:
         /* if there is a path of length > 1 linking node 1 and 2, save as TFI node */
         pair[0].in_tfi = multi_is_in_direct_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ) ) ? 0 : 1;
         /* add a TFI dependency */
-        ntk.set_value( ntk.index_to_node( index1 ), index2 );
+        // ntk.set_value( ntk.index_to_node( index1 ), index2 );
+        multi_set_tfi_dependency( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut );
         continue;
       }
 
@@ -4504,13 +4538,13 @@ private:
       return;
 
     /* solve the TFI dependency first */
-    // node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
-    // if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
-    // {
-    //   multi_topo_sort_rec( choice_ntk, dependency_node );
-    //   assert( ntk.visited( n ) == ntk.trav_id() );
-    //   return;
-    // }
+    node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
+    if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
+    {
+      multi_topo_sort_rec( choice_ntk, dependency_node );
+      assert( ntk.visited( n ) == ntk.trav_id() );
+      return;
+    }
 
     /* get the representative (smallest index) */
     node<Ntk> repr = choice_ntk.get_choice_representative( n );
@@ -4577,6 +4611,49 @@ private:
     } );
 
     return contained;
+  }
+
+  inline void multi_set_tfi_dependency( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
+  {
+    /* reference cut leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.incr_value( ntk.index_to_node( leaf ) );
+    }
+
+    ntk.incr_trav_id();
+
+    /* add a TFI dependencies */
+    ntk.set_value( n, ntk.node_to_index( root ) );
+    ntk.set_visited( n, ntk.trav_id() );
+    multi_set_tfi_dependency_rec( root, ntk.node_to_index( root ) );
+
+    /* reset root's dependency info */
+    ntk.set_value( root, 0 );
+
+    /* dereference leaves */
+    for ( auto leaf : cut )
+    {
+      ntk.decr_value( ntk.index_to_node( leaf ) );
+    }
+  }
+
+  void multi_set_tfi_dependency_rec( node<Ntk> const& n, uint32_t const dependency_info )
+  {
+    /* leaf */
+    if ( ntk.value( n ) )
+      return;
+
+    /* already visited */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    ntk.set_visited( n, ntk.trav_id() );
+    ntk.set_value( n, dependency_info );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      multi_set_tfi_dependency_rec( ntk.get_node( f ), dependency_info );
+    } );
   }
 #pragma endregion
 
