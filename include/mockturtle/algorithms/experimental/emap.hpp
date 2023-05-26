@@ -4085,9 +4085,13 @@ private:
     multi_ps.minimize_truth_table = false;
     multi_cuts_t multi_cuts = fast_cut_enumeration<Ntk, max_multioutput_cut_size, true, cut_enumeration_emap_multi_cut>( ntk, multi_ps );
 
+    /* cuts leaves classes */
+    multi_hash_t multi_cuts_classes;
+    multi_cuts_classes.reserve( 2000 );
+
     /* Multi-output matching */
-    multi_enumerate_matches( multi_cuts );
-    multi_compute_matches( multi_cuts );
+    multi_enumerate_matches( multi_cuts, multi_cuts_classes );
+    multi_compute_matches( multi_cuts, multi_cuts_classes );
     multi_filter_and_match<true>( multi_cuts ); /* it also adds the tuple for node mapping */
   }
 
@@ -4128,11 +4132,9 @@ private:
   }
 
   /* Experimental code resticted to only half adders and full adders */
-  void multi_enumerate_matches( multi_cuts_t const& multi_cuts )
+  void multi_enumerate_matches( multi_cuts_t const& multi_cuts, multi_hash_t& multi_cuts_classes )
   {
     static_assert( max_multioutput_cut_size > 1 && max_multioutput_cut_size < 7 );
-
-    multi_cuts_classes.reserve( 2000 );
 
     uint32_t counter = 0;
     multi_leaves_set_t leaves = { 0 };
@@ -4171,7 +4173,7 @@ private:
   }
 
   /* Experimental code */
-  void multi_compute_matches( multi_cuts_t const& multi_cuts )
+  void multi_compute_matches( multi_cuts_t const& multi_cuts, multi_hash_t& multi_cuts_classes )
   {
     ntk.clear_values();
     multi_node_match.reserve( multi_cuts_classes.size() );
@@ -4685,14 +4687,13 @@ private:
   std::vector<uint64_t> tmp_visited;
 
   /* cut computation */
-  std::vector<cut_set_t> cuts;                  /* compressed representation of cuts */
-  cut_merge_t lcuts;                            /* cut merger container */
-  truth_compute_t ltruth;                       /* truth table merger container */
-  support_t lsupport;                           /* support merger container */
-  uint32_t cuts_total{ 0 };                     /* current computed cuts */
+  std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
+  cut_merge_t lcuts;            /* cut merger container */
+  truth_compute_t ltruth;       /* truth table merger container */
+  support_t lsupport;           /* support merger container */
+  uint32_t cuts_total{ 0 };     /* current computed cuts */
 
   /* multi-output matching */
-  multi_hash_t multi_cuts_classes;  /* cuts leaves classes */
   multi_cut_set_t multi_cut_set;    /* set of multi-output cuts */
   multi_matches_t multi_node_match; /* matched multi-output gates */
 };
