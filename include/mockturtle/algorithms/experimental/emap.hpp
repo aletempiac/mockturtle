@@ -791,7 +791,7 @@ public:
 
   binding_view<klut_network> run_node_map()
   {
-    stopwatch t( st.time_total );
+    time_begin = clock::now();
 
     auto [res, old2new] = initialize_map_network();
 
@@ -825,6 +825,7 @@ public:
 
     /* generate the output network */
     finalize_cover( res, old2new );
+    st.time_total = ( clock::now() - time_begin );
 
     return res;
   }
@@ -4301,8 +4302,8 @@ private:
       new_data2.cut_index = multi_cut_set.size() - 1;
       multi_match_t p = { new_data1, new_data2 };
 
+      /* TODO: add cuts to the correct bucket */
       multi_node_match.push_back( { p } );
-      // multi_node_match.back().push_back( p );
       node_tuple_match[std::max( index1, index2 )] = multi_node_match.size() - 1;
     }
   }
