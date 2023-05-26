@@ -707,7 +707,8 @@ public:
   using multi_hash_t = phmap::flat_hash_map<multi_leaves_set_t, multi_output_set_t, emap_triple_hash<max_multioutput_cut_size>>;
   using multi_match_t = std::array<multi_match_data, max_multioutput_output_size>;
   using multi_cut_set_t = std::vector<std::array<cut_t, max_multioutput_output_size>>;
-  using multi_matches_t = std::vector<multi_match_t>;
+  using multi_single_matches_t = std::vector<multi_match_t>;
+  using multi_matches_t = std::vector<std::vector<multi_match_t>>;
 
   using clock = typename std::chrono::steady_clock;
   using time_point = typename clock::time_point;
@@ -2324,7 +2325,7 @@ private:
       if ( tuple_index >= UINT32_MAX - 1 )
         continue;
 
-      multi_match_t const& tuple_data = multi_node_match[tuple_index];
+      multi_match_t const& tuple_data = multi_node_match[tuple_index][0];
       node_tuple_match[i] = UINT32_MAX - 1; /* arbitrary value to skip the required time propagation */
       node_tuple_match[tuple_data[0].node_index] = tuple_index;
     }
@@ -2454,7 +2455,7 @@ private:
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
-    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]][0];
 
     /* get the cut */
     auto const& cut0 = cuts[tuple_data[0].node_index][tuple_data[0].cut_index];
@@ -2641,7 +2642,7 @@ private:
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
-    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]][0];
 
     /* local values storage */
     std::array<float, max_multioutput_output_size> best_exact_area;
@@ -2882,7 +2883,7 @@ private:
   void multi_node_update( node<Ntk> const& n )
   {
     uint32_t check_index = ntk.node_to_index( n );
-    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]][0];
     uint64_t signature = 0;
 
     /* check if a node is in TFI: there is a path of length > 1 */
@@ -2956,7 +2957,7 @@ private:
   void multi_node_update_exact( node<Ntk> const& n )
   {
     uint32_t check_index = ntk.node_to_index( n );
-    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]];
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[ntk.node_to_index( n )]][0];
     uint64_t signature = 0;
 
     /* check if a node is in TFI: there is a path of length > 1 */
@@ -3037,7 +3038,7 @@ private:
   {
     /* extract outputs tuple */
     uint32_t index = ntk.node_to_index( n );
-    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+    multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]][0];
 
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
@@ -3050,7 +3051,7 @@ private:
   void match_multi_add_cuts( node<Ntk> const& n )
   {
     uint32_t index = ntk.node_to_index( n );
-    multi_match_t& tuple_data = multi_node_match[node_tuple_match[index]];
+    multi_match_t& tuple_data = multi_node_match[node_tuple_match[index]][0];
 
     /* get the cuts */
     uint32_t cut_index = tuple_data[0].cut_index;
@@ -3118,7 +3119,7 @@ private:
         continue;
 
       /* check if mapped to multi-output with unused outputs */
-      multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]];
+      multi_match_t const& tuple_data = multi_node_match[node_tuple_match[index]][0];
 
       bool used = false;
       bool unused = false;
@@ -4100,8 +4101,12 @@ private:
 
     /* Multi-output matching */
     multi_enumerate_matches( multi_cuts, multi_cuts_classes );
-    multi_compute_matches( multi_cuts, multi_cuts_classes );
-    multi_filter_and_match<true>( multi_cuts ); /* it also adds the tuple for node mapping */
+
+    multi_single_matches_t multi_node_match_local;
+    multi_node_match_local.reserve( multi_cuts_classes.size() );
+
+    multi_compute_matches( multi_cuts, multi_cuts_classes, multi_node_match_local );
+    multi_filter_and_match<true>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
   }
 
   void multi_init_topo_order()
@@ -4182,10 +4187,9 @@ private:
   }
 
   /* Experimental code */
-  void multi_compute_matches( multi_cuts_t const& multi_cuts, multi_hash_t& multi_cuts_classes )
+  void multi_compute_matches( multi_cuts_t const& multi_cuts, multi_hash_t& multi_cuts_classes, multi_single_matches_t& multi_node_match_local )
   {
     ntk.clear_values();
-    multi_node_match.reserve( multi_cuts_classes.size() );
 
     /* copy set and sort by gate size: improve, too slow */
     std::vector<std::pair<multi_leaves_set_t, multi_output_set_t>> class_list;
@@ -4226,7 +4230,7 @@ private:
           if ( !multi_check_partally_dangling( index_i, index_j, cut_i ) )
             continue;
 
-          multi_node_match.push_back( { data_i, data_j } );
+          multi_node_match_local.push_back( { data_i, data_j } );
         }
       }
     }
@@ -4234,16 +4238,14 @@ private:
 
   /* Experimental code */
   template<bool OverlapFilter>
-  void multi_filter_and_match( multi_cuts_t const& multi_cuts )
+  void multi_filter_and_match( multi_cuts_t const& multi_cuts, multi_single_matches_t const& multi_node_match_local )
   {
-    multi_matches_t multi_node_match_tmp;
-    multi_node_match_tmp.reserve( multi_node_match.size() );
+    multi_cut_set.reserve( multi_node_match_local.size() );
+    multi_node_match.reserve( multi_node_match_local.size() );
 
     ntk.incr_trav_id();
 
-    multi_cut_set.reserve( multi_node_match.size() );
-
-    for ( auto& pair : multi_node_match )
+    for ( auto& pair : multi_node_match_local )
     {
       uint32_t index1 = pair[0].node_index;
       uint32_t index2 = pair[1].node_index;
@@ -4299,11 +4301,10 @@ private:
       new_data2.cut_index = multi_cut_set.size() - 1;
       multi_match_t p = { new_data1, new_data2 };
 
-      multi_node_match_tmp.push_back( p );
-      node_tuple_match[std::max( index1, index2 )] = multi_node_match_tmp.size() - 1;
+      multi_node_match.push_back( { p } );
+      // multi_node_match.back().push_back( p );
+      node_tuple_match[std::max( index1, index2 )] = multi_node_match.size() - 1;
     }
-
-    multi_node_match = multi_node_match_tmp;
   }
 
   bool multi_compute_cut_data( std::array<cut_t, max_multioutput_output_size>& cut_tuple )
@@ -4518,8 +4519,9 @@ private:
 
   void multi_add_choices( choice_view<Ntk>& choice_ntk )
   {
-    for ( auto& pair : multi_node_match )
+    for ( auto& field : multi_node_match )
     {
+      auto& pair = field.front();
       uint32_t index1 = pair[0].node_index;
       uint32_t index2 = pair[1].node_index;
       uint32_t cut_index1 = pair[0].cut_index;
