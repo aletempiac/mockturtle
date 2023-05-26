@@ -140,6 +140,8 @@ int main()
   tps.load_multioutput_gates_single = true;
   tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
+  bool area_oriented_mapping = true;
+
   for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
@@ -158,7 +160,7 @@ int main()
 
     /* VANILLA METHOD: map for area */
     emap_params psv;
-    psv.area_oriented_mapping = true;
+    psv.area_oriented_mapping = area_oriented_mapping;
     emap_stats stv;
     binding_view<klut_network> vanilla_mapping = emap<aig_network, 6>( aig, tech_lib, psv, &stv );
 
@@ -187,7 +189,7 @@ int main()
     double initial_area = partial_map_res.compute_area();
 
     emap_params psd;
-    psd.area_oriented_mapping = true;
+    psd.area_oriented_mapping = area_oriented_mapping;
     emap_stats std;
     binding_view<klut_network> det_emap = emap<binding_view<block_dt_t>, 6>( partial_map_res, tech_lib, psd, &std );
     std.area -= initial_area / 2; /* area of multioutput gates is counted as double */
@@ -196,10 +198,11 @@ int main()
     /* METHOD 2: map adders in one step using emap */
     emap_params pse;
     pse.map_multioutput = true;
-    pse.area_oriented_mapping = true;
+    pse.area_oriented_mapping = area_oriented_mapping;
     emap_stats ste;
     binding_view<klut_network> res_emap = emap<aig_network, 6>( aig, tech_lib, pse, &ste );
     // bool const cece = ( benchmark == "hyp" ) ? true : abc_cec( res_emap, benchmark );
+    // std::cout << cece << "\n";
 
     exp( benchmark, size_before, depth_before, stv.area, stv.delay, to_seconds( stv.time_total ), std.area, std.delay, st_ma.mapped_fa + st_ma.mapped_ha, to_seconds( ste.time_multioutput ) + to_seconds( std.time_total ), ste.area, ste.delay, ste.multioutput_gates, to_seconds( ste.time_total ) );
   }

@@ -78,7 +78,7 @@ int main()
   /* library to map to technology */
   std::vector<gate> gates;
   // std::stringstream in( mcnc_library );
-  std::ifstream in( "asap7.genlib" );
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -89,17 +89,17 @@ int main()
   tps.verbose = true;
   tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks( experiments::div ) )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
 
-    aig_balance( aig );
+    aig_balance( aig, { false } );
 
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
