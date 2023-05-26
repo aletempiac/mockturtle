@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -644,15 +645,15 @@ template<unsigned NInputs>
 struct node_match_emap
 {
   /* best gate match for positive and negative output phases */
-  supergate<NInputs> const* best_supergate[2] = { nullptr, nullptr };
+  supergate<NInputs> const* best_supergate[2];
   /* fanin pin phases for both output phases */
   uint8_t phase[2];
   /* best cut index for both phases */
   uint32_t best_cut[2];
   /* node is mapped using only one phase */
-  bool same_match{ false };
+  bool same_match;
   /* node is mapped to a multi-output gate */
-  bool multioutput_match[2] = { false, false };
+  bool multioutput_match[2];
 
   /* arrival time at node output */
   double arrival[2];
@@ -690,6 +691,7 @@ public:
   using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs, CutSize>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
+  using fanin_cut_t = typename std::array<cut_t const*, Ntk::max_fanin_size>;
   using support_t = typename std::array<uint8_t, CutSize>;
   using truth_compute_t = typename std::array<kitty::static_truth_table<CutSize>, CutSize>;
   using node_match_t = std::vector<node_match_emap<NInputs>>;
@@ -706,6 +708,9 @@ public:
   using multi_match_t = std::array<multi_match_data, max_multioutput_output_size>;
   using multi_cut_set_t = std::vector<std::array<cut_t, max_multioutput_output_size>>;
   using multi_matches_t = std::vector<multi_match_t>;
+
+  using clock = typename std::chrono::steady_clock;
+  using time_point = typename clock::time_point;
 
 public:
   explicit emap_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps, emap_stats& st )
@@ -740,7 +745,7 @@ public:
 
   binding_view<klut_network> run()
   {
-    stopwatch t( st.time_total );
+    time_begin = clock::now();
 
     auto [res, old2new] = initialize_map_network();
 
@@ -778,6 +783,7 @@ public:
 
     /* generate the output network */
     finalize_cover( res, old2new );
+    st.time_total = ( clock::now() - time_begin );
 
     return res;
   }
@@ -984,11 +990,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1020,10 +1026,11 @@ private:
     rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit - 1 );
 
     cut_t new_cut;
-    std::vector<cut_t const*> vcuts( fanin );
+    fanin_cut_t vcuts;
 
     for ( auto const& c1 : *lcuts[0] )
     {
+      vcuts[0] = c1;
       for ( auto const& c2 : *lcuts[1] )
       {
         if ( !c1->merge( *c2, new_cut, CutSize ) )
@@ -1037,9 +1044,8 @@ private:
         }
 
         /* compute function */
-        vcuts[0] = c1;
         vcuts[1] = c2;
-        compute_truth_table( index, vcuts, new_cut );
+        compute_truth_table( index, vcuts, fanin, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -1088,12 +1094,11 @@ private:
 
     /* set cut limit for run-time optimization*/
     rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
+    fanin_cut_t vcuts;
 
     if ( fanin > 1 && fanin <= ps.cut_enumeration_ps.fanin_limit )
     {
       cut_t new_cut, tmp_cut;
-
-      std::vector<cut_t const*> vcuts( fanin );
 
       foreach_mixed_radix_tuple( cut_sizes.begin(), cut_sizes.end(), [&]( auto begin, auto end ) {
         auto it = vcuts.begin();
@@ -1122,7 +1127,7 @@ private:
           return true; /* continue */
         }
 
-        compute_truth_table( index, vcuts, new_cut );
+        compute_truth_table( index, vcuts, fanin, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -1143,8 +1148,9 @@ private:
       for ( auto const& cut : *lcuts[0] )
       {
         cut_t new_cut = *cut;
+        vcuts[0] = cut;
 
-        compute_truth_table( index, { cut }, new_cut );
+        compute_truth_table( index, vcuts, fanin, new_cut );
 
         /* match cut and compute data */
         compute_cut_data<DO_AREA>( new_cut, n );
@@ -1172,13 +1178,16 @@ private:
       auto const index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
 
-      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
-      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
+      node_data.best_supergates[0] = node_data.best_supergates[1] = nullptr;
+      node_data.same_match = 0;
+      node_data.multioutput_match[0] = node_data.multioutput_match[1] = false;
       node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
+      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
+      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
 
       if ( ntk.is_constant( n ) )
       {
-        /* all terminals have flow 1.0 */
+        /* all terminals have flow 0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
         add_zero_cut( index );
@@ -1187,7 +1196,7 @@ private:
       }
       else if ( ntk.is_pi( n ) )
       {
-        /* all terminals have flow 1.0 */
+        /* all terminals have flow 0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = 0.0f;
         /* PIs have the negative phase implemented with an inverter */
@@ -1222,11 +1231,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1323,11 +1332,11 @@ private:
 
       if constexpr ( DO_AREA )
       {
-        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] AreaFlow : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       else
       {
-        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Delay    : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       }
       st.round_stats.push_back( stats.str() );
     }
@@ -1400,9 +1409,9 @@ private:
       float area_gain = float( ( area_old - area ) / area_old * 100 );
       std::stringstream stats{};
       if constexpr ( SwitchActivity )
-        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       else
-        stats << fmt::format( "[i] Area     : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Area     : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       st.round_stats.push_back( stats.str() );
     }
 
@@ -1489,9 +1498,9 @@ private:
       float area_gain = float( ( area_old - area ) / area_old * 100 );
       std::stringstream stats{};
       if constexpr ( SwitchActivity )
-        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Switching: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       else
-        stats << fmt::format( "[i] Area Rev : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Area Rev : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       st.round_stats.push_back( stats.str() );
     }
 
@@ -1974,12 +1983,16 @@ private:
       {
         uint8_t gate_polarity = gate.polarity ^ negation;
         double worst_arrival = 0.0f;
+        double area_local = gate.area;
 
         auto ctr = 0u;
         for ( auto l : *cut )
         {
           double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
           worst_arrival = std::max( worst_arrival, arrival_pin );
+
+          uint8_t leaf_phase = ( node_data.phase[phase] >> ctr ) & 1;
+          area_local += node_match[l].flows[leaf_phase];
           ++ctr;
         }
 
@@ -1990,7 +2003,6 @@ private:
         }
 
         node_data.phase[phase] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow( *cut, n, phase );
 
         if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
         {
@@ -3171,7 +3183,7 @@ private:
     if ( ps.verbose )
     {
       float area_gain = float( ( area_old - area ) / area_old * 100 );
-      std::string stats = fmt::format( "[i] Cleaning : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+      std::string stats = fmt::format( "[i] Cleaning : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
       st.round_stats.push_back( stats );
     }
 
@@ -3514,7 +3526,7 @@ private:
 
         area_gain = float( ( area_old - area ) / area_old * 100 );
 
-        stats << fmt::format( "[i] Buffering: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {}\n", delay, area, area_gain, inv );
+        stats << fmt::format( "[i] Buffering: Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
         st.round_stats.push_back( stats.str() );
       }
     }
@@ -3947,19 +3959,16 @@ private:
     return true;
   }
 
-  void compute_truth_table( uint32_t index, std::vector<cut_t const*> const& vcuts, cut_t& res )
+  void compute_truth_table( uint32_t index, fanin_cut_t const& vcuts, uint32_t fanin, cut_t& res )
   {
-    // stopwatch t( st.cut_enumeration_st.time_truth_table );
-
-    auto i = 0;
-    for ( auto const& cut : vcuts )
+    for ( uint32_t i = 0; i < fanin; ++i )
     {
+      cut_t const* cut = vcuts[i];
       ltruth[i] = ( *cut )->function;
       compute_truth_table_support( *cut, res, ltruth[i] );
-      ++i;
     }
 
-    auto tt_res = ntk.compute( ntk.index_to_node( index ), ltruth.begin(), ltruth.begin() + vcuts.size() );
+    auto tt_res = ntk.compute( ntk.index_to_node( index ), ltruth.begin(), ltruth.begin() + fanin );
 
     if ( ps.cut_enumeration_ps.minimize_truth_table && !fast_support_minimization( tt_res, res ) )
     {
@@ -4696,6 +4705,8 @@ private:
   /* multi-output matching */
   multi_cut_set_t multi_cut_set;    /* set of multi-output cuts */
   multi_matches_t multi_node_match; /* matched multi-output gates */
+
+  time_point time_begin;
 };
 
 } /* namespace detail */
