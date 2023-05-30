@@ -2757,18 +2757,6 @@ private:
         phase[j] = ( gate.polarity >> NInputs ) ^ phase_inverted;
         area[j] = gate.area;
 
-        /* compute the best exact area if only the selected phase is mapped and dereference */
-        if ( !node_data.same_match )
-        {
-          best_exact_area[j] = node_data.flows[phase[j]] * node_data.est_refs[phase[j]];
-
-          if ( node_data.map_refs[phase[j]] != 0 )
-          {
-            auto const& best_cut = cuts[node_index][node_data.best_cut[phase[j]]];
-            best_exact_area[j] = cut_deref<SwitchActivity>( best_cut, ntk.index_to_node( node_index ), phase[j] );
-          }
-        }
-
         /* compute arrival */
         arrival[j] = 0.0;
         auto ctr = 0u;
@@ -3052,40 +3040,43 @@ private:
   void match_multi_add_cuts( node<Ntk> const& n )
   {
     uint32_t index = ntk.node_to_index( n );
-    multi_match_t& tuple_data = multi_node_match[node_tuple_match[index]][0];
+    auto& matches = multi_node_match[node_tuple_match[index]];
 
     /* get the cuts */
-    uint32_t cut_index = tuple_data[0].cut_index;
-    auto& cut_pair = multi_cut_set[cut_index];
-
-    /* insert multi-output cuts into the standard cut set */
-    for ( auto i = 0; i < max_multioutput_output_size; ++i )
+    for ( multi_match_t& tuple_data : matches )
     {
-      uint64_t node_index = tuple_data[i].node_index;
-      auto& cut = cut_pair[i];
-      auto single_cut = cut_pair[i];
+      uint32_t cut_index = tuple_data[0].cut_index;
+      auto& cut_pair = multi_cut_set[cut_index];
 
-      auto& rcuts = cuts[node_index];
-
-      /* insert single cut if unique */
-      if ( !rcuts.is_contained( single_cut ) )
+      /* insert multi-output cuts into the standard cut set */
+      for ( auto i = 0; i < max_multioutput_output_size; ++i )
       {
-        compute_cut_data<DO_AREA>( single_cut, ntk.index_to_node( node_index ) );
-        rcuts.simple_insert( single_cut );
+        uint64_t node_index = tuple_data[i].node_index;
+        auto& cut = cut_pair[i];
+        auto single_cut = cut_pair[i];
+
+        auto& rcuts = cuts[node_index];
+
+        /* insert single cut if unique */
+        if ( !rcuts.is_contained( single_cut ) )
+        {
+          compute_cut_data<DO_AREA>( single_cut, ntk.index_to_node( node_index ) );
+          rcuts.simple_insert( single_cut );
+        }
+
+        /* add multi-output cut */
+        uint32_t num_cuts_pre = rcuts.size();
+        cut->ignore = true;
+        rcuts.simple_insert( cut );
+
+        uint32_t num_cuts_after = rcuts.size();
+        assert( num_cuts_after == num_cuts_pre + 1 );
+
+        rcuts.limit( num_cuts_pre );
+
+        /* update tuple data */
+        tuple_data[i].cut_index = num_cuts_pre;
       }
-
-      /* add multi-output cut */
-      uint32_t num_cuts_pre = rcuts.size();
-      cut->ignore = true;
-      rcuts.simple_insert( cut );
-
-      uint32_t num_cuts_after = rcuts.size();
-      assert( num_cuts_after == num_cuts_pre + 1 );
-
-      rcuts.limit( num_cuts_pre );
-
-      /* update tuple data */
-      tuple_data[i].cut_index = num_cuts_pre;
     }
   }
 
@@ -4561,7 +4552,9 @@ private:
       if ( multi_is_in_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut ) )
       {
         /* if there is a path of length > 1 linking node 1 and 2, save as TFI node */
-        pair[0].in_tfi = multi_is_in_direct_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ) ) ? 0 : 1;
+        uint32_t in_tfi = multi_is_in_direct_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ) ) ? 0 : 1;
+        for ( auto& match : field )
+          match[0].in_tfi = in_tfi;
         /* add a TFI dependency */
         ntk.set_value( ntk.index_to_node( index1 ), index2 );
         // multi_set_tfi_dependency( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut );
