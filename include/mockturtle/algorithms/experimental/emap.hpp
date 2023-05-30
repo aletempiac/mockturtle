@@ -4269,8 +4269,8 @@ private:
       {
         if ( multi_gate_check_incompatible( index1, index2, is_new, insertion_index ) )
           continue;
-        if ( is_new && multi_gate_check_overlapping( index1, index2, cut1 ) )
-          continue;
+        // if ( is_new && multi_gate_check_overlapping( index1, index2, cut1 ) )
+        //   continue;
       }
 
       /* copy cuts */
@@ -4293,7 +4293,7 @@ private:
       }
       else
       {
-        multi_gate_mark_visited( index1, index2, cut1 );
+        // multi_gate_mark_visited( index1, index2, cut1 );
         multi_gate_mark_compatibility( index1, index2, insertion_index );
       }
 
@@ -4574,25 +4574,36 @@ private:
     }
   }
 
-  void multi_topo_sort_rec( choice_view<Ntk>& choice_ntk, node<Ntk> const& n )
+  bool multi_topo_sort_rec( choice_view<Ntk>& choice_ntk, node<Ntk> const& n )
   {
     /* is permanently marked? */
     if ( ntk.visited( n ) == ntk.trav_id() )
-      return;
+      return true;
+
+    /* loop detected: backtrack to remove the cause */
+    if ( ntk.visited( n ) == ntk.trav_id() - 1 )
+      return false;
+
+    /* get the representative (smallest index) */
+    node<Ntk> repr = choice_ntk.get_choice_representative( n );
+
+    /* loop detected: backtrack to remove the cause */
+    if ( ntk.visited( repr ) == ntk.trav_id() - 1 )
+      return false;
 
     /* solve the TFI dependency first */
     node<Ntk> dependency_node = ntk.index_to_node( ntk.value( n ) );
     if ( dependency_node > 0 && ntk.visited( dependency_node ) != ntk.trav_id() - 1 )
     {
-      multi_topo_sort_rec( choice_ntk, dependency_node );
+      if ( !multi_topo_sort_rec( choice_ntk, dependency_node ) )
+        return false;
       assert( ntk.visited( n ) == ntk.trav_id() );
-      return;
+      return true;
     }
 
-    /* get the representative (smallest index) */
-    node<Ntk> repr = choice_ntk.get_choice_representative( n );
-
     /* for all the choices */
+    uint32_t i = 0;
+    bool check = true;
     choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited or temporarily marked */
       assert( ntk.visited( g ) != ntk.trav_id() );
@@ -4603,11 +4614,33 @@ private:
 
       /* mark children */
       ntk.foreach_fanin( g, [&]( auto const& f ) {
-        multi_topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+        check = multi_topo_sort_rec( choice_ntk, ntk.get_node( f ) );
+        return check;
       } );
 
+      /* cycle detected: backtrack to the last choice jump */
+      if ( !check )
+      {
+        /* revert visited */
+        ntk.set_visited( g, ntk.trav_id() - 2 );
+        if ( i > 0 && n == repr )
+        {
+          /* fix cycle: remove multi-output match; TODO: extend for more than 2 outputs */
+          node_tuple_match[ntk.node_to_index( g )] = UINT32_MAX;
+          choice_ntk.remove_choice( g );
+          check = true;
+        }
+        return false;
+      }
+
+      ++i;
       return true;
     } );
+
+    if ( !check )
+    {
+      return false;
+    }
 
     choice_ntk.foreach_choice( repr, [&]( auto const& g ) {
       /* ensure that the node is not visited */
@@ -4621,6 +4654,8 @@ private:
 
       return true;
     } );
+
+    return true;
   }
 
   inline bool multi_is_in_tfi( node<Ntk> const& root, node<Ntk> const& n, cut_t const& cut )
