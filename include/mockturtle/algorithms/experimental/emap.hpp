@@ -118,9 +118,6 @@ struct emap_params
   /*! \brief Remove overlapping multi-output cuts */
   bool remove_overlapping_multicuts{ false };
 
-  /*! \brief Uses matches quality for prioritizing cuts */
-  bool use_matching_prioritization{ false };
-
   /*! \brief Doesn't allow node duplication */
   bool allow_node_duplication{ true };
 
@@ -360,15 +357,15 @@ public:
       return true;
     if ( c1->ignore && !c2->ignore )
       return false;
-    if ( c1.size() < c2.size() )
-      return true;
-    if ( c1.size() > c2.size() )
-      return false;
     if ( c1->flow < c2->flow - eps )
       return true;
     if ( c1->flow > c2->flow + eps )
       return false;
-    return c1->delay < c2->delay - eps;
+    if ( c1->delay < c2->delay - eps )
+      return true;
+    if ( c1->delay > c2->delay + eps )
+      return false;
+    return c1.size() < c2.size();
   }
 
   /*! \brief Compare two cuts using sorting functions.
@@ -417,36 +414,32 @@ public:
    */
   void simple_insert( CutType const& cut, emap_cut_sort_type sort = emap_cut_sort_type::NONE )
   {
+    ( void ) sort;
     /* insert cut in a sorted way */
     typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
 
-    /* do not insert if worst than set_limit */
-    // if ( std::distance( _pcuts.begin(), _pend ) >= _set_limit )
+    // if ( sort == emap_cut_sort_type::DELAY )
     // {
-    //   if ( sort == emap_cut_sort_type::DELAY && !sort_delay( cut, **( ipos + _set_limit - 1 ) ) )
-    //   {
-    //     return;
-    //   }
-    //   if ( sort == emap_cut_sort_type::AREA && !sort_area( cut, **( ipos + _set_limit - 1 ) ) )
-    //   {
-    //     return;
-    //   }
+    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
     // }
-
-    /* do not sort if less cuts than limit */
-
-    if ( sort == emap_cut_sort_type::DELAY )
-    {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
-    }
-    else if ( sort == emap_cut_sort_type::AREA )
-    {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
-    }
-    else /* NONE */
+    // else if ( sort == emap_cut_sort_type::AREA )
+    // {
+    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    // }
+    // else /* NONE */
+    // {
+    //   ipos = _pend;
+    // }
+  
+    if ( sort == emap_cut_sort_type::NONE )
     {
       ipos = _pend;
     }
+    else /* AREA */
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+
 
     /* too many cuts, we need to remove one */
     if ( _pend == _pcuts.end() )
@@ -1012,12 +1005,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY2 : emap_cut_sort_type::AREA;
-
-    if constexpr ( DO_AREA )
-    {
-      sort = emap_cut_sort_type::AREA;
-    }
+    emap_cut_sort_type sort = emap_cut_sort_type::AREA;
 
     /* compute cuts */
     const auto fanin = 2;
@@ -1079,13 +1067,8 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_cut_sort_type sort = ps.use_matching_prioritization ? emap_cut_sort_type::DELAY : emap_cut_sort_type::AREA;
+    emap_cut_sort_type sort = emap_cut_sort_type::AREA;
     cut_t best_cut;
-
-    if constexpr ( DO_AREA )
-    {
-      sort = emap_cut_sort_type::AREA;
-    }
 
     /* compute cuts */
     std::vector<uint32_t> cut_sizes;
@@ -3813,79 +3796,18 @@ private:
     }
 
     /* compute cut cost based on LUT area */
-    if ( !ps.use_matching_prioritization )
+    best_arrival = 0;
+    best_area_flow = cut.size() > 1 ? cut.size() : 0;
+
+    for ( auto leaf : cut )
     {
-      best_arrival = 0;
-      best_area_flow = cut.size() > 1 ? cut.size() : 0;
-
-      for ( auto leaf : cut )
-      {
-        const auto& best_leaf_cut = cuts[leaf][0];
-        best_arrival = std::max( best_arrival, best_leaf_cut->delay );
-        best_area_flow += best_leaf_cut->flow;
-      }
-
-      cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
-      cut->flow = best_area_flow / ntk.fanout_size( n );
-      return;
+      const auto& best_leaf_cut = cuts[leaf][0];
+      best_arrival = std::max( best_arrival, best_leaf_cut->delay );
+      best_area_flow += best_leaf_cut->flow;
     }
 
-    /* compute cut cost based on matches */
-    auto& node_data = node_match[ntk.node_to_index( n )];
-
-    /* get best delay - area for positive phase */
-    if ( supergates_pos != nullptr )
-    {
-      for ( auto const& gate : *supergates_pos )
-      {
-        uint8_t gate_polarity = gate.polarity ^ negations_pos;
-        node_data.phase[0] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow( cut, n, 0 );
-        double worst_arrival = 0.0f;
-
-        auto ctr = 0u;
-        for ( auto l : cut )
-        {
-          double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-          worst_arrival = std::max( worst_arrival, arrival_pin );
-          ++ctr;
-        }
-
-        if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, 0, 0 ) )
-        {
-          best_arrival = worst_arrival;
-          best_area_flow = area_local;
-        }
-      }
-    }
-
-    if ( supergates_neg != nullptr )
-    {
-      for ( auto const& gate : *supergates_neg )
-      {
-        uint8_t gate_polarity = gate.polarity ^ negations_neg;
-        node_data.phase[1] = gate_polarity;
-        double area_local = gate.area + cut_leaves_flow( cut, n, 1 );
-        double worst_arrival = 0.0f;
-
-        auto ctr = 0u;
-        for ( auto l : cut )
-        {
-          double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-          worst_arrival = std::max( worst_arrival, arrival_pin );
-          ++ctr;
-        }
-
-        if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, 0, 0 ) )
-        {
-          best_arrival = worst_arrival;
-          best_area_flow = area_local;
-        }
-      }
-    }
-
-    cut->delay = best_arrival;
-    cut->flow = best_area_flow;
+    cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
+    cut->flow = best_area_flow / ntk.fanout_size( n );
   }
 
   /* compute positions of leave indices in cut `sub` (subset) with respect to
