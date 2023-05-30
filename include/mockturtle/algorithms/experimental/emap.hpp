@@ -115,6 +115,9 @@ struct emap_params
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ false };
 
+  /*! \brief Remove overlapping multi-output cuts */
+  bool remove_overlapping_multicuts{ false };
+
   /*! \brief Uses matches quality for prioritizing cuts */
   bool use_matching_prioritization{ false };
 
@@ -4098,7 +4101,11 @@ private:
     multi_node_match_local.reserve( multi_cuts_classes.size() );
 
     multi_compute_matches( multi_cuts, multi_cuts_classes, multi_node_match_local );
-    multi_filter_and_match<false>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
+
+    if ( ps.remove_overlapping_multicuts )
+      multi_filter_and_match<true>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
+    else
+      multi_filter_and_match<false>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
   }
 
   void multi_init_topo_order()
