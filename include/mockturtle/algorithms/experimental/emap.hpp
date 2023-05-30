@@ -4107,7 +4107,7 @@ private:
     multi_node_match_local.reserve( multi_cuts_classes.size() );
 
     multi_compute_matches( multi_cuts, multi_cuts_classes, multi_node_match_local );
-    multi_filter_and_match<true>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
+    multi_filter_and_match<false>( multi_cuts, multi_node_match_local ); /* it also adds the tuple for node mapping */
   }
 
   void multi_init_topo_order()
@@ -4258,6 +4258,8 @@ private:
       assert( index1 < index2 );
 
       /* remove incompatible multi-output cuts */
+      bool is_new = true;
+      uint32_t insertion_index = multi_node_match.size();
       if constexpr ( OverlapFilter )
       {
         if ( multi_gate_check_overlapping( index1, index2, cut1 ) )
@@ -4265,7 +4267,9 @@ private:
       }
       else
       {
-        if ( multi_gate_check_incompatible( index1, index2 ) )
+        if ( multi_gate_check_incompatible( index1, index2, is_new, insertion_index ) )
+          continue;
+        if ( is_new && multi_gate_check_overlapping( index1, index2, cut1 ) )
           continue;
       }
 
@@ -4285,10 +4289,12 @@ private:
       if constexpr ( OverlapFilter )
       {
         multi_gate_mark_visited( index1, index2, cut1 );
+        node_tuple_match[index2] = multi_node_match.size();
       }
       else
       {
-        multi_gate_mark_compatibility( index1, index2, multi_cut_set.size() );
+        multi_gate_mark_visited( index1, index2, cut1 );
+        multi_gate_mark_compatibility( index1, index2, insertion_index );
       }
 
       /* add cut */
@@ -4302,9 +4308,25 @@ private:
       new_data2.cut_index = multi_cut_set.size() - 1;
       multi_match_t p = { new_data1, new_data2 };
 
-      /* TODO: add cuts to the correct bucket */
-      multi_node_match.push_back( { p } );
-      node_tuple_match[std::max( index1, index2 )] = multi_node_match.size() - 1;
+      /* add cuts to the correct bucket */
+      if ( is_new )
+      {
+        multi_node_match.push_back( { p } );
+      }
+      else
+      {
+        multi_node_match[insertion_index].push_back( p );
+      }
+    }
+
+    /* remove indexing for lower index for compatible overlapping cuts */
+    if constexpr ( !OverlapFilter )
+    {
+      for ( auto const& entry : multi_node_match )
+      {
+        multi_match_t const& p = entry[0];
+        node_tuple_match[p[0].node_index] = UINT32_MAX;
+      }
     }
   }
 
@@ -4406,20 +4428,27 @@ private:
     return contained;
   }
 
-  inline bool multi_gate_check_incompatible( uint32_t index1, uint32_t index2 )
+  inline bool multi_gate_check_incompatible( uint32_t index1, uint32_t index2, bool& is_new, uint32_t& data_index )
   {
-    /* check cut assigned cut outputs */
-    uint32_t current_assignment = node_match[index1].best_cut[0];
-    if ( current_assignment != node_match[index2].best_cut[0] )
+    /* check cut assigned cut outputs, specialized code for 2 outputs */
+    uint32_t current_assignment = node_tuple_match[index1];
+    if ( current_assignment != node_tuple_match[index2] )
       return true;
+
+    /* load data */
+    if ( current_assignment != UINT32_MAX )
+    {
+      is_new = false;
+      data_index = current_assignment;
+    }
 
     return false;
   }
 
   inline void multi_gate_mark_compatibility( uint32_t index1, uint32_t index2, uint32_t mark_value )
   {
-    node_match[index1].best_cut[0] = mark_value;
-    node_match[index2].best_cut[0] = mark_value;
+    node_tuple_match[index1] = mark_value;
+    node_tuple_match[index2] = mark_value;
   }
 
   inline void multi_gate_mark_visited( uint32_t index1, uint32_t index2, multi_cut_t const& cut )
@@ -4534,8 +4563,8 @@ private:
         /* if there is a path of length > 1 linking node 1 and 2, save as TFI node */
         pair[0].in_tfi = multi_is_in_direct_tfi( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ) ) ? 0 : 1;
         /* add a TFI dependency */
-        // ntk.set_value( ntk.index_to_node( index1 ), index2 );
-        multi_set_tfi_dependency( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut );
+        ntk.set_value( ntk.index_to_node( index1 ), index2 );
+        // multi_set_tfi_dependency( ntk.index_to_node( index2 ), ntk.index_to_node( index1 ), cut );
         continue;
       }
 
