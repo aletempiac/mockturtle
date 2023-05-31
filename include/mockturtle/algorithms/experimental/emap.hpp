@@ -1925,6 +1925,49 @@ private:
     } );
   }
 
+  void propagate_arrival_node( node<Ntk> const& n )
+  {
+    uint32_t index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+
+    /* compute arrival of use_phase */
+    supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
+    double worst_arrival = 0;
+    uint8_t best_phase = node_data.phase[use_phase];
+    auto ctr = 0u;
+    for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
+    {
+      double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
+      worst_arrival = std::max( worst_arrival, arrival_pin );
+      ++ctr;
+    }
+    node_data.arrival[use_phase] = worst_arrival;
+
+    /* compute arrival of the other phase */
+    use_phase ^= 1;
+    if ( node_data.same_match )
+    {
+      node_data.arrival[use_phase] = worst_arrival + lib_inv_delay;
+      return;
+    }
+
+    assert( node_data.best_supergate[0] != nullptr );
+
+    best_supergate = node_data.best_supergate[use_phase];
+    worst_arrival = 0;
+    best_phase = node_data.phase[use_phase];
+    ctr = 0u;
+    for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
+    {
+      double arrival_pin = node_match[l].arrival[( best_phase >> ctr ) & 1] + best_supergate->tdelay[ctr];
+      worst_arrival = std::max( worst_arrival, arrival_pin );
+      ++ctr;
+    }
+
+    node_data.arrival[use_phase] = worst_arrival;
+  }
+
   template<bool DO_AREA>
   void match_phase( node<Ntk> const& n, uint8_t phase )
   {
@@ -2912,8 +2955,14 @@ private:
 
     signature |= UINT64_C( 1 ) << ( index & 0x3f );
 
-    assert( !node_data.multioutput_match[0] );
-    assert( !node_data.multioutput_match[1] );
+    /* avoid cycles by recomputing arrival times for multi-output gates or decomposing them */
+    if ( node_data.same_match && node_data.multioutput_match[0] )
+    {
+      propagate_arrival_node( n );
+      /* check required time */
+      if ( node_data.arrival[0] < node_data.required[0] + epsilon && node_data.arrival[1] < node_data.required[1] + epsilon )
+        return;
+    }
 
     /* match positive phase */
     match_phase<DO_AREA>( n, 0u );
