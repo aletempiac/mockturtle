@@ -77,8 +77,8 @@ int main()
 
   /* library to map to technology */
   std::vector<gate> gates;
-  // std::stringstream in( mcnc_library );
-  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
+  std::stringstream in( mcnc_library );
+  // std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -89,12 +89,12 @@ int main()
   tps.verbose = true;
   tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
-  for ( auto const& benchmark : epfl_benchmarks( experiments::div ) )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -110,7 +110,8 @@ int main()
 
     binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
 
-    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    // bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    bool cec = true;
 
     exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
