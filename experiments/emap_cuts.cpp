@@ -29,12 +29,10 @@
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
 #include <lorina/genlib.hpp>
-#include <mockturtle/algorithms/experimental/emap.hpp>
+#include <mockturtle/algorithms/experimental/emap_lite.hpp>
 #include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
-#include <mockturtle/io/write_blif.hpp>
-#include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/utils/tech_library.hpp>
@@ -57,16 +55,12 @@ std::string const mcnc_library = "GATE   inv1    1  O=!a;             PIN * INV 
                                  "GATE   or2     3  O=a+b;            PIN * NONINV 1 999 2.4 0.3 2.4 0.3\n"
                                  "GATE   xor2a   5  O=a*!b+!a*b;      PIN * UNKNOWN 2 999 1.9 0.5 1.9 0.5\n"
                                  "#GATE  xor2b   5  O=!(a*b+!a*!b);   PIN * UNKNOWN 2 999 1.9 0.5 1.9 0.5\n"
-                                 "GATE   xor3    8  O=a*b*c+!a*!b*c+!a*b*!c+a*b*!c;      PIN * UNKNOWN 2 999 2.9 0.5 2.9 0.5\n"
                                  "GATE   xnor2a  5  O=a*b+!a*!b;      PIN * UNKNOWN 2 999 2.1 0.5 2.1 0.5\n"
                                  "#GATE  xnor2b  5  O=!(a*!b+!a*b);   PIN * UNKNOWN 2 999 2.1 0.5 2.1 0.5\n"
-                                 "GATE   xnor3   8  O=!a*!b*!c+!a*b*c+a*b*!c+a*!b*c;      PIN * UNKNOWN 2 999 2.9 0.5 2.9 0.5\n"
                                  "GATE   aoi21   3  O=!(a*b+c);       PIN * INV 1 999 1.6 0.4 1.6 0.4\n"
                                  "GATE   aoi22   4  O=!(a*b+c*d);     PIN * INV 1 999 2.0 0.4 2.0 0.4\n"
                                  "GATE   oai21   3  O=!((a+b)*c);     PIN * INV 1 999 1.6 0.4 1.6 0.4\n"
                                  "GATE   oai22   4  O=!((a+b)*(c+d)); PIN * INV 1 999 2.0 0.4 2.0 0.4\n"
-                                 "GATE   mtest  11  O=!a*!b*!c+!a*b*c+a*b*!c+a*!b*c;   PIN * UNKNOWN 2 999 2.9 0.5 2.9 0.5\n"
-                                 "GATE   mtest  11  O=!a*b*c+a*!b*c;                PIN * UNKNOWN 2 999 2.0 0.5 2.0 0.5\n"
                                  "GATE   buf     2  O=a;              PIN * NONINV 1 999 1.0 0.0 1.0 0.0\n"
                                  "GATE   zero    0  O=CONST0;\n"
                                  "GATE   one     0  O=CONST1;";
@@ -76,13 +70,13 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, double, uint32_t, double, float, bool> exp(
-      "emap", "benchmark", "size", "area_after", "depth", "delay_after", "runtime", "cec" );
-  
+  fmt::print( "[i] processing technology library\n" );
+
   /* library to map to technology */
   std::vector<gate> gates;
   // std::stringstream in( mcnc_library );
-  std::ifstream in( "asap7.genlib" );
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
+
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -91,11 +85,10 @@ int main()
 
   tech_library_params tps;
   tps.verbose = true;
-  tps.load_multioutput_gates = true;
-  tps.load_multioutput_gates_single = true;
   tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
 
-  std::vector<std::string> test_benchmarks = { "mult4.aig" };
+  emap_lite_params ps;
+  ps.random_cuts = false;
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -109,25 +102,18 @@ int main()
 
     aig_balance( aig, { false } );
 
-    const uint32_t size_before = aig.num_gates();
-    const uint32_t depth_before = depth_view( aig ).depth();
+    std::ofstream data_out( "cut_data/" + benchmark + ".txt" );
 
-    emap_params ps;
-    ps.cut_enumeration_ps.minimize_truth_table = true;
-    ps.map_multioutput = true;
-    ps.area_oriented_mapping = false;
-    ps.verbose = true;
-    emap_stats st;
+    int max_iterations = 1;
+    while ( max_iterations-- > 0 )
+    {
+      emap_lite_stats st;
+      binding_view<klut_network> res = emap_lite<aig_network, 6>( aig, tech_lib, ps, &st );
+      data_out << fmt::format( "Delay = {:>5.2f}; Area = {:>5.2f};\n", st.delay, st.area );
+    }
 
-    binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
-
-    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
-
-    exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
+    data_out.close();
   }
-
-  exp.save();
-  exp.table();
 
   return 0;
 }

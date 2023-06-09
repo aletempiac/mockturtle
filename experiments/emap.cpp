@@ -77,8 +77,8 @@ int main()
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::stringstream in( mcnc_library );
-  // std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
+  // std::stringstream in( mcnc_library );
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -94,7 +94,7 @@ int main()
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -105,7 +105,8 @@ int main()
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_params ps;
-    ps.verbose = true;
+    ps.area_oriented_mapping = false;
+    ps.verbose = false;
     emap_stats st;
 
     binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );

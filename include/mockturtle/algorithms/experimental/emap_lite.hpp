@@ -33,6 +33,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -110,6 +111,9 @@ struct emap_lite_params
 
   /*! \brief Doesn't allow node duplication */
   bool allow_node_duplication{ true };
+
+  /*! \brief Pick cuts randomly */
+  bool random_cuts{ false };
 
   /*! \brief Be verbose. */
   bool verbose{ false };
@@ -193,6 +197,7 @@ enum class emap_lite_cut_sort_type
   DELAY2 = 1,
   AREA = 2,
   AREA2 = 3,
+  RANDOM = 4,
   NONE = 4
 };
 
@@ -350,6 +355,20 @@ public:
     return c1->delay < c2->delay - eps;
   }
 
+  static bool sort_random( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( !c1->ignore && c2->ignore )
+      return true;
+    if ( c1->ignore && !c2->ignore )
+      return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    return std::rand() <= RAND_MAX / 2;
+  }
+
   /*! \brief Compare two cuts using sorting functions.
    *
    * This method compares two cuts using a sorting function.
@@ -375,6 +394,10 @@ public:
     else if ( sort == emap_lite_cut_sort_type::AREA2 )
     {
       return sort_area2( cut1, cut2 );
+    }
+    else if ( sort == emap_lite_cut_sort_type::RANDOM )
+    {
+      return sort_random( cut1, cut2 );
     }
     else
     {
@@ -421,6 +444,10 @@ public:
     else if ( sort == emap_lite_cut_sort_type::AREA )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+    }
+    else if ( sort == emap_lite_cut_sort_type::RANDOM )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_random( *a, *b ); } );
     }
     else /* NONE */
     {
@@ -847,7 +874,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_lite_cut_sort_type sort = emap_lite_cut_sort_type::AREA;
+    emap_lite_cut_sort_type sort = ps.random_cuts ? emap_lite_cut_sort_type::RANDOM : emap_lite_cut_sort_type::AREA;
 
     /* compute cuts */
     const auto fanin = 2;
@@ -909,7 +936,7 @@ private:
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
-    emap_lite_cut_sort_type sort = emap_lite_cut_sort_type::AREA;
+    emap_lite_cut_sort_type sort = ps.random_cuts ? emap_lite_cut_sort_type::RANDOM : emap_lite_cut_sort_type::AREA;
     cut_t best_cut;
 
     /* compute cuts */
@@ -2449,9 +2476,12 @@ private:
       return;
     }
 
+    /* compute literals */
+    uint32_t literals = compute_cut_literals( n, cut );
+
     /* compute cut cost based on LUT area */
     best_arrival = 0;
-    best_area_flow = cut.size() > 1 ? cut.size() : 0;
+    best_area_flow = cut.size() > 1 ? literals : 0;
 
     for ( auto leaf : cut )
     {
@@ -2460,8 +2490,109 @@ private:
       best_area_flow += best_leaf_cut->flow;
     }
 
+    /* compute volume */
+    // ntk.incr_trav_id();
+    // uint32_t volume = compute_cut_volume( n, cut );
+
+    /* compute MFFC leaves */
+    // uint32_t volume = node_deref_cut( n, cut );
+
+    /* increase area flow by the difference */
+
     cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
     cut->flow = best_area_flow / ntk.fanout_size( n );
+  }
+
+    uint32_t compute_cut_volume( node<Ntk> const& n, cut_t const& cut )
+  {
+    ntk.incr_trav_id();
+
+    for ( uint32_t leaf : cut )
+      ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
+    
+    return compute_cut_volume_rec( n );
+  }
+
+  uint32_t compute_cut_volume_rec( node<Ntk> const& n )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return 0;
+    
+    ntk.set_visited( n, ntk.trav_id() );
+
+    uint32_t volume = 1;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      volume += compute_cut_volume_rec( ntk.get_node( f ) );
+    } );
+
+    return volume;
+  }
+
+  uint32_t compute_mffc_node( node<Ntk> const& n, cut_t const& cut )
+  {
+    ntk.incr_trav_id();
+
+    for ( uint32_t leaf : cut )
+      ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
+    
+    uint32_t mffc = compute_mffc_deref( n );
+    compute_mffc_ref( n );
+
+    return mffc;
+  }
+
+  uint32_t compute_mffc_deref( node<Ntk> const& n )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return 0;
+    
+    uint32_t mffc = 1;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      if ( ntk.decr_fanout_size( n ) == 0 )
+        mffc += compute_mffc_deref( ntk.get_node( f ) );
+    } );
+
+    return mffc;
+  }
+
+  uint32_t compute_mffc_ref( node<Ntk> const& n )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return 0;
+    
+    uint32_t mffc = 1;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      if ( ntk.incr_fanout_size( n ) == 0 )
+        mffc += compute_mffc_ref( ntk.get_node( f ) );
+    } );
+
+    return mffc;
+  }
+
+  uint32_t compute_cut_literals( node<Ntk> const& n, cut_t const& cut )
+  {
+    ntk.incr_trav_id();
+
+    for ( uint32_t leaf : cut )
+      ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
+    
+    uint32_t lits = compute_cut_literals_rec( n );
+    return lits - ( ntk.fanout_size( n ) > 1 ? 1 : 0 );
+  }
+
+  uint32_t compute_cut_literals_rec( node<Ntk> const& n )
+  {
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return 0;
+    
+    ntk.set_visited( n, ntk.trav_id() );
+
+    uint32_t lits = ntk.fanout_size( n ) > 1 ? 2 : 1;
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      lits += compute_cut_literals_rec( ntk.get_node( f ) );
+    } );
+
+    return lits;
   }
 
   /* compute positions of leave indices in cut `sub` (subset) with respect to
