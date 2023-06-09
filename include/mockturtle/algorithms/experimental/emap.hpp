@@ -196,7 +196,7 @@ struct cut_enumeration_emap_cut
   /* list of supergates matching the cut for positive and negative output phases */
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
   /* input negations, 0: pos, 1: neg */
-  std::array<uint8_t, 2> negations{ 0, 0 };
+  std::array<uint16_t, 2> negations{ 0, 0 };
 };
 
 struct cut_enumeration_emap_multi_cut
@@ -643,7 +643,7 @@ struct node_match_emap
   /* best gate match for positive and negative output phases */
   supergate<NInputs> const* best_supergate[2];
   /* fanin pin phases for both output phases */
-  uint8_t phase[2];
+  uint16_t phase[2];
   /* best cut index for both phases */
   uint32_t best_cut[2];
   /* node is mapped using only one phase */
@@ -1848,7 +1848,7 @@ private:
       /* compute arrival of use_phase */
       supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
       double worst_arrival = 0;
-      uint8_t best_phase = node_data.phase[use_phase];
+      uint16_t best_phase = node_data.phase[use_phase];
       auto ctr = 0u;
       for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
       {
@@ -1934,7 +1934,7 @@ private:
     /* compute arrival of use_phase */
     supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
     double worst_arrival = 0;
-    uint8_t best_phase = node_data.phase[use_phase];
+    uint16_t best_phase = node_data.phase[use_phase];
     auto ctr = 0u;
     for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
     {
@@ -1976,7 +1976,7 @@ private:
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
-    uint8_t best_phase = 0u;
+    uint16_t best_phase = 0u;
     uint8_t cut_index = 0u;
     auto index = ntk.node_to_index( n );
 
@@ -2012,7 +2012,7 @@ private:
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
-        uint8_t gate_polarity = gate.polarity ^ negation;
+        uint16_t gate_polarity = gate.polarity ^ negation;
         double worst_arrival = 0.0f;
         double area_local = gate.area;
 
@@ -2066,7 +2066,7 @@ private:
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
-    uint8_t best_phase = 0u;
+    uint16_t best_phase = 0u;
     uint8_t cut_index = 0u;
     auto index = ntk.node_to_index( n );
 
@@ -2119,7 +2119,7 @@ private:
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
-        uint8_t gate_polarity = gate.polarity ^ negation;
+        uint16_t gate_polarity = gate.polarity ^ negation;
         double worst_arrival = 0.0f;
 
         auto ctr = 0u;
@@ -2440,7 +2440,7 @@ private:
   {
     auto& node_data = node_match[index];
 
-    kitty::static_truth_table<NInputs> zero_tt;
+    kitty::static_truth_table<6> zero_tt;
     auto const supergates_zero = library.get_supergates( zero_tt );
     auto const supergates_one = library.get_supergates( ~zero_tt );
 
@@ -2495,7 +2495,7 @@ private:
     std::array<float, max_multioutput_output_size> area_flow;
     std::array<float, max_multioutput_output_size> area;
     std::array<uint8_t, max_multioutput_output_size> phase;
-    std::array<uint8_t, max_multioutput_output_size> pin_phase;
+    std::array<uint16_t, max_multioutput_output_size> pin_phase;
     std::array<double, max_multioutput_output_size> est_refs;
     std::array<uint32_t, max_multioutput_output_size> cut_index;
     bool mapped_multioutput = false;
@@ -2754,7 +2754,7 @@ private:
     std::array<float, max_multioutput_output_size> area_exact;
     std::array<float, max_multioutput_output_size> area;
     std::array<uint8_t, max_multioutput_output_size> phase;
-    std::array<uint8_t, max_multioutput_output_size> pin_phase;
+    std::array<uint16_t, max_multioutput_output_size> pin_phase;
     std::array<uint32_t, max_multioutput_output_size> cut_index;
 
     uint8_t iteration_phase = cut0->supergates[0] == nullptr ? 1 : 0;
@@ -3794,7 +3794,7 @@ private:
     cut->flow = best_area_flow;
     cut->ignore = false;
 
-    if ( cut.size() > NInputs )
+    if ( cut.size() > NInputs || cut.size() > 6 )
     {
       /* Ignore cuts too big to be mapped using the library */
       cut->ignore = true;
@@ -3802,11 +3802,11 @@ private:
     }
 
     const auto tt = cut->function;
-    const auto fe = kitty::shrink_to<NInputs>( tt );
+    const kitty::static_truth_table<6> fe = kitty::extend_to<6>( tt );
     auto fe_canon = fe;
 
-    uint8_t negations_pos = 0;
-    uint8_t negations_neg = 0;
+    uint16_t negations_pos = 0;
+    uint16_t negations_neg = 0;
 
     /* match positive polarity */
     if constexpr ( Configuration == classification_type::p_configurations )
@@ -3815,6 +3815,7 @@ private:
       fe_canon = std::get<0>( canon );
       negations_pos = std::get<1>( canon );
     }
+
     auto const supergates_pos = library.get_supergates( fe_canon );
 
     /* match negative polarity */
@@ -3829,7 +3830,6 @@ private:
       fe_canon = ~fe;
     }
 
-    /* get gates */
     auto const supergates_neg = library.get_supergates( fe_canon );
 
     if ( supergates_pos != nullptr || supergates_neg != nullptr )
@@ -4301,17 +4301,17 @@ private:
 
   bool multi_compute_cut_data( std::array<cut_t, max_multioutput_output_size>& cut_tuple )
   {
-    std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts;
-    std::array<kitty::static_truth_table<NInputs>, max_multioutput_output_size> tts_order;
+    std::array<kitty::static_truth_table<6>, max_multioutput_output_size> tts;
+    std::array<kitty::static_truth_table<6>, max_multioutput_output_size> tts_order;
     std::array<size_t, max_multioutput_output_size> order = {};
-    std::array<uint8_t, max_multioutput_output_size> phase = { 0 };
+    std::array<uint16_t, max_multioutput_output_size> phase = { 0 };
     std::array<uint8_t, max_multioutput_output_size> phase_order;
 
     std::iota( order.begin(), order.end(), 0 );
 
     for ( auto i = 0; i < max_multioutput_output_size; ++i )
     {
-      tts[i] = kitty::shrink_to<NInputs>( cut_tuple[i]->function );
+      tts[i] = kitty::extend_to<6>( cut_tuple[i]->function );
       if ( ( tts[i]._bits & 1 ) == 1 )
       {
         tts[i] = ~tts[i];

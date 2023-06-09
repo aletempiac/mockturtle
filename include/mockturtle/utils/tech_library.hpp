@@ -131,7 +131,7 @@ struct supergate
   std::vector<uint8_t> permutation{};
 
   /* pin negations */
-  uint8_t polarity{ 0 };
+  uint16_t polarity{ 0 };
 };
 
 namespace detail
@@ -190,10 +190,11 @@ class tech_library
 private:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_multi_outputs = 2;
+  static constexpr uint32_t truth_table_size = 6;
   using supergates_list_t = std::vector<supergate<NInputs>>;
-  using TT = kitty::static_truth_table<NInputs>;
+  using TT = kitty::static_truth_table<truth_table_size>;
   using tt_hash = kitty::hash<TT>;
-  using multi_tt_hash = detail::tuple_tt_hash<NInputs, max_multi_outputs>;
+  using multi_tt_hash = detail::tuple_tt_hash<truth_table_size, max_multi_outputs>;
   using index_t = phmap::flat_hash_map<TT, uint32_t, tt_hash>;
   using lib2_t = std::vector<supergates_list_t>;
   using lib_t = phmap::flat_hash_map<TT, supergates_list_t, tt_hash>;
@@ -404,7 +405,7 @@ private:
             sg.polarity |= ( ( neg >> perm[i] ) & 1 ) << i; /* permutate input negation to match the right pin */
           }
 
-          const auto static_tt = kitty::extend_to<NInputs>( tt );
+          const auto static_tt = kitty::extend_to<truth_table_size>( tt );
 
           auto& v = _super_lib[static_tt];
 
@@ -458,14 +459,14 @@ private:
                                       static_cast<float>( gate.area ),
                                       {},
                                       perm,
-                                      static_cast<uint8_t>( phase ) };
+                                      static_cast<uint16_t>( phase ) };
 
             for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
             {
               sg.tdelay[i] = gate.tdelay[perm[i]];
             }
 
-            const auto static_tt = kitty::extend_to<NInputs>( tt_canon );
+            const auto static_tt = kitty::extend_to<truth_table_size>( tt_canon );
 
             auto& v = _super_lib[static_tt];
 
@@ -548,14 +549,14 @@ private:
                                     static_cast<float>( gate.area ),
                                     {},
                                     perm,
-                                    static_cast<uint8_t>( neg ) };
+                                    static_cast<uint16_t>( neg ) };
 
           for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
           {
             sg.tdelay[i] = gate.tdelay[perm[i]];
           }
 
-          const auto static_tt = kitty::extend_to<NInputs>( tt );
+          const auto static_tt = kitty::extend_to<truth_table_size>( tt );
 
           auto& v = _super_lib[static_tt];
 
@@ -610,14 +611,14 @@ private:
                                       static_cast<float>( gate.area ),
                                       {},
                                       perm,
-                                      static_cast<uint8_t>( phase ) };
+                                      static_cast<uint16_t>( phase ) };
 
             for ( auto i = 0u; i < perm.size() && i < NInputs; ++i )
             {
               sg.tdelay[i] = gate.tdelay[perm[i]];
             }
 
-            const auto static_tt = kitty::extend_to<NInputs>( tt_canon );
+            const auto static_tt = kitty::extend_to<truth_table_size>( tt_canon );
 
             auto& v = _super_lib[static_tt];
 
@@ -758,7 +759,7 @@ private:
         /* canonize output */
         for ( auto i = 0; i < tts.size(); ++i )
         {
-          static_tts[i] = kitty::extend_to<NInputs>( tts[i] );
+          static_tts[i] = kitty::extend_to<truth_table_size>( tts[i] );
           if ( ( static_tts[i]._bits & 1 ) == 1 )
           {
             static_tts[i] = ~static_tts[i];
@@ -883,7 +884,7 @@ private:
         for ( auto j = 0; j < max_multi_outputs; ++j )
         {
           auto& gate = multi_gates[j][i];
-          const TT tt = kitty::extend_to<NInputs>( gate.root->function );
+          const TT tt = kitty::extend_to<truth_table_size>( gate.root->function );
 
           /* get the area of the smallest match with a simple gate */
           const auto match = get_supergates( tt );

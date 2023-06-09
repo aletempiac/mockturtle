@@ -96,6 +96,9 @@ struct composed_gate
 template<unsigned NInputs = 5u>
 class super_utils
 {
+private:
+  static constexpr uint32_t truth_table_size = 6;
+
 public:
   explicit super_utils( std::vector<gate> const& gates, super_lib const& supergates_spec = {}, super_utils_params const ps = {} )
       : _gates( gates ),
@@ -178,7 +181,7 @@ public:
     {
       std::array<float, NInputs> pin_to_pin_delays{};
 
-      if ( g.function.num_vars() > NInputs )
+      if ( g.function.num_vars() > NInputs || g.function.num_vars() > truth_table_size )
       {
         ++ignored;
         ignored_id = g.id;
@@ -238,7 +241,7 @@ public:
 
   void generate_library_with_super()
   {
-    if ( _supergates_spec.max_num_vars > NInputs )
+    if ( _supergates_spec.max_num_vars > NInputs || _supergates_spec.max_num_vars > truth_table_size )
     {
       std::cerr << fmt::format(
           "ERROR: NInputs ({}) should be greater or equal than the max number of variables ({}) in the super file.\n", NInputs, _supergates_spec.max_num_vars );

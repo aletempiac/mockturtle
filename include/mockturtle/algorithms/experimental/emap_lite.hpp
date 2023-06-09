@@ -178,7 +178,7 @@ struct cut_enumeration_emap_lite_cut
   /* list of supergates matching the cut for positive and negative output phases */
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
   /* input negations, 0: pos, 1: neg */
-  std::array<uint8_t, 2> negations{ 0, 0 };
+  std::array<uint16_t, 2> negations{ 0, 0 };
 };
 
 struct cut_enumeration_emap_lite_multi_cut
@@ -611,7 +611,7 @@ struct node_match_emap_lite
   /* best gate match for positive and negative output phases */
   supergate<NInputs> const* best_supergate[2] = { nullptr, nullptr };
   /* fanin pin phases for both output phases */
-  uint8_t phase[2];
+  uint16_t phase[2];
   /* best cut index for both phases */
   uint32_t best_cut[2];
   /* node is mapped using only one phase */
@@ -1110,7 +1110,7 @@ private:
        * the two phases if in use in the cover */
       if ( node_data.same_match )
       {
-        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+        uint16_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
         auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
         cut_deref<SwitchActivity>( best_cut, *it, use_phase );
 
@@ -1427,12 +1427,12 @@ private:
       node_data.required[0] = std::numeric_limits<float>::max();
       node_data.required[1] = std::numeric_limits<float>::max();
 
-      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+      uint16_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
 
       /* compute arrival of use_phase */
       supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
       double worst_arrival = 0;
-      uint8_t best_phase = node_data.phase[use_phase];
+      uint16_t best_phase = node_data.phase[use_phase];
       auto ctr = 0u;
       for ( auto l : cuts[index][node_data.best_cut[use_phase]] )
       {
@@ -1517,7 +1517,7 @@ private:
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
-    uint8_t best_phase = 0u;
+    uint16_t best_phase = 0u;
     uint8_t cut_index = 0u;
     auto index = ntk.node_to_index( n );
 
@@ -1546,7 +1546,7 @@ private:
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
-        uint8_t gate_polarity = gate.polarity ^ negation;
+        uint16_t gate_polarity = gate.polarity ^ negation;
         double worst_arrival = 0.0f;
 
         auto ctr = 0u;
@@ -1597,7 +1597,7 @@ private:
     float best_area = std::numeric_limits<float>::max();
     uint32_t best_size = UINT32_MAX;
     uint8_t best_cut = 0u;
-    uint8_t best_phase = 0u;
+    uint16_t best_phase = 0u;
     uint8_t cut_index = 0u;
     auto index = ntk.node_to_index( n );
 
@@ -1637,7 +1637,7 @@ private:
       /* match each gate and take the best one */
       for ( auto const& gate : *supergates[phase] )
       {
-        uint8_t gate_polarity = gate.polarity ^ negation;
+        uint16_t gate_polarity = gate.polarity ^ negation;
         double worst_arrival = 0.0f;
 
         auto ctr = 0u;
@@ -1865,7 +1865,7 @@ private:
   {
     auto& node_data = node_match[index];
 
-    kitty::static_truth_table<NInputs> zero_tt;
+    kitty::static_truth_table<6> zero_tt;
     auto const supergates_zero = library.get_supergates( zero_tt );
     auto const supergates_one = library.get_supergates( ~zero_tt );
 
@@ -2399,7 +2399,7 @@ private:
     cut->flow = best_area_flow;
     cut->ignore = false;
 
-    if ( cut.size() > NInputs )
+    if ( cut.size() > NInputs || cut.size() > 6 )
     {
       /* Ignore cuts too big to be mapped using the library */
       cut->ignore = true;
@@ -2407,11 +2407,11 @@ private:
     }
 
     const auto tt = cut->function;
-    const auto fe = kitty::shrink_to<NInputs>( tt );
+    const kitty::static_truth_table<6> fe = kitty::extend_to<6>( tt );
     auto fe_canon = fe;
 
-    uint8_t negations_pos = 0;
-    uint8_t negations_neg = 0;
+    uint16_t negations_pos = 0;
+    uint16_t negations_neg = 0;
 
     /* match positive polarity */
     if constexpr ( Configuration == classification_type::p_configurations )
@@ -2420,6 +2420,7 @@ private:
       fe_canon = std::get<0>( canon );
       negations_pos = std::get<1>( canon );
     }
+
     auto const supergates_pos = library.get_supergates( fe_canon );
 
     /* match negative polarity */
@@ -2434,7 +2435,6 @@ private:
       fe_canon = ~fe;
     }
 
-    /* get gates */
     auto const supergates_neg = library.get_supergates( fe_canon );
 
     if ( supergates_pos != nullptr || supergates_neg != nullptr )
