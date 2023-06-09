@@ -50,6 +50,7 @@
 
 #include "../io/genlib_reader.hpp"
 #include "../io/super_reader.hpp"
+#include "struct_library.hpp"
 #include "super_utils.hpp"
 
 namespace mockturtle
@@ -99,11 +100,14 @@ enum class classification_type : uint32_t
 
 struct tech_library_params
 {
-  /*! \brief Remove dominated gates (larger sizes) */
-  bool remove_dominated_gates{ true };
+  /*! \brief Load large gates with more than 6 inputs */
+  bool load_large_gates{ false };
 
   /*! \brief Loads multioutput gates in the library */
   bool load_multioutput_gates{ false };
+
+  /*! \brief Remove dominated gates (larger sizes) */
+  bool remove_dominated_gates{ true };
 
   /*! \brief Loads multioutput gates in single-output library */
   bool load_multioutput_gates_single{ false };
@@ -210,15 +214,22 @@ public:
         _ps( ps ),
         _super( _gates, _supergates_spec, super_utils_params{ ps.load_multioutput_gates_single, ps.verbose } ),
         _use_supergates( false ),
+        _struct( _gates ),
         _super_lib(),
         _multi_lib()
   {
-    static_assert( NInputs < 7, "The technology library database supports NInputs up to 6\n" );
+    static_assert( NInputs < 16, "The technology library database supports NInputs up to 15\n" );
 
     generate_library();
 
     if ( ps.load_multioutput_gates )
       generate_multioutput_library();
+
+    if ( ps.load_large_gates )
+    {
+      _struct.construct( _ps.very_verbose );
+      load_struct_library();
+    }
   }
 
   explicit tech_library( std::vector<gate> const& gates, super_lib const& supergates_spec, tech_library_params const ps = {} )
@@ -227,15 +238,22 @@ public:
         _ps( ps ),
         _super( _gates, _supergates_spec, super_utils_params{ ps.load_multioutput_gates_single, ps.verbose } ),
         _use_supergates( true ),
+        _struct( _gates ),
         _super_lib(),
         _multi_lib()
   {
-    static_assert( NInputs < 7, "The technology library database supports NInputs up to 6\n" );
+    static_assert( NInputs < 16, "The technology library database supports NInputs up to 15\n" );
 
     generate_library();
 
     if ( ps.load_multioutput_gates )
       generate_multioutput_library();
+
+    if ( ps.load_large_gates )
+    {
+      _struct.construct( _ps.very_verbose );
+      load_struct_library();
+    }
   }
 
   /*! \brief Get the gates matching the function.
@@ -869,6 +887,11 @@ private:
     // std::cout << _multi_lib.size() << "\n";
   }
 
+  void load_struct_library()
+  {
+    
+  }
+
   void multi_update_area()
   {
     /* update area for each sub-function in a multi-output gate with their contribution */
@@ -1044,12 +1067,13 @@ private:
   super_lib const& _supergates_spec; /* collection of supergates declarations */
   tech_library_params const _ps;
 
-  super_utils<NInputs> _super;  /* supergates generation */
-  // index_t _indexes;             /* assigns ID to functions */
-  // lib2_t  _super_lib2;         /* gates by function ID */
-  lib_t _super_lib;             /* library of enumerated gates */
-  multi_lib_t _multi_lib;       /* library of enumerated multioutput gates */
-  multi_func_t _multi_funcs;    /* enumerated functions for multioutput gates */
+  super_utils<NInputs> _super;      /* supergates generation */
+  struct_library<NInputs> _struct;  /* library for structural matching */
+  // index_t _indexes;                 /* assigns ID to functions */
+  // lib2_t  _super_lib2;              /* gates by function ID */
+  lib_t _super_lib;                 /* library of enumerated gates */
+  multi_lib_t _multi_lib;           /* library of enumerated multioutput gates */
+  multi_func_t _multi_funcs;        /* enumerated functions for multioutput gates */
 };  /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>

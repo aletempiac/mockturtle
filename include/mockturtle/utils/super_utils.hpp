@@ -181,12 +181,14 @@ public:
     {
       std::array<float, NInputs> pin_to_pin_delays{};
 
-      if ( g.function.num_vars() > NInputs || g.function.num_vars() > truth_table_size )
+      if ( g.function.num_vars() > NInputs )
       {
         ++ignored;
         ignored_id = g.id;
         continue;
       }
+      if ( g.function.num_vars() > truth_table_size )
+        continue;
 
       auto i = 0u;
       for ( auto const& pin : g.pins )
