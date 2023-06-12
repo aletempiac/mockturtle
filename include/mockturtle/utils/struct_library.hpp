@@ -51,6 +51,7 @@
 
 #include "../io/genlib_reader.hpp"
 #include "../io/super_reader.hpp"
+#include "include/supergate.hpp"
 #include "super_utils.hpp"
 #include "tech_library.hpp"
 
@@ -171,7 +172,7 @@ public:
   };
 
 private:
-  using supergates_list_t = std::vector<composed_gate<NInputs>>;
+  using supergates_list_t = std::vector<supergate<NInputs>>;
   using composed_list_t = std::vector<composed_gate<NInputs>>;
   using lib_rule = phmap::flat_hash_map<kitty::dynamic_truth_table, std::vector<dsd_node>, kitty::hash<kitty::dynamic_truth_table>>;
   using rule = std::vector<dsd_node>;
@@ -181,7 +182,10 @@ private:
 public:
   explicit struct_library( std::vector<gate> const& gates )
       : _gates( gates ),
-        _dsd_map()
+        _supergates(),
+        _dsd_map(),
+        _and_table(),
+        _label_to_gate()
   {}
 
 public:
@@ -203,20 +207,21 @@ public:
     return _label_to_gate;
   }
 
-  /*! \brief Get value of and table associated to two indexes.
+  /*! \brief Get the pattern ID.
    *
-   *  \param t1 first index.
-   *  \param t2 second index.
-   * Returns value of and table if found, -1 otherwise.
+   *  \param id1 first pattern id.
+   *  \param id2 second pattern id.
+   * Returns a pattern ID if found, UINT32_MAX otherwise given the
+   * children IDs. This function works with only AND operators.
    */
-  const int get_and_table_value( uint32_t t1, uint32_t t2 ) const
+  const uint32_t get_pattern_id( uint32_t id1, uint32_t id2 ) const
   {
     signal l, r;
-    l.data = t1;
+    l.data = id1;
     /* ignore input negations */
     if ( l.data == 3 )
       l.data = 2;
-    r.data = t2;
+    r.data = id2;
     if ( r.data == 3 )
       r.data = 2;
     std::tuple<signal, signal> key;
@@ -227,7 +232,21 @@ public:
     auto match = _and_table.find( key );
     if ( match != _and_table.end() )
       return match->second;
-    return -1;
+    return UINT32_MAX;
+  }
+
+  /*! \brief Get the gates matching the pattern ID.
+   *
+   * Returns a list of gates that match the pattern ID.
+   */
+  const supergates_list_t* get_supergates_pattern( uint32_t id, bool phase ) const
+  {
+    auto match = _label_to_gate.find( { phase ? 1 : 0, index } );
+    if ( match != _label_to_gate.end() )
+    {
+      return &( match->second );
+    }
+    return nullptr;
   }
 
   /*! \brief Get the rules matching the function.
@@ -262,15 +281,14 @@ private:
   void generate_library( bool verbose )
   {
     /* select and load gates */
-    composed_list_t supergates;
-    supergates.reserve( _gates.size() );
-    generate_composed_gates( supergates );
+    _supergates.reserve( _gates.size() );
+    generate_composed_gates();
 
     /* mark dominate gates */
-    std::vector<bool> skip_gates( supergates.size(), false );
-    select_dominated_gates( supergates, skip_gates );
+    std::vector<bool> skip_gates( _supergates.size(), false );
+    select_dominated_gates( skip_gates );
 
-    std::vector<uint32_t> indexes( supergates.size() );
+    std::vector<uint32_t> indexes( _supergates.size() );
     std::iota( indexes.begin(), indexes.end(), 0 );
     uint32_t max_label = 1;
     uint32_t gate_pol = 0; // polarity of AND equivalent gate
@@ -278,13 +296,13 @@ private:
 
     /* sort cells by increasing order of area */
     std::sort( indexes.begin(), indexes.end(),
-          [&]( auto const& a, auto const& b ) -> bool {
-            return supergates[a].area < supergates[b].area;
-          } );
+               [&]( auto const& a, auto const& b ) -> bool {
+                 return _supergates[a].area < _supergates[b].area;
+               } );
 
     for ( uint32_t const ind : indexes )
     {
-      composed_gate<NInputs> const& gate = supergates[ind];
+      composed_gate<NInputs> const& gate = _supergates[ind];
 
       if ( gate.num_vars < 2 || skip_gates[ind] )
         continue;
@@ -340,21 +358,27 @@ private:
         std::vector<uint8_t> perm( gate.num_vars );
         auto index_rule = do_indexing_rule( elem, elem[elem.size() - 1], max_label, gate_pol, perm, shift );
 
+        supergate<NInputs> sg = { &gate,
+                                  static_cast<float>( gate.area ),
+                                  gate.tdelay,
+                                  perm,
+                                  gate_pol };
+
         auto& v = _label_to_gate[index_rule.data];
 
-        auto it = std::lower_bound( v.begin(), v.end(), gate, [&]( auto const& s1, auto const& s2 ) {
+        auto it = std::lower_bound( v.begin(), v.end(), sg, [&]( auto const& s1, auto const& s2 ) {
           if ( s1.area < s2.area )
             return true;
           if ( s1.area > s2.area )
             return false;
-          if ( s1.num_vars < s2.num_vars )
+          if ( s1.root->num_vars < s2.root->num_vars )
             return true;
-          if ( s1.num_vars > s2.num_vars )
+          if ( s1.root->num_vars > s2.root->num_vars )
             return true;
-          return s1.id < s2.id;
+          return s1.root->id < s2.root->id;
         } );
 
-        v.insert( it, gate );
+        v.insert( it, sg );
 
         if ( verbose )
         {
@@ -363,9 +387,9 @@ private:
           for ( const std::pair<uint32_t, supergates_list_t>& elem : _label_to_gate )
           {
             std::cout << elem.first << "\n";
-            for ( auto const& g : elem.second )
+            for ( auto sg : elem.second )
             {
-              std::cout << g.root->expression << "\n";
+              std::cout << ( sg.root )->root->expression << "\n";
             }
           }
         }
@@ -383,7 +407,7 @@ private:
       std::cout << "\n";
   }
 
-  void generate_composed_gates( composed_list_t& supergates )
+  void generate_composed_gates()
   {
     /* filter multi-output gates */
     std::unordered_map<std::string, uint32_t> multioutput_map;
@@ -420,8 +444,8 @@ private:
         /* use worst pin delay */
         pin_to_pin_delays[i++] = std::max( pin.rise_block_delay, pin.fall_block_delay );
       }
-      
-      supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( supergates.size() ),
+
+      _supergates.emplace_back( composed_gate<NInputs>{ static_cast<unsigned int>( _supergates.size() ),
                                                         false,
                                                         &g,
                                                         g.num_vars,
@@ -432,33 +456,33 @@ private:
     }
   }
 
-  void select_dominated_gates( composed_list_t const& supergates, std::vector<bool>& skip_gates )
+  void select_dominated_gates( std::vector<bool>& skip_gates )
   {
     for ( uint32_t i = 0; i < skip_gates.size() - 1; ++i )
     {
-      if ( supergates[i].root == nullptr )
+      if ( _supergates[i].root == nullptr )
         continue;
 
       if ( skip_gates[i] )
         continue;
 
-      auto const& tti = supergates[i].function;
+      auto const& tti = _supergates[i].function;
       for ( uint32_t j = i + 1; j < skip_gates.size(); ++j )
       {
-        auto const& ttj = supergates[j].function;
+        auto const& ttj = _supergates[j].function;
 
         /* get the same functionality */
         if ( tti != ttj )
           continue;
 
         /* is i smaller than j */
-        bool smaller = supergates[i].area < supergates[j].area;
+        bool smaller = _supergates[i].area < _supergates[j].area;
 
         /* is i faster for every pin */
         bool faster = true;
         for ( uint32_t k = 0; k < tti.num_vars(); ++k )
         {
-          if ( supergates[i].tdelay[k] > supergates[j].tdelay[k] )
+          if ( _supergates[i].tdelay[k] > _supergates[j].tdelay[k] )
             faster = false;
         }
 
@@ -472,7 +496,7 @@ private:
         faster = true;
         for ( uint32_t k = 0; k < tti.num_vars(); ++k )
         {
-          if ( supergates[j].tdelay[k] > supergates[i].tdelay[k] )
+          if ( _supergates[j].tdelay[k] > _supergates[i].tdelay[k] )
             faster = false;
         }
 
@@ -1437,12 +1461,13 @@ private:
 #pragma endregion
 
 private:
-  bool gate_disjoint{ true };          /* flag for gate support*/
+  bool gate_disjoint{ true }; /* flag for gate support*/
 
-  std::vector<gate> const& _gates;    /* collection of gates */
-  lib_rule _dsd_map;                  /* hash map for DSD decomposition of gates */
-  lib_table _and_table;               /* AND table */
-  map_label_gate _label_to_gate;      /* map label to gate */
+  std::vector<gate> const& _gates;  /* collection of gates */
+  composed_list_t _supergates;       /* list of composed_gates */
+  lib_rule _dsd_map;                /* hash map for DSD decomposition of gates */
+  lib_table _and_table;             /* AND table */
+  map_label_gate _label_to_gate;    /* map label to gate */
 };
 
 } // namespace mockturtle

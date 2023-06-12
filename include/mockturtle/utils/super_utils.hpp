@@ -43,6 +43,7 @@
 
 #include "../io/genlib_reader.hpp"
 #include "../io/super_reader.hpp"
+#include "include/supergate.hpp"
 
 namespace mockturtle
 {
@@ -54,34 +55,6 @@ struct super_utils_params
 
   /*! \brief reports loaded supergates */
   bool verbose{ false };
-};
-
-template<unsigned NInputs>
-struct composed_gate
-{
-  /* unique ID */
-  uint32_t id;
-
-  /* gate is a supergate */
-  bool is_super{ false };
-
-  /* pointer to the root library gate */
-  gate const* root{ nullptr };
-
-  /* support of the composed gate */
-  uint32_t num_vars{ 0 };
-
-  /* function */
-  kitty::dynamic_truth_table function;
-
-  /* area */
-  double area{ 0.0 };
-
-  /* pin-to-pin delays */
-  std::array<float, NInputs> tdelay{};
-
-  /* fanin gates */
-  std::vector<composed_gate<NInputs>*> fanin{};
 };
 
 /*! \brief Utilities to generate supergates

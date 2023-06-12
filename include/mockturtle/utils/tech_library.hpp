@@ -50,6 +50,7 @@
 
 #include "../io/genlib_reader.hpp"
 #include "../io/super_reader.hpp"
+#include "include/supergate.hpp"
 #include "struct_library.hpp"
 #include "super_utils.hpp"
 
@@ -117,25 +118,6 @@ struct tech_library_params
 
   /*! \brief reports all the entries in the library */
   bool very_verbose{ false };
-};
-
-template<unsigned NInputs>
-struct supergate
-{
-  /* pointer to the root gate */
-  composed_gate<NInputs> const* root{};
-
-  /* area */
-  float area{ 0.0 };
-
-  /* pin-to-pin delay */
-  std::array<float, NInputs> tdelay{};
-
-  /* np permutation vector */
-  std::vector<uint8_t> permutation{};
-
-  /* pin negations */
-  uint16_t polarity{ 0 };
 };
 
 namespace detail
@@ -206,6 +188,7 @@ private:
   using multi_supergates_list_t = std::array<std::vector<supergate<NInputs>>, max_multi_outputs>;
   using multi_lib_t = phmap::flat_hash_map<multi_relation_t, multi_supergates_list_t, multi_tt_hash>;
   using multi_func_t = phmap::flat_hash_map<uint64_t, uint64_t>;
+  using struct_lib_t = phmap::flat_hash_map<uint32_t, supergates_list_t>;
 
 public:
   explicit tech_library( std::vector<gate> const& gates, tech_library_params const ps = {}, super_lib const& supergates_spec = {} )
@@ -216,7 +199,8 @@ public:
         _use_supergates( false ),
         _struct( _gates ),
         _super_lib(),
-        _multi_lib()
+        _multi_lib(),
+        _struct_lib()
   {
     static_assert( NInputs < 16, "The technology library database supports NInputs up to 15\n" );
 
@@ -228,7 +212,6 @@ public:
     if ( ps.load_large_gates )
     {
       _struct.construct( _ps.very_verbose );
-      load_struct_library();
     }
   }
 
@@ -240,7 +223,8 @@ public:
         _use_supergates( true ),
         _struct( _gates ),
         _super_lib(),
-        _multi_lib()
+        _multi_lib(),
+        _struct_lib()
   {
     static_assert( NInputs < 16, "The technology library database supports NInputs up to 15\n" );
 
@@ -252,7 +236,6 @@ public:
     if ( ps.load_large_gates )
     {
       _struct.construct( _ps.very_verbose );
-      load_struct_library();
     }
   }
 
@@ -293,6 +276,25 @@ public:
     if ( match != _multi_funcs.end() )
       return match->second;
     return 0;
+  }
+
+  /*! \brief Get the pattern ID for structural matching.
+   *
+   * Returns a pattern ID if found, UINT32_MAX otherwise given the
+   * children IDs. This function works with only AND operators.
+   */
+  uint32_t get_pattern_id( uint32_t id1, uint32_t id2 ) const
+  {
+    return _struct.get_pattern_id( id1, id2 );
+  }
+
+  /*! \brief Get the gates matching the pattern ID and phase.
+   *
+   * Returns a list of gates that match the pattern ID and the given polarity.
+   */
+  const supergates_list_t* get_supergates_pattern( uint32_t id, bool phase ) const
+  {
+    return _struct.get_supergates_pattern( id, phase );
   }
 
   /*! \brief Get inverter information.
@@ -887,11 +889,6 @@ private:
     // std::cout << _multi_lib.size() << "\n";
   }
 
-  void load_struct_library()
-  {
-    
-  }
-
   void multi_update_area()
   {
     /* update area for each sub-function in a multi-output gate with their contribution */
@@ -1074,6 +1071,7 @@ private:
   lib_t _super_lib;                 /* library of enumerated gates */
   multi_lib_t _multi_lib;           /* library of enumerated multioutput gates */
   multi_func_t _multi_funcs;        /* enumerated functions for multioutput gates */
+  struct_lib_t _struct_lib;         /* library of gates for patterns IDs */
 };  /* class tech_library */
 
 template<typename Ntk, unsigned NInputs>
