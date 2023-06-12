@@ -102,10 +102,10 @@ enum class classification_type : uint32_t
 struct tech_library_params
 {
   /*! \brief Load large gates with more than 6 inputs */
-  bool load_large_gates{ false };
+  bool load_large_gates{ true };
 
   /*! \brief Loads multioutput gates in the library */
-  bool load_multioutput_gates{ false };
+  bool load_multioutput_gates{ true };
 
   /*! \brief Remove dominated gates (larger sizes) */
   bool remove_dominated_gates{ true };
@@ -339,6 +339,14 @@ public:
     if ( !_ps.load_multioutput_gates )
       return 0;
     return _multi_lib.size();
+  }
+
+  /*! \brief Returns the number of gates for structural matching. */
+  const uint32_t num_structural_gates() const
+  {
+    if ( !_ps.load_large_gates || NInputs <= truth_table_size )
+      return 0;
+    return _struct.get_struct_library().size();
   }
 
 private:
