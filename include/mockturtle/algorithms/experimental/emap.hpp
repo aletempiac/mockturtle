@@ -182,7 +182,7 @@ namespace detail
 {
 
 #pragma region cut set
-template<unsigned NInputs, unsigned CutSize>
+template<unsigned NInputs>
 struct cut_enumeration_emap_cut
 {
   /* stats */
@@ -191,7 +191,7 @@ struct cut_enumeration_emap_cut
   bool ignore{ false };
 
   /* function */
-  kitty::static_truth_table<CutSize> function;
+  kitty::static_truth_table<6> function;
 
   /* list of supergates matching the cut for positive and negative output phases */
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
@@ -684,15 +684,15 @@ public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
   static constexpr uint32_t max_cut_leaves = 6;
-  using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs, CutSize>>;
+  using cut_t = cut<max_cut_leaves, cut_enumeration_emap_cut<NInputs>>;
   using cut_set_t = emap_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using fanin_cut_t = typename std::array<cut_t const*, Ntk::max_fanin_size>;
   using support_t = typename std::array<uint8_t, CutSize>;
-  using truth_compute_t = typename std::array<kitty::static_truth_table<CutSize>, CutSize>;
+  using TT = kitty::static_truth_table<6>;
+  using truth_compute_t = typename std::array<TT, CutSize>;
   using node_match_t = std::vector<node_match_emap<NInputs>>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
-  using TT = kitty::static_truth_table<CutSize>;
 
   static constexpr uint32_t max_multioutput_cut_size = 3;
   static constexpr uint32_t max_multioutput_output_size = 2;
@@ -720,6 +720,8 @@ public:
         switch_activity( ps.eswp_rounds ? switching_activity( ntk, ps.switching_activity_patterns ) : std::vector<float>( 0 ) ),
         cuts( ntk.size() )
   {
+    static_assert( CutSize <= max_cut_leaves, "CutSize is too large for the pre-allocated size\n" );
+
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
     tmp_visited.reserve( 100 );
@@ -735,6 +737,8 @@ public:
         switch_activity( switch_activity ),
         cuts( ntk.size() )
   {
+    static_assert( CutSize <= max_cut_leaves, "CutSize is too large for the pre-allocated size\n" );
+
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
     tmp_visited.reserve( 100 );
@@ -1248,7 +1252,7 @@ private:
     assert( fanin_indexes.size() <= CutSize );
 
     cut_t new_cut = rcuts.add_cut( fanin_indexes.begin(), fanin_indexes.end() );
-    new_cut->function = kitty::extend_to<CutSize>( ntk.node_function( n ) );
+    new_cut->function = kitty::extend_to<6>( ntk.node_function( n ) );
 
     /* match cut and compute data */
     compute_cut_data<DO_AREA>( new_cut, n );
@@ -3865,7 +3869,7 @@ private:
    * Example:
    *   compute_truth_table_support( {1, 3, 6}, {0, 1, 2, 3, 6, 7} ) = {1, 3, 4}
    */
-  void compute_truth_table_support( cut_t const& sub, cut_t const& sup, kitty::static_truth_table<CutSize>& tt )
+  void compute_truth_table_support( cut_t const& sub, cut_t const& sup, TT& tt )
   {
     size_t j = 0;
     auto itp = sup.begin();
@@ -4246,8 +4250,8 @@ private:
       cut_t new_cut1, new_cut2;
       new_cut1.set_leaves( cut1.begin(), cut1.end() );
       new_cut2.set_leaves( cut2.begin(), cut2.end() );
-      new_cut1->function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut1 ) );
-      new_cut2->function = kitty::extend_to<CutSize>( multi_cuts.truth_table( cut2 ) );
+      new_cut1->function = kitty::extend_to<6>( multi_cuts.truth_table( cut1 ) );
+      new_cut2->function = kitty::extend_to<6>( multi_cuts.truth_table( cut2 ) );
 
       /* Multi-output Boolean matching, continue if no match */
       std::array<cut_t, max_multioutput_output_size> cut_pair = { new_cut1, new_cut2 };
