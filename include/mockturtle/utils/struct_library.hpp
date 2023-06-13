@@ -192,10 +192,13 @@ public:
   /*! \brief Construct the structural library.
    *
    * Generates the patterns for structural matching.
+   * Variable `min_vars` defines the minimum number of
+   * gate inputs considered for the library creation.
+   * 0 < min_vars < UINT32_MAX
    */
-  void construct( bool verbose = false )
+  void construct( uint32_t min_vars = 2u, bool verbose = false )
   {
-    generate_library( verbose );
+    generate_library( min_vars, verbose );
   }
 
   /*! \brief Construct the structural library.
@@ -241,7 +244,7 @@ public:
    */
   const supergates_list_t* get_supergates_pattern( uint32_t id, bool phase ) const
   {
-    auto match = _label_to_gate.find( { phase ? 1 : 0, index } );
+    auto match = _label_to_gate.find( ( id << 1 ) | ( phase ? 1 : 0 ) );
     if ( match != _label_to_gate.end() )
     {
       return &( match->second );
@@ -278,7 +281,7 @@ public:
   }
 
 private:
-  void generate_library( bool verbose )
+  void generate_library( uint32_t min_vars, bool verbose )
   {
     /* select and load gates */
     _supergates.reserve( _gates.size() );
@@ -357,6 +360,10 @@ private:
         shift = 0;
         std::vector<uint8_t> perm( gate.num_vars );
         auto index_rule = do_indexing_rule( elem, elem[elem.size() - 1], max_label, gate_pol, perm, shift );
+
+        /* skip gate creation for small gates (<`min_vars` inputs) */
+        if ( gate.num_vars < min_vars )
+          continue;
 
         supergate<NInputs> sg = { &gate,
                                   static_cast<float>( gate.area ),

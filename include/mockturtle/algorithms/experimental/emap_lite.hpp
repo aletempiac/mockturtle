@@ -46,6 +46,7 @@
 #include <fmt/format.h>
 #include <parallel_hashmap/phmap.h>
 
+#include "../../networks/aig.hpp"
 #include "../../networks/klut.hpp"
 #include "../../utils/cuts.hpp"
 #include "../../utils/node_map.hpp"
@@ -92,6 +93,9 @@ struct emap_lite_params
 
   /*! \brief Required time relaxation ratio. */
   double relax_required{ 0.0f };
+
+  /*! \brief Do mapping using a structural mapper. */
+  bool structural_mapper_only{ false };
 
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 2u };
@@ -164,7 +168,7 @@ namespace detail
 {
 
 #pragma region cut set
-template<unsigned NInputs, unsigned CutSize>
+template<unsigned NInputs>
 struct cut_enumeration_emap_lite_cut
 {
   /* stats */
@@ -172,8 +176,11 @@ struct cut_enumeration_emap_lite_cut
   double flow{ 0 };
   bool ignore{ false };
 
+  /* pattern index for structural matching*/
+  uint32_t pattern_index{ 0 };
+
   /* function */
-  kitty::static_truth_table<CutSize> function;
+  kitty::static_truth_table<6> function;
 
   /* list of supergates matching the cut for positive and negative output phases */
   std::array<std::vector<supergate<NInputs>> const*, 2> supergates = { nullptr, nullptr };
@@ -649,15 +656,15 @@ class emap_lite_impl
 public:
   static constexpr float epsilon = 0.0005;
   static constexpr uint32_t max_cut_num = 32;
-  static constexpr uint32_t max_cut_leaves = 6;
-  using cut_t = cut<max_cut_leaves, cut_enumeration_emap_lite_cut<NInputs, CutSize>>;
+  static constexpr uint32_t max_cut_leaves = 9;
+  using cut_t = cut<max_cut_leaves, cut_enumeration_emap_lite_cut<NInputs>>;
   using cut_set_t = emap_lite_cut_set<cut_t, max_cut_num>;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using support_t = typename std::array<uint8_t, CutSize>;
-  using truth_compute_t = typename std::array<kitty::static_truth_table<CutSize>, CutSize>;
+  using TT = kitty::static_truth_table<6>;
+  using truth_compute_t = typename std::array<TT, CutSize>;
   using node_match_t = std::vector<node_match_emap_lite<NInputs>>;
   using klut_map = std::unordered_map<uint32_t, std::array<signal<klut_network>, 2>>;
-  using TT = kitty::static_truth_table<CutSize>;
 
 public:
   explicit emap_lite_impl( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_lite_params const& ps, emap_lite_stats& st )
@@ -670,6 +677,8 @@ public:
         switch_activity( ps.eswp_rounds ? switching_activity( ntk, ps.switching_activity_patterns ) : std::vector<float>( 0 ) ),
         cuts( ntk.size() )
   {
+    static_assert( CutSize <= max_cut_leaves, "CutSize is too large for the pre-allocated size\n" );
+
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
     tmp_visited.reserve( 100 );
@@ -685,6 +694,8 @@ public:
         switch_activity( switch_activity ),
         cuts( ntk.size() )
   {
+    static_assert( CutSize <= max_cut_leaves, "CutSize is too large for the pre-allocated size\n" );
+
     std::tie( lib_inv_area, lib_inv_delay, lib_inv_id ) = library.get_inverter_info();
     std::tie( lib_buf_area, lib_buf_delay, lib_buf_id ) = library.get_buffer_info();
     tmp_visited.reserve( 100 );
@@ -698,6 +709,10 @@ public:
 
     /* compute and save topological order */
     init_topo_order();
+
+    /* search for large matches */
+    if ( CutSize > 6 )
+      compute_struct_match();
 
     /* compute cuts, matches, and initial mapping */
     if ( !ps.area_oriented_mapping )
@@ -778,6 +793,8 @@ private:
 
       if ( ntk.is_constant( n ) )
       {
+        if ( cuts[index].size() != 0 )
+          continue;
         /* all terminals have flow 0.0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = node_data.arrival[1] = 0.0f;
@@ -787,6 +804,8 @@ private:
       }
       else if ( ntk.is_pi( n ) )
       {
+        if ( cuts[index].size() != 0 )
+          continue;
         /* all terminals have flow 0.0 */
         node_data.flows[0] = node_data.flows[1] = 0.0f;
         node_data.arrival[0] = 0.0f;
@@ -845,6 +864,8 @@ private:
   template<bool DO_AREA>
   void merge_cuts2( node<Ntk> const& n )
   {
+    static constexpr uint32_t max_cut_size = CutSize > 6 ? 6 : CutSize;
+
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
     emap_lite_cut_sort_type sort = emap_lite_cut_sort_type::AREA;
@@ -857,6 +878,22 @@ private:
     lcuts[2] = &cuts[index];
     auto& rcuts = *lcuts[fanin];
 
+    /* move pre-computed structural cuts to a temporary cutset */
+    bool structural_matching = false;
+    if ( rcuts.size() )
+    {
+      structural_matching = true;
+      temp_cuts.clear();
+      for ( auto& cut : rcuts )
+      {
+        if ( cut->size() < 7 || ( *cut )->ignore )
+          continue;
+        recompute_cut_data( *cut, n );
+        temp_cuts.simple_insert( *cut );
+      }
+      rcuts.clear();
+    }
+
     /* set cut limit for run-time optimization*/
     rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit - 1 );
 
@@ -867,7 +904,7 @@ private:
     {
       for ( auto const& c2 : *lcuts[1] )
       {
-        if ( !c1->merge( *c2, new_cut, CutSize ) )
+        if ( !c1->merge( *c2, new_cut, max_cut_size ) )
         {
           continue;
         }
@@ -892,6 +929,12 @@ private:
       }
     }
 
+    if ( structural_matching )
+    {
+      for ( auto const& cut : temp_cuts )
+        rcuts.simple_insert( *cut, sort );
+    }
+
     cuts_total += rcuts.size();
 
     /* limit the maximum number of cuts */
@@ -907,6 +950,8 @@ private:
   template<bool DO_AREA>
   void merge_cuts( node<Ntk> const& n )
   {
+    static constexpr uint32_t max_cut_size = CutSize > 6 ? 6 : CutSize;
+
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
     emap_lite_cut_sort_type sort = emap_lite_cut_sort_type::AREA;
@@ -939,7 +984,7 @@ private:
           *it++ = &( ( *lcuts[i++] )[*begin++] );
         }
 
-        if ( !vcuts[0]->merge( *vcuts[1], new_cut, CutSize ) )
+        if ( !vcuts[0]->merge( *vcuts[1], new_cut, max_cut_size ) )
         {
           return true; /* continue */
         }
@@ -947,7 +992,7 @@ private:
         for ( i = 2; i < fanin; ++i )
         {
           tmp_cut = new_cut;
-          if ( !vcuts[i]->merge( tmp_cut, new_cut, CutSize ) )
+          if ( !vcuts[i]->merge( tmp_cut, new_cut, max_cut_size ) )
           {
             return true; /* continue */
           }
@@ -1017,12 +1062,135 @@ private:
     assert( fanin_indexes.size() <= CutSize );
 
     cut_t new_cut = rcuts.add_cut( fanin_indexes.begin(), fanin_indexes.end() );
-    new_cut->function = kitty::extend_to<CutSize>( ntk.node_function( n ) );
+    new_cut->function = kitty::extend_to<6>( ntk.node_function( n ) );
 
     /* match cut and compute data */
     compute_cut_data<DO_AREA>( new_cut, n );
 
     ++cuts_total;
+  }
+
+  void compute_struct_match()
+  {
+    /* compatible only with AIGs */
+    if constexpr ( !std::is_same_v<Ntk, aig_network> )
+    {
+      return;
+    }
+
+    /* no large gates identified */
+    if ( library.num_structural_gates() == 0 )
+      return;
+
+    for ( auto const& n : topo_order )
+    {
+      auto const index = ntk.node_to_index( n );
+      auto& node_data = node_match[index];
+
+      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
+      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
+      node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
+
+      if ( ntk.is_constant( n ) )
+      {
+        /* all terminals have flow 0.0 */
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
+        node_data.arrival[0] = node_data.arrival[1] = 0.0f;
+        add_zero_cut( index );
+        match_constants( index );
+        continue;
+      }
+      else if ( ntk.is_pi( n ) )
+      {
+        /* all terminals have flow 0.0 */
+        node_data.flows[0] = node_data.flows[1] = 0.0f;
+        node_data.arrival[0] = 0.0f;
+        /* PIs have the negative phase implemented with an inverter */
+        node_data.arrival[1] = lib_inv_delay;
+        add_unit_cut( index );
+        continue;
+      }
+
+      /* compute cuts for node */
+      merge_cuts_structural( n );
+    }
+
+    /* round stats */
+    if ( ps.verbose )
+    {      
+      st.round_stats.push_back( fmt::format( "[i] SCuts    : Cuts  = {:>12d}\n", cuts_total ) );
+    }
+  }
+
+  void merge_cuts_structural( node<Ntk> const& n )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    emap_lite_cut_sort_type sort = emap_lite_cut_sort_type::AREA;
+
+    /* compute cuts */
+    const auto fanin = 2;
+    std::array<uint32_t, 2> children_phase;
+    ntk.foreach_fanin( ntk.index_to_node( index ), [&]( auto child, auto i ) {
+      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
+      children_phase[i] = static_cast<uint32_t>( child.complement );
+    } );
+    lcuts[2] = &cuts[index];
+    auto& rcuts = *lcuts[fanin];
+
+    /* set cut limit for run-time optimization*/
+    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit - 1 );
+
+    cut_t new_cut;
+    std::vector<cut_t const*> vcuts( fanin );
+
+    for ( auto const& c1 : *lcuts[0] )
+    {
+      for ( auto const& c2 : *lcuts[1] )
+      {
+        if ( c1->size() + c2->size() > CutSize )
+          continue;
+        if ( ( *c1 )->pattern_index == 0 || ( *c2 )->pattern_index == 0 )
+          continue;
+        
+        vcuts[0] = c1;
+        vcuts[1] = c2;
+        uint32_t pattern_id1 = ( ( *c1 )->pattern_index << 1 ) | children_phase[0];
+        uint32_t pattern_id2 = ( ( *c2 )->pattern_index << 1 ) | children_phase[1];
+        if ( pattern_id1 > pattern_id2 )
+        {
+          std::swap( vcuts[0], vcuts[1] );
+          std::swap( pattern_id1, pattern_id2 );
+        }
+
+        uint32_t new_pattern = library.get_pattern_id( pattern_id1, pattern_id2 );
+
+        /* pattern not matched */
+        if ( new_pattern == UINT32_MAX )
+          continue;
+
+        create_structural_cut( new_cut, vcuts, new_pattern, pattern_id1, pattern_id2 );
+
+        // if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+        //   continue;
+
+        /* match cut and compute data */
+        compute_cut_data_structural( new_cut, n );
+
+        rcuts.simple_insert( new_cut, sort );
+      }
+    }
+
+    cuts_total += rcuts.size();
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
+
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
   }
 
   template<bool DO_AREA>
@@ -1865,7 +2033,7 @@ private:
   {
     auto& node_data = node_match[index];
 
-    kitty::static_truth_table<6> zero_tt;
+    TT zero_tt;
     auto const supergates_zero = library.get_supergates( zero_tt );
     auto const supergates_one = library.get_supergates( ~zero_tt );
 
@@ -2407,7 +2575,7 @@ private:
     }
 
     const auto tt = cut->function;
-    const kitty::static_truth_table<6> fe = kitty::extend_to<6>( tt );
+    const TT fe = kitty::extend_to<6>( tt );
     auto fe_canon = fe;
 
     uint16_t negations_pos = 0;
@@ -2464,13 +2632,74 @@ private:
     cut->flow = best_area_flow / ntk.fanout_size( n );
   }
 
+  void compute_cut_data_structural( cut_t& cut, node<Ntk> const& n )
+  {
+    double best_arrival = std::numeric_limits<float>::max();
+    double best_area_flow = std::numeric_limits<float>::max();
+    cut->delay = best_arrival;
+    cut->flow = best_area_flow;
+    cut->ignore = false;
+
+    if ( cut.size() > NInputs )
+    {
+      /* Ignore cuts too big to be mapped using the library */
+      cut->ignore = true;
+      return;
+    }
+
+    const auto supergates_pos = library.get_supergates_pattern( cut->pattern_index, false );
+    const auto supergates_neg = library.get_supergates_pattern( cut->pattern_index, true );
+
+    if ( supergates_pos != nullptr || supergates_neg != nullptr )
+    {
+      cut->supergates = { supergates_pos, supergates_neg };
+    }
+    else
+    {
+      /* Ignore not matched cuts */
+      cut->ignore = true;
+      return;
+    }
+
+    /* compute cut cost based on LUT area */
+    best_arrival = 0;
+    best_area_flow = cut.size() > 1 ? cut.size() : 0;
+
+    for ( auto leaf : cut )
+    {
+      const auto& best_leaf_cut = cuts[leaf][0];
+      best_arrival = std::max( best_arrival, best_leaf_cut->delay );
+      best_area_flow += best_leaf_cut->flow;
+    }
+
+    cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
+    cut->flow = best_area_flow / ntk.fanout_size( n );
+  }
+
+  void recompute_cut_data( cut_t& cut, node<Ntk> const& n )
+  {
+    /* compute cut cost based on LUT area */
+    double best_arrival = 0;
+    double best_area_flow = cut.size() > 1 ? cut.size() : 0;
+
+    for ( auto leaf : cut )
+    {
+      const auto& best_leaf_cut = cuts[leaf][0];
+      best_arrival = std::max( best_arrival, best_leaf_cut->delay );
+      best_area_flow += best_leaf_cut->flow;
+    }
+
+    cut->delay = best_arrival + ( cut.size() > 1 ) ? 1 : 0;
+    cut->flow = best_area_flow / ntk.fanout_size( n );
+  }
+
   /* compute positions of leave indices in cut `sub` (subset) with respect to
    * leaves in cut `sup` (super set).
    *
    * Example:
    *   compute_truth_table_support( {1, 3, 6}, {0, 1, 2, 3, 6, 7} ) = {1, 3, 4}
    */
-  void compute_truth_table_support( cut_t const& sub, cut_t const& sup, kitty::static_truth_table<CutSize>& tt )
+  void compute_truth_table_support( cut_t const& sub, cut_t const& sup, TT& tt )
   {
     size_t j = 0;
     auto itp = sup.begin();
@@ -2492,6 +2721,7 @@ private:
   {
     auto& cut = cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
     cut->ignore = true;
+    cut->pattern_index = 0;
   }
 
   void add_unit_cut( uint32_t index )
@@ -2500,6 +2730,36 @@ private:
 
     kitty::create_nth_var( cut->function, 0 );
     cut->ignore = true;
+    cut->pattern_index = 1;
+  }
+
+  inline void create_structural_cut( cut_t& new_cut, std::vector<cut_t const*> const& vcuts, uint32_t new_pattern, uint32_t pattern_id1, uint32_t pattern_id2 )
+  {
+    new_cut.set_leaves( *vcuts[0] );
+    new_cut.add_leaves( vcuts[1]->begin(), vcuts[1]->end() );
+    new_cut->pattern_index = new_pattern;
+
+    /* get the polarity of the leaves of the new cut */
+    uint16_t neg_l = 0, neg_r = 0;
+    if ( ( *vcuts[0] )->pattern_index == 1 )
+    {
+      neg_r = static_cast<uint16_t>( pattern_id1 & 1 );
+    }
+    else
+    {
+      neg_r = ( *vcuts[0] )->negations[0];
+    }
+    if ( ( *vcuts[1] )->pattern_index == 1 )
+    {
+      neg_l = static_cast<uint16_t>( pattern_id2 & 1 );
+    }
+    else
+    {
+      neg_l = ( *vcuts[1] )->negations[0];
+    }
+
+    new_cut->negations[0] = ( neg_l << vcuts[0]->size() ) | neg_r;
+    new_cut->negations[1] = new_cut->negations[0];
   }
 
   inline bool fast_support_minimization( TT const& tt, cut_t& res )
@@ -2685,6 +2945,7 @@ private:
   /* cut computation */
   std::vector<cut_set_t> cuts;                  /* compressed representation of cuts */
   cut_merge_t lcuts;                            /* cut merger container */
+  cut_set_t temp_cuts;                          /* temporary cut set container */
   truth_compute_t ltruth;                       /* truth table merger container */
   support_t lsupport;                           /* support merger container */
   uint32_t cuts_total{ 0 };                     /* current computed cuts */

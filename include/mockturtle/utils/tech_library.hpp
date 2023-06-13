@@ -211,7 +211,7 @@ public:
 
     if ( ps.load_large_gates )
     {
-      _struct.construct( _ps.very_verbose );
+      _struct.construct( 2, _ps.very_verbose );
     }
   }
 
@@ -235,7 +235,7 @@ public:
 
     if ( ps.load_large_gates )
     {
-      _struct.construct( _ps.very_verbose );
+      _struct.construct( 2, _ps.very_verbose );
     }
   }
 
