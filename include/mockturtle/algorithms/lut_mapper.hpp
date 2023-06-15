@@ -97,6 +97,9 @@ struct lut_map_params
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
 
+  // /*! \brief Number of rounds for area sharing optimization. */
+  // uint32_t area_share_round{ 0u };
+
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
 
@@ -973,6 +976,9 @@ private:
       expand_cuts<false>();
     }
 
+    /* try backward area iterations */
+    compute_share_mapping();
+
     uint32_t i = 0;
 
     /* compute mapping using global area flow */
@@ -1134,6 +1140,29 @@ private:
         stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       st.round_stats.push_back( stats.str() );
+    }
+  }
+
+  void compute_share_mapping()
+  {
+    /* TODO: reset required times and references for nodes except POs */
+    for ( auto it = topo_order.rbegin(); it !+ topo_order.rend(); ++it )
+    {
+      auto const index = ntk.node_to_index( *it );
+      node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + node_match[index].map_refs ) / 3.0;
+
+      /* skip not used nodes */
+      if ( node_match[index].map_refs == 0 )
+        continue;
+
+      /* update cost the function and move the best one first */
+      update_cut_data_share( *it );
+    }
+
+    /* round stats */
+    if ( ps.verbose )
+    {
+      st.round_stats.push_back( stats << fmt::format( "[i] AreaSh   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total ) );
     }
   }
 
@@ -2303,6 +2332,52 @@ private:
     node_cut_set.update_best( best_cut_index );
   }
 
+  void update_cut_data_share( node const& n )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    auto& node_cut_set = cuts[index];
+    uint32_t best_cut_index = 0;
+    uint32_t cut_index = 0;
+
+    cut_t const* best_cut = &node_cut_set.best();
+
+    /* recompute the data for all the cuts and pick the best */
+    for ( cut_t* cut : node_cut_set )
+    {
+      /* skip trivial cut */
+      if ( cut->size() == 1 && *cut->begin() == index )
+      {
+        ++cut_index;
+        continue;
+      }
+
+      compute_cut_data_share( *cut );
+
+      /* update best */
+      if ( ( *cut )->data.delay <= node_data.required )
+      {
+        if ( node_cut_set.compare( *cut, *best_cut, sort ) )
+        {
+          best_cut = cut;
+          best_cut_index = cut_index;
+        }
+      }
+
+      ++cut_index;
+    }
+
+    /* propagate required times backward and reference the leaves */
+    for ( auto leaf : best_cut )
+    {
+      node_match[leaf].required = std::min( node_match[leaf].required, node_data.required - 1 );
+      node_match[leaf].map_refs++;
+    }
+
+    /* update the best cut */
+    node_cut_set.update_best( best_cut_index );
+  }
+
   // template<bool DO_AREA, bool ELA>
   // void update_wide_cut_data( node const& n, lut_cut_sort_type const sort )
   // {
@@ -2827,6 +2902,29 @@ private:
       cut->data.area_flow = area_flow;
       cut->data.edge_flow = edge_flow;
     }
+  }
+
+  void compute_cut_data_share( cut_t& cut )
+  {
+    uint32_t delay{ 0 };
+    float area_flow = static_cast<float>( cut->data.lut_area );
+    float edge_flow = cut.size();
+
+    for ( auto leaf : cut )
+    {
+      const auto& best_leaf_cut = cuts[leaf][0];
+      delay = std::max( delay, best_leaf_cut->data.delay );
+      /* flow contribution is added only for not shared leaves */
+      if ( node_match[leaf].map_refs == 0 && leaf != 0 )
+      {
+        area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
+        edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
+      }
+    }
+
+    cut->data.delay = lut_delay + delay;
+    cut->data.area_flow = area_flow;
+    cut->data.edge_flow = edge_flow;
   }
 
   template<bool ELA>
