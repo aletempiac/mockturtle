@@ -94,11 +94,11 @@ struct lut_map_params
   /*! \brief Recompute cuts at each step. */
   bool recompute_cuts{ true };
 
+  /*! \brief Number of rounds for area sharing optimization. */
+  uint32_t area_share_rounds{ 2u };
+
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
-
-  // /*! \brief Number of rounds for area sharing optimization. */
-  // uint32_t area_share_round{ 0u };
 
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
@@ -977,11 +977,20 @@ private:
     }
 
     /* try backward area iterations */
-    compute_share_mapping();
-
     uint32_t i = 0;
+    while ( i < ps.area_share_rounds )
+    {
+      compute_share_mapping( area_sort );
+
+      if ( ps.cut_expansion )
+      {
+        expand_cuts<false>();
+      }
+      ++i;
+    }
 
     /* compute mapping using global area flow */
+    i = 0;
     while ( i < ps.area_flow_rounds )
     {
       compute_required_time();
@@ -1143,26 +1152,30 @@ private:
     }
   }
 
-  void compute_share_mapping()
+  void compute_share_mapping( lut_cut_sort_type const sort )
   {
-    /* TODO: reset required times and references for nodes except POs */
-    for ( auto it = topo_order.rbegin(); it !+ topo_order.rend(); ++it )
+    /* reset required times and references except for POs */
+    compute_share_mapping_init();
+
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       auto const index = ntk.node_to_index( *it );
-      node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + node_match[index].map_refs ) / 3.0;
 
       /* skip not used nodes */
       if ( node_match[index].map_refs == 0 )
         continue;
 
       /* update cost the function and move the best one first */
-      update_cut_data_share( *it );
+      update_cut_data_share( *it, sort );
     }
+
+    /* propagate correct arrival times and compute stats */
+    propagate_arrival_times();
 
     /* round stats */
     if ( ps.verbose )
     {
-      st.round_stats.push_back( stats << fmt::format( "[i] AreaSh   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total ) );
+      st.round_stats.push_back( fmt::format( "[i] AreaSh   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total ) );
     }
   }
 
@@ -1300,7 +1313,7 @@ private:
 
       if ( node_match[index].map_refs == 0 )
         continue;
-      
+
       /* propagate required to choice nodes */
       if constexpr ( has_foreach_choice_v<Ntk> )
       {
@@ -1318,6 +1331,86 @@ private:
         node_match[leaf].required = std::min( node_match[leaf].required, node_match[index].required - 1 );
       }
     }
+  }
+
+  void propagate_arrival_times()
+  {
+    area = 0;
+    edges = 0;
+    for ( auto const& n : topo_order )
+    {
+      auto index = ntk.node_to_index( n );
+
+      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
+      {
+        continue;
+      }
+
+      /* propagate arrival time */
+      uint32_t node_delay = 0;
+      auto& best_cut = **( cuts[index].begin() );
+
+      for ( auto leaf : best_cut )
+      {
+        const auto& best_leaf_cut = cuts[leaf][0];
+        node_delay = std::max( node_delay, best_leaf_cut->data.delay );
+      }
+
+      best_cut->data.delay = node_delay + 1;
+
+      /* continue if not referenced in the cover */
+      if ( node_match[index].map_refs == 0u )
+        continue;
+
+      /* update stats */
+      area += best_cut->data.lut_area;
+      edges += best_cut.size();
+    }
+
+    /* update worst delay */
+    delay = 0;
+    ntk.foreach_co( [this]( auto s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+      delay = std::max( delay, cuts[index][0]->data.delay );
+    } );
+  }
+
+  void compute_share_mapping_init()
+  {
+    /* reset the mapping references and the required time */
+    for ( auto i = 0u; i < node_match.size(); ++i )
+    {
+      node_match[i].required = UINT32_MAX >> 1;
+      node_match[i].est_refs = ( 2.0 * node_match[i].est_refs + node_match[i].map_refs ) / 3.0;
+      node_match[i].map_refs = 0;
+    }
+
+    uint32_t required = delay;
+    if ( ps.required_delay == 0.0f && ps.relax_required > 0.0f )
+    {
+      required *= ( 100.0 + ps.relax_required ) / 100.0;
+    }
+
+    if ( ps.required_delay != 0 )
+    {
+      /* Global target time constraint */
+      if ( ps.required_delay < delay )
+      {
+        if ( !ps.area_oriented_mapping && iteration == 1 )
+          std::cerr << fmt::format( "[i] MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_delay ) << std::endl;
+      }
+      else
+      {
+        required = ps.required_delay;
+      }
+    }
+
+    /* set the required time at POs */
+    ntk.foreach_co( [&]( auto const& s ) {
+      const auto index = ntk.node_to_index( ntk.get_node( s ) );
+      node_match[index].required = required;
+      node_match[index].map_refs++;
+    } );
   }
 
   template<bool DO_AREA, bool ELA>
@@ -2332,7 +2425,7 @@ private:
     node_cut_set.update_best( best_cut_index );
   }
 
-  void update_cut_data_share( node const& n )
+  void update_cut_data_share( node const& n, lut_cut_sort_type const sort )
   {
     auto index = ntk.node_to_index( n );
     auto& node_data = node_match[index];
@@ -2368,7 +2461,7 @@ private:
     }
 
     /* propagate required times backward and reference the leaves */
-    for ( auto leaf : best_cut )
+    for ( auto leaf : *best_cut )
     {
       node_match[leaf].required = std::min( node_match[leaf].required, node_data.required - 1 );
       node_match[leaf].map_refs++;
@@ -2922,7 +3015,7 @@ private:
       }
     }
 
-    cut->data.delay = lut_delay + delay;
+    cut->data.delay = cut->data.lut_delay + delay;
     cut->data.area_flow = area_flow;
     cut->data.edge_flow = edge_flow;
   }
