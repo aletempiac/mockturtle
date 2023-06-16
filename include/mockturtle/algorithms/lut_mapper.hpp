@@ -980,7 +980,7 @@ private:
     uint32_t i = 0;
     while ( i < ps.area_share_rounds )
     {
-      compute_share_mapping( area_sort );
+      compute_share_mapping( area_sort, i == 0 );
 
       if ( ps.cut_expansion )
       {
@@ -1063,7 +1063,7 @@ private:
         auto const index = ntk.node_to_index( n );
         if ( !preprocess && iteration != 0 )
         {
-          node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + node_match[index].map_refs ) / 3.0;
+          node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + 1.0 * node_match[index].map_refs ) / 3.0;
         }
         else
         {
@@ -1152,10 +1152,10 @@ private:
     }
   }
 
-  void compute_share_mapping( lut_cut_sort_type const sort )
+  void compute_share_mapping( lut_cut_sort_type const sort, bool first )
   {
     /* reset required times and references except for POs */
-    compute_share_mapping_init();
+    compute_share_mapping_init( first );
 
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
@@ -1375,13 +1375,16 @@ private:
     } );
   }
 
-  void compute_share_mapping_init()
+  void compute_share_mapping_init( bool first )
   {
     /* reset the mapping references and the required time */
     for ( auto i = 0u; i < node_match.size(); ++i )
     {
       node_match[i].required = UINT32_MAX >> 1;
-      node_match[i].est_refs = ( 2.0 * node_match[i].est_refs + node_match[i].map_refs ) / 3.0;
+      if ( !first )
+        node_match[i].est_refs = ( 2.0 * node_match[i].est_refs + 1.0 * node_match[i].map_refs ) / 3.0;
+      else
+        node_match[i].est_refs = std::max( 1.0, ( 1.0 * node_match[i].est_refs + 2.0 * node_match[i].map_refs ) / 3.0 );
       node_match[i].map_refs = 0;
     }
 
