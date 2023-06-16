@@ -1132,11 +1132,11 @@ private:
     {
       std::stringstream stats;
 
-      if ( sort == lut_cut_sort_type::AREA && ELA )
+      if ( ( sort == lut_cut_sort_type::AREA || sort == lut_cut_sort_type::AREA2 ) && ELA )
       {
         stats << fmt::format( "[i] Area     : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
-      else if ( sort == lut_cut_sort_type::AREA )
+      else if ( sort == lut_cut_sort_type::AREA || sort == lut_cut_sort_type::AREA2 )
       {
         stats << fmt::format( "[i] AreaFlow : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
