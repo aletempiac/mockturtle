@@ -94,11 +94,8 @@ struct emap_params
   /*! \brief Required time relaxation ratio. */
   double relax_required{ 0.0f };
 
-  /*! \brief Number of rounds for area sharing optimization. */
-  uint32_t area_share_rounds{ 2u };
-
   /*! \brief Number of rounds for area flow optimization. */
-  uint32_t area_flow_rounds{ 1u };
+  uint32_t area_flow_rounds{ 2u };
 
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
@@ -838,17 +835,6 @@ private:
   {
     /* compute mapping using global area flow */
     uint32_t i = 0;
-    while ( i++ < ps.area_share_rounds )
-    {
-      // compute_required_time( true );
-      if ( !compute_mapping_reversed() )
-      {
-        return false;
-      }
-    }
-
-    /* compute mapping using global area flow */
-    i = 0;
     while ( i++ < ps.area_flow_rounds )
     {
       compute_required_time();
@@ -975,12 +961,8 @@ private:
       /* match negative phase */
       match_phase<DO_AREA>( n, 1u );
 
-      // std::cout << fmt::format( "Index {}: {}\t {}", index, node_data.flows[0], node_data.flows[1] ) << std::endl;
-
       /* try to drop one phase */
       match_drop_phase<DO_AREA, false>( n, 0 );
-
-      // std::cout << fmt::format( "Index {}: {}\t {}", index, node_data.flows[0], node_data.flows[1] ) << std::endl;
 
       /* load and try a multi-output matches */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
@@ -1002,11 +984,6 @@ private:
     {
       std::cerr << "[i] MAP WARNING: not mapped don't touch gates are treated as sequential black boxes\n";
     }
-
-    double area_flow = 0;
-    ntk.foreach_po( [&]( auto const& f ) {
-
-    } );
 
     /* round stats */
     if ( ps.verbose )
@@ -1363,97 +1340,6 @@ private:
     return success;
   }
 
-  bool compute_mapping_reversed()
-  {
-    /* this method works in reverse topological order: less nodes to update (faster) */
-    /* instead of propagating arrival times forward, it propagates required times backwards */
-
-    /* reset required times and references except for POs */
-    compute_mapping_reversed_init();
-
-    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
-    {
-      if ( ntk.is_constant( *it ) || ntk.is_pi( *it ) )
-        continue;
-
-      const auto index = ntk.node_to_index( *it );
-      auto& node_data = node_match[index];
-
-      /* skip not mapped nodes */
-      if ( node_match[index].map_refs[2] == 0 )
-        continue;
-
-      /* don't touch box */
-      if constexpr ( has_is_dont_touch_v<Ntk> )
-      {
-        node<Ntk> n = ntk.index_to_node( index );
-        if ( ntk.is_dont_touch( n ) )
-        {
-          if constexpr ( has_has_binding_v<Ntk> )
-          {
-            propagate_data_backward_white_box<true>( n );
-          }
-          continue;
-        }
-      }
-
-      /* propagate required time over the output inverter if present */
-      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-      double old_required = -1;
-      if ( node_data.same_match && node_data.map_refs[use_phase ^ 1] > 0 )
-      {
-        old_required = node_data.required[use_phase];
-        node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[use_phase ^ 1] - lib_inv_delay );
-      }
-
-      /* match positive phase */
-      match_phase_share( *it, 0u );
-
-      /* match negative phase */
-      match_phase_share( *it, 1u );
-
-      /* restore required time */
-      if ( old_required > 0 )
-      {
-        node_data.required[use_phase] = old_required;
-      }
-
-      /* try to drop one phase */
-      match_drop_phase<true, false>( *it, 0 );
-
-      assert( node_data.arrival[0] < std::numeric_limits<float>::max() - epsilon );
-      assert( node_data.arrival[1] < std::numeric_limits<float>::max() - epsilon );
-
-      /* TODO: try a multi-output match */
-      // if ( ps.map_multioutput && node_tuple_match[index] < UINT32_MAX - 1 )
-      // {
-      //   match_multioutput_exact<SwitchActivity>( *it, true );
-
-      //   /* propagate required time for the selected gates */
-      //   match_multioutput_propagate_required( *it );
-      // }
-      // else
-      {
-        match_propagate_required<true>( index );
-      }
-    }
-
-    double area_old = area;
-
-    propagate_arrival_times();
-
-    /* round stats */
-    if ( ps.verbose )
-    {
-      float area_gain = float( ( area_old - area ) / area_old * 100 );
-      std::stringstream stats{};
-      stats << fmt::format( "[i] ASFlow   : Delay = {:>12.2f}  Area = {:>12.2f}  Gain = {:>5.2f} %  Inverters = {:>5}  Time = {:>5.2f}\n", delay, area, area_gain, inv, to_seconds( clock::now() - time_begin ) );
-      st.round_stats.push_back( stats.str() );
-    }
-
-    return true;
-  }
-
   template<bool SwitchActivity>
   bool compute_mapping_exact( bool last_round )
   {
@@ -1554,7 +1440,7 @@ private:
         {
           if constexpr ( has_has_binding_v<Ntk> )
           {
-            propagate_data_backward_white_box<false>( n );
+            propagate_data_backward_white_box( n );
           }
           continue;
         }
@@ -1602,7 +1488,7 @@ private:
       }
       else
       {
-        match_propagate_required<false>( index );
+        match_propagate_required( index );
       }
     }
 
@@ -1625,7 +1511,6 @@ private:
     return true;
   }
 
-  template<bool REFERENCE>
   inline void match_propagate_required( uint32_t index )
   {
     /* don't touch box */
@@ -1636,7 +1521,7 @@ private:
       {
         if constexpr ( has_has_binding_v<Ntk> )
         {
-          propagate_data_backward_white_box<REFERENCE>( n );
+          propagate_data_backward_white_box( n );
         }
         return;
       }
@@ -1671,13 +1556,6 @@ private:
       {
         auto phase = ( node_data.phase[use_phase] >> ctr ) & 1;
         node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[use_phase] - supergate->tdelay[ctr] );
-
-        if constexpr ( REFERENCE )
-        {
-          node_match[leaf].map_refs[phase]++;
-          node_match[leaf].map_refs[2]++;
-        }
-
         ++ctr;
       }
     }
@@ -1691,13 +1569,6 @@ private:
       {
         auto phase = ( node_data.phase[other_phase] >> ctr ) & 1;
         node_match[leaf].required[phase] = std::min( node_match[leaf].required[phase], node_data.required[other_phase] - supergate->tdelay[ctr] );
-
-        if constexpr ( REFERENCE )
-        {
-          node_match[leaf].map_refs[phase]++;
-          node_match[leaf].map_refs[2]++;
-        }
-
         ++ctr;
       }
     }
@@ -1934,103 +1805,8 @@ private:
       if ( node_match[index].map_refs[2] == 0 )
         continue;
 
-      match_propagate_required<false>( index );
-    }
-  }
-
-  void compute_mapping_reversed_init()
-  {
-    /* reset the mapping references and the required time */
-    for ( auto i = 0u; i < node_match.size(); ++i )
-    {
-      auto& node_data = node_match[i];
-      node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
-      node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0u;
-
-      if ( ntk.is_pi( ntk.index_to_node( i ) ) || ntk.is_constant( ntk.index_to_node( i ) ) )
-        continue;
-
-      /* re-compute flows */
-      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
-      assert( node_data.best_supergate[use_phase] != nullptr );
-
-      supergate<NInputs> const* best_supergate = node_data.best_supergate[use_phase];
-      cut_t const* cut = &cuts[i][node_data.best_cut[use_phase]];
-      float flow = best_supergate->area;
-
-      auto ctr = 0u;
-      for ( auto l : *cut )
-      {
-        uint8_t leaf_phase = ( node_data.phase[use_phase] >> ctr ) & 1;
-        flow += node_match[l].flows[leaf_phase];
-        ++ctr;
+      match_propagate_required( index );
       }
-
-      node_data.flows[use_phase] = flow / node_data.est_refs[use_phase];
-
-      if ( node_data.same_match )
-      {
-        node_data.flows[use_phase ^ 1] = node_data.flows[use_phase] + lib_inv_area;
-        continue;
-      }
-
-      use_phase ^= 1;
-      best_supergate = node_data.best_supergate[use_phase];
-      cut = &cuts[i][node_data.best_cut[use_phase]];
-      flow = best_supergate->area;
-
-      ctr = 0u;
-      for ( auto l : *cut )
-      {
-        uint8_t leaf_phase = ( node_data.phase[use_phase] >> ctr ) & 1;
-        flow += node_match[l].flows[leaf_phase];
-        ++ctr;
-      }
-
-      node_data.flows[use_phase] = flow / node_data.est_refs[use_phase];
-    }
-
-    double required = std::numeric_limits<float>::max();
-
-    if ( !ps.area_oriented_mapping )
-    {
-      required = delay;
-
-      /* relax delay constraints */
-      if ( iteration == 1 && ps.required_time == 0.0f && ps.relax_required > 0.0f )
-      {
-        required *= ( 100.0 + ps.relax_required ) / 100.0;
-      }
-
-      /* Global target time constraint */
-      if ( ps.required_time != 0.0f )
-      {
-        if ( ps.required_time < delay - epsilon )
-        {
-          if ( !ps.area_oriented_mapping && iteration == 1 )
-            std::cerr << fmt::format( "[i] MAP WARNING: cannot meet the target required time of {:.2f}", ps.required_time ) << std::endl;
-        }
-        else
-        {
-          required = ps.required_time;
-        }
-      }
-    }
-
-    ntk.foreach_po( [&]( auto const& s ) {
-      const auto index = ntk.node_to_index( ntk.get_node( s ) );
-      node_match[index].map_refs[2]++;
-      if ( ntk.is_complemented( s ) )
-      {
-        node_match[index].required[1] = required;
-        node_match[index].map_refs[1]++;
-      }
-      else
-      {
-        node_match[index].required[0] = required;
-        node_match[index].map_refs[0]++;
-      }
-    } );
   }
 
   void propagate_arrival_times()
@@ -2268,106 +2044,15 @@ private:
           ++ctr;
         }
 
-        // assert( area_local < 1200000 - epsilon );
-
         if constexpr ( DO_AREA )
         {
           if ( worst_arrival > node_data.required[phase] + epsilon || worst_arrival >= std::numeric_limits<float>::max() )
             continue;
         }
 
-        if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
-        {
-          best_arrival = worst_arrival;
-          best_area_flow = area_local;
-          best_size = cut->size();
-          best_cut = cut_index;
-          best_area = gate.area;
-          best_phase = gate_polarity;
-          best_supergate = &gate;
-        }
-      }
-
-      ++cut_index;
-    }
-
-    node_data.flows[phase] = best_area_flow;
-    node_data.arrival[phase] = best_arrival;
-    node_data.area[phase] = best_area;
-    node_data.best_cut[phase] = best_cut;
-    node_data.phase[phase] = best_phase;
-    node_data.best_supergate[phase] = best_supergate;
-  }
-
-  void match_phase_share( node<Ntk> const& n, uint8_t phase )
-  {
-    double best_arrival = std::numeric_limits<float>::max();
-    double best_area_flow = std::numeric_limits<float>::max();
-    float best_area = std::numeric_limits<float>::max();
-    uint32_t best_size = UINT32_MAX;
-    uint8_t best_cut = 0u;
-    uint16_t best_phase = 0u;
-    uint8_t cut_index = 0u;
-    auto index = ntk.node_to_index( n );
-
-    auto& node_data = node_match[index];
-    supergate<NInputs> const* best_supergate = node_data.best_supergate[phase];
-
-    /* TODO: unmap multioutput */
-    // if ( node_data.multioutput_match[phase] )
-    // {
-    //   best_supergate = nullptr;
-    //   node_data.multioutput_match[phase] = false;
-    // }
-
-    /* foreach cut */
-    for ( auto& cut : cuts[index] )
-    {
-      /* trivial cuts or not matched cuts */
-      if ( ( *cut )->ignore )
-      {
-        ++cut_index;
-        continue;
-      }
-
-      auto const& supergates = ( *cut )->supergates;
-      auto const negation = ( *cut )->negations[phase];
-
-      if ( supergates[phase] == nullptr )
-      {
-        ++cut_index;
-        continue;
-      }
-
-      /* match each gate and take the best one */
-      for ( auto const& gate : *supergates[phase] )
-      {
-        uint16_t gate_polarity = gate.polarity ^ negation;
-        double worst_arrival = 0.0f;
-        double area_local = gate.area;
-
-        auto ctr = 0u;
-        /* measure arrival and shared area flow */
-
         node_data.phase[phase] = gate_polarity;
-        for ( auto l : *cut )
-        {
-          double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
-          worst_arrival = std::max( worst_arrival, arrival_pin );
 
-
-          /* TODO: 2 options -> look only at map_ref[2] and same_match, or look at the phase only */
-          uint8_t leaf_phase = ( node_data.phase[phase] >> ctr ) & 1;
-          if ( node_match[l].map_refs[2] == 0 )
-            area_local += node_match[l].flows[leaf_phase];
-
-          ++ctr;
-        }
-
-        if ( worst_arrival > node_data.required[phase] + epsilon || worst_arrival >= std::numeric_limits<float>::max() )
-          continue;
-
-        if ( compare_map<true>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
+        if ( compare_map<DO_AREA>( worst_arrival, best_arrival, area_local, best_area_flow, cut->size(), best_size ) )
         {
           best_arrival = worst_arrival;
           best_area_flow = area_local;
@@ -2741,7 +2426,6 @@ private:
     node_data.flows[1] = node_data.flows[0] + lib_inv_area;
   }
 
-  template<bool REFERENCE>
   void propagate_data_backward_white_box( node<Ntk> const& n )
   {
     uint32_t index = ntk.node_to_index( n );
@@ -2766,12 +2450,6 @@ private:
       uint8_t phase = ntk.is_complemented( f ) ? 1 : 0;
       double propagation_delay = std::max( gate.pins[i].rise_block_delay, gate.pins[i].fall_block_delay );
       node_match[f_index].required[phase] = std::min( node_match[f_index].required[phase], node_data.required[0] - propagation_delay );
-
-      if constexpr ( REFERENCE )
-      {
-        node_match[f_index].map_refs[phase]++;
-        node_match[f_index].map_refs[2]++;
-      }
     } );
   }
 
@@ -3406,7 +3084,7 @@ private:
     for ( int j = max_multioutput_output_size - 1; j >= 0; --j )
     {
       const auto node_index = tuple_data[j].node_index;
-      match_propagate_required<false>( node_index );
+      match_propagate_required( node_index );
     }
   }
 
