@@ -31,6 +31,7 @@
 #include <mockturtle/algorithms/collapse_mapped.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
+#include <mockturtle/io/write_blif.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/views/depth_view.hpp>
@@ -49,7 +50,7 @@ int main()
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -58,10 +59,10 @@ int main()
     ps.cut_enumeration_ps.cut_size = 6u;
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.recompute_cuts = true;
-    ps.area_oriented_mapping = false;
-    ps.edge_optimization = true;
+    ps.area_oriented_mapping = true;
+    ps.edge_optimization = false;
     ps.cut_expansion = true;
-    ps.area_share_rounds = 0;
+    ps.area_share_rounds = 2;
     ps.area_flow_rounds = 1;
     ps.ela_rounds = 2;
     ps.verbose = false;
@@ -71,6 +72,8 @@ int main()
     depth_view<klut_network> klut_d{ klut };
 
     auto const cec = true;
+
+    // write_blif( klut, "lut_out/" + benchmark + ".blif" );
 
     exp( benchmark, st.area, st.delay, st.edges, to_seconds( st.time_total ), cec );
   }
