@@ -1387,8 +1387,9 @@ private:
         node_match[i].est_refs = std::max( 1.0, ( 1.0 * node_match[i].est_refs + 2.0 * node_match[i].map_refs ) / 3.0 );
       node_match[i].map_refs = 0;
 
-      /* update flows */
-      compute_cut_data<false>( **( cuts[i].begin() ), ntk.index_to_node( i ), false );
+      /* update flows if in area-oriented mapping */
+      if ( ps.area_oriented_mapping )
+        compute_cut_data<false>( **( cuts[i].begin() ), ntk.index_to_node( i ), false );
     }
 
     uint32_t required = delay;
