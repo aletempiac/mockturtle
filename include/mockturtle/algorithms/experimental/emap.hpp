@@ -834,7 +834,8 @@ private:
   bool improve_mapping()
   {
     /* compute mapping using global area flow */
-    while ( iteration < ps.area_flow_rounds + 1 )
+    uint32_t i = 0;
+    while ( i++ < ps.area_flow_rounds )
     {
       compute_required_time();
       if ( !compute_mapping<true>() )
@@ -844,11 +845,12 @@ private:
     }
 
     /* compute mapping using exact area */
+    i = 0;
     if ( ps.use_fast_area_recovery )
     {
       compute_required_time( true );
       reindex_multioutput_data();
-      while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
+      while ( i++ < ps.ela_rounds )
       {
         if ( !compute_mapping_exact_reversed<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
         {
@@ -857,7 +859,8 @@ private:
       }
 
       /* compute mapping using exact switching activity estimation */
-      while ( iteration < ps.eswp_rounds + ps.ela_rounds + ps.area_flow_rounds + 1 )
+      i = 0;
+      while ( i++ < ps.eswp_rounds )
       {
         if ( !compute_mapping_exact_reversed<true>( true ) )
         {
@@ -867,7 +870,7 @@ private:
     }
     else
     {
-      while ( iteration < ps.ela_rounds + ps.area_flow_rounds + 1 )
+      while ( i++ < ps.ela_rounds )
       {
         compute_required_time();
         if ( !compute_mapping_exact<false>( iteration == ps.ela_rounds + ps.area_flow_rounds ) )
@@ -877,7 +880,8 @@ private:
       }
 
       /* compute mapping using exact switching activity estimation */
-      while ( iteration < ps.eswp_rounds + ps.ela_rounds + ps.area_flow_rounds + 1 )
+      i = 0;
+      while ( i++ < ps.eswp_rounds )
       {
         compute_required_time();
         if ( !compute_mapping_exact<true>( true ) )
@@ -907,7 +911,7 @@ private:
       auto const index = ntk.node_to_index( n );
       auto& node_data = node_match[index];
 
-      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<float>( ntk.fanout_size( n ) );
+      node_data.est_refs[0] = node_data.est_refs[1] = node_data.est_refs[2] = static_cast<double>( ntk.fanout_size( n ) );
       node_data.map_refs[0] = node_data.map_refs[1] = node_data.map_refs[2] = 0;
       node_data.required[0] = node_data.required[1] = std::numeric_limits<float>::max();
 
@@ -1444,15 +1448,17 @@ private:
 
       /* recursively deselect the best cut shared between
        * the two phases if in use in the cover */
+      uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
+      double old_required = -1;
       if ( node_data.same_match )
       {
-        uint8_t use_phase = node_data.best_supergate[0] != nullptr ? 0 : 1;
         auto const& best_cut = cuts[index][node_data.best_cut[use_phase]];
         cut_deref<SwitchActivity>( best_cut, *it, use_phase );
 
         /* propagate required time over the output inverter if present */
         if ( node_data.map_refs[use_phase ^ 1] > 0 )
         {
+          old_required = node_data.required[use_phase];
           node_data.required[use_phase] = std::min( node_data.required[use_phase], node_data.required[use_phase ^ 1] - lib_inv_delay );
         }
       }
@@ -1462,6 +1468,12 @@ private:
 
       /* match negative phase */
       match_phase_exact<SwitchActivity>( *it, 1u );
+
+      /* restore required time */
+      if ( old_required > 0 )
+      {
+        node_data.required[use_phase] = old_required;
+      }
 
       /* try to drop one phase */
       match_drop_phase<true, true>( *it, 0 );
@@ -1794,7 +1806,7 @@ private:
         continue;
 
       match_propagate_required( index );
-    }
+      }
   }
 
   void propagate_arrival_times()
@@ -2021,6 +2033,7 @@ private:
         double area_local = gate.area;
 
         auto ctr = 0u;
+        node_data.phase[phase] = gate_polarity;
         for ( auto l : *cut )
         {
           double arrival_pin = node_match[l].arrival[( gate_polarity >> ctr ) & 1] + gate.tdelay[ctr];
