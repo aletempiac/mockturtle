@@ -163,14 +163,6 @@ public:
     }
   };
 
-  struct label_hash
-  {
-    std::size_t operator()( label const& l ) const noexcept
-    {
-      return std::hash<uint32_t>{}( l.data );
-    }
-  };
-
 private:
   using supergates_list_t = std::vector<supergate<NInputs>>;
   using composed_list_t = std::vector<composed_gate<NInputs>>;
@@ -252,19 +244,6 @@ public:
     return nullptr;
   }
 
-  /*! \brief Get the rules matching the function.
-   *
-   * Returns a list of gates that match the function represented
-   * by the truth table.
-   */
-  rule get_rules( kitty::dynamic_truth_table const& tt )
-  {
-    auto match = _dsd_map.find( tt );
-    if ( match != _dsd_map.end() )
-      return match->second;
-    return {};
-  }
-
   /*! \brief Print and table.
    *
    */
@@ -319,14 +298,12 @@ private:
         support.push_back( i );
       }
       auto cpy = gate.function;
+      gate_disjoint = false;
       compute_dsd( cpy, support, rule );
 
       /* ignore gates with reconvergence */
-      if ( !gate_disjoint )
-      {
-        gate_disjoint = true;
+      if ( gate_disjoint )
         continue;
-      }
 
       _dsd_map.insert( { gate.function, rule } );
       if ( verbose )
@@ -734,7 +711,7 @@ private:
         auto res = do_shannon_dec( tt, index, co0, co1, mapped_support );
 
         /* check for reconvergence */
-        gate_disjoint = false;
+        gate_disjoint = true;
 
         int inv_var_co1 = is_inv_PI( co1, co1.num_vars() );
         int map_inv_var_co1 = mapped_support[inv_var_co1];
@@ -780,6 +757,14 @@ private:
         return res.index;
       }
     }
+  }
+
+  rule get_rules( kitty::dynamic_truth_table const& tt )
+  {
+    auto match = _dsd_map.find( tt );
+    if ( match != _dsd_map.end() )
+      return match->second;
+    return {};
   }
 
   dsd_node* get_father( rule& rule, dsd_node& node )
@@ -1468,7 +1453,7 @@ private:
 #pragma endregion
 
 private:
-  bool gate_disjoint{ true }; /* flag for gate support*/
+  bool gate_disjoint{ false }; /* flag for gate support*/
 
   std::vector<gate> const& _gates;  /* collection of gates */
   composed_list_t _supergates;       /* list of composed_gates */
