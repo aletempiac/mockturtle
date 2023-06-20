@@ -844,6 +844,16 @@ struct node_lut
 template<class Ntk, bool StoreFunction, class LUTCostFn>
 class lut_map_impl
 {
+private:
+  /* special map for output drivers to perform some optimizations */
+  enum class driver_type : uint32_t
+  {
+    none = 0,
+    pos = 1,
+    neg = 2,
+    mixed = 3
+  };
+
 public:
   static constexpr uint32_t max_cut_num = 16;
   static constexpr uint32_t max_cut_size = 6;
@@ -3311,14 +3321,6 @@ private:
     klut_network res;
     node_map<signal<klut_network>, Ntk> node_to_signal( ntk );
 
-    /* special map for output drivers to perform some optimizations */
-    enum class driver_type : uint32_t
-    {
-      none = 0,
-      pos = 1,
-      neg = 2,
-      mixed = 3
-    };
     node_map<driver_type, Ntk> node_driver_type( ntk, driver_type::none );
 
     /* opposites are filled for nodes with mixed driver types, since they have
@@ -3341,21 +3343,6 @@ private:
       case driver_type::mixed:
       default:
         break;
-      }
-    } );
-
-    /* TODO: change -- it could be that internal nodes also point to an output driver node */
-    ntk.foreach_node( [&]( auto const n ) {
-      if ( ntk.is_constant( n ) || ntk.is_pi( n ) || node_match[ntk.node_to_index( n )].map_refs == 0 )
-        return;
-
-      auto const& best_cut = cuts[ntk.node_to_index( n )][0];
-      for ( auto const& l : best_cut )
-      {
-        if ( node_driver_type[ntk.index_to_node( l )] == driver_type::neg )
-        {
-          node_driver_type[ntk.index_to_node( l )] = driver_type::mixed;
-        }
       }
     } );
 
@@ -3434,9 +3421,9 @@ private:
       // else
       // {
       if constexpr ( has_foreach_choice_v<Ntk> )
-        std::tie( tt, children ) = create_lut_choice( n, node_to_signal );
+        std::tie( tt, children ) = create_lut_choice( n, node_to_signal, node_driver_type );
       else
-        std::tie( tt, children ) = create_lut( n, node_to_signal );
+        std::tie( tt, children ) = create_lut( n, node_to_signal, node_driver_type );
       // }
 
       switch ( node_driver_type[n] )
@@ -3473,7 +3460,7 @@ private:
     return res;
   }
 
-  inline lut_info create_lut( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  inline lut_info create_lut( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, node_map<driver_type, Ntk> const& node_driver_type )
   {
     auto const& best_cut = cuts[ntk.node_to_index( n )][0];
 
@@ -3509,7 +3496,7 @@ private:
       for ( uint32_t leaf : best_cut )
       {
         kitty::dynamic_truth_table tt_leaf( best_cut.size() );
-        kitty::create_nth_var( tt_leaf, ctr++ );
+        kitty::create_nth_var( tt_leaf, ctr++, node_driver_type[ntk.index_to_node( leaf )] == driver_type::neg );
         node_to_value[ntk.index_to_node( leaf )] = tt_leaf;
         ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
       }
@@ -3529,7 +3516,7 @@ private:
     return { tt, children };
   }
 
-  inline lut_info create_lut_choice( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal )
+  inline lut_info create_lut_choice( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, node_map<driver_type, Ntk> const& node_driver_type )
   {
     auto const& best_cut = cuts[ntk.node_to_index( n )][0];
 
@@ -3565,7 +3552,7 @@ private:
       for ( uint32_t leaf : best_cut )
       {
         kitty::dynamic_truth_table tt_leaf( best_cut.size() );
-        kitty::create_nth_var( tt_leaf, ctr++ );
+        kitty::create_nth_var( tt_leaf, ctr++, node_driver_type[ntk.index_to_node( leaf )] == driver_type::neg );
         node_to_value[ntk.index_to_node( leaf )] = tt_leaf;
         ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
       }
