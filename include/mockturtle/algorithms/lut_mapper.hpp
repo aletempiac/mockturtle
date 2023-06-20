@@ -1328,7 +1328,7 @@ private:
 
       for ( auto leaf : cuts[index][0] )
       {
-        node_match[leaf].required = std::min( node_match[leaf].required, node_match[index].required - 1 );
+        node_match[leaf].required = std::min( node_match[leaf].required, node_match[index].required - cuts[index][0]->data.lut_delay );
       }
     }
   }
@@ -1356,7 +1356,7 @@ private:
         node_delay = std::max( node_delay, best_leaf_cut->data.delay );
       }
 
-      best_cut->data.delay = node_delay + 1;
+      best_cut->data.delay = node_delay + best_cut->data.lut_delay;
 
       /* continue if not referenced in the cover */
       if ( node_match[index].map_refs == 0u )
@@ -2470,7 +2470,7 @@ private:
     /* propagate required times backward and reference the leaves */
     for ( auto leaf : *best_cut )
     {
-      node_match[leaf].required = std::min( node_match[leaf].required, node_data.required - 1 );
+      node_match[leaf].required = std::min( node_match[leaf].required, node_data.required - ( *best_cut )->data.lut_delay );
       node_match[leaf].map_refs++;
     }
 
@@ -2559,7 +2559,7 @@ private:
     uint32_t delay_update = 0;
     for ( auto const leaf : best_cut )
     {
-      delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + 1 );
+      delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + best_cut->data.lut_delay );
     }
     best_cut->data.delay = delay_update;
 
@@ -2605,7 +2605,7 @@ private:
     uint32_t delay_after = 0;
     for ( auto const leaf : leaves )
     {
-      delay_after = std::max( delay_after, cuts[leaf][0]->data.delay + 1 );
+      delay_after = std::max( delay_after, cuts[leaf][0]->data.delay + new_cut->data.lut_delay );
     }
     new_cut->data.delay = delay_after;
 
