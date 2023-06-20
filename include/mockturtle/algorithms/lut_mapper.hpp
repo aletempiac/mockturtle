@@ -533,7 +533,7 @@ public:
 
   /*! \brief Returns the best cut, i.e., the first cut.
    */
-  auto const& best() const { return *_pcuts[0]; }
+  auto& best() const { return *_pcuts[0]; }
 
   /*! \brief Updates the best cut.
    *
@@ -1348,7 +1348,7 @@ private:
 
       /* propagate arrival time */
       uint32_t node_delay = 0;
-      auto& best_cut = **( cuts[index].begin() );
+      auto& best_cut = cuts[index].best();
 
       for ( auto leaf : best_cut )
       {
@@ -1389,7 +1389,7 @@ private:
 
       /* update flows if in area-oriented mapping */
       if ( ps.area_oriented_mapping )
-        compute_cut_data<false>( **( cuts[i].begin() ), ntk.index_to_node( i ), false );
+        compute_cut_data<false>( cuts[i].best(), ntk.index_to_node( i ), false );
     }
 
     uint32_t required = delay;
