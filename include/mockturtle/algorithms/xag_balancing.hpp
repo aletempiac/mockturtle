@@ -24,8 +24,8 @@
  */
 
 /*!
-  \file aig_balancing.hpp
-  \brief Balances the AIG to reduce the depth
+  \file xag_balancing.hpp
+  \brief Balances the XAG to reduce the depth
 
   \author Alessandro Tempia Calvino
 */
@@ -45,7 +45,7 @@
 namespace mockturtle
 {
 
-struct aig_balancing_params
+struct xag_balancing_params
 {
   /*! \brief Minimizes the number of levels. */
   bool minimize_levels{ true };
@@ -55,7 +55,7 @@ namespace detail
 {
 
 template<class Ntk>
-class aig_balance_impl
+class xag_balance_impl
 {
 public:
   static constexpr size_t storage_init_size = 30;
@@ -64,7 +64,7 @@ public:
   using storage_t = std::vector<std::vector<signal>>;
 
 public:
-  aig_balance_impl( Ntk& ntk, aig_balancing_params const& ps )
+  xag_balance_impl( Ntk& ntk, xag_balancing_params const& ps )
       : ntk( ntk ), ps( ps ), storage( storage_init_size )
   {
   }
@@ -100,13 +100,30 @@ private:
       storage.back().reserve( 10 );
     }
 
-    /* collect leaves of the AND tree */
-    collect_leaves( n, storage[level] );
+    /* collect leaves of the AND or XOR trees */
+    bool polarity = false;
+    bool is_and = true;
+    if constexpr ( has_is_xor_v<Ntk> )
+    {
+      if ( ntk.is_and( n ) )
+      {
+        collect_leaves_and( n, storage[level] );
+      }
+      else
+      {
+        polarity = collect_leaves_xor( n, storage[level] );
+        is_and = false;
+      }
+    }
+    else
+    {
+      collect_leaves_and( n, storage[level] );
+    }
 
     if ( storage[level].size() == 0 )
     {
-      ntk.substitute_node( n, ntk.get_constant( false ) );
-      return ntk.get_constant( false );
+      ntk.substitute_node( n, ntk.get_constant( polarity ) );
+      return ntk.get_constant( polarity );
     }
 
     /* recur over the leaves */
@@ -127,30 +144,57 @@ private:
     ntk.incr_trav_id();
     mark_tfi( ntk.make_signal( n ), true );
 
-    /* generate the AND tree */
-    while ( storage[level].size() > 1 )
+    /* generate the AND or XOR tree */
+    if ( is_and )
     {
-      /* explore multiple possibilities to find logic sharing */
-      if ( ps.minimize_levels )
-        pick_nodes( storage[level], find_left_most_at_level( storage[level] ) );
-      else
-        pick_nodes_area( storage[level] );
+      while ( storage[level].size() > 1 )
+      {
+        /* explore multiple possibilities to find logic sharing */
+        if ( ps.minimize_levels )
+          pick_nodes_and( storage[level], find_left_most_at_level( storage[level] ) );
+        else
+          pick_nodes_and_area( storage[level] );
 
-      /* pop the two selected nodes to create the new AND gate */
-      signal child1 = storage[level].back();
-      storage[level].pop_back();
-      signal child2 = storage[level].back();
-      storage[level].pop_back();
-      signal new_sig = ntk.create_and( child1, child2 );
+        /* pop the two selected nodes to create the new AND gate */
+        signal child1 = storage[level].back();
+        storage[level].pop_back();
+        signal child2 = storage[level].back();
+        storage[level].pop_back();
+        signal new_sig = ntk.create_and( child1, child2 );
 
-      /* update level for AND node */
-      update_level( ntk.get_node( new_sig ) );
+        /* update level for AND node */
+        update_level( ntk.get_node( new_sig ) );
 
-      /* insert the new node back */
-      insert_node_sorted( storage[level], new_sig );
+        /* insert the new node back */
+        insert_node_sorted_and( storage[level], new_sig );
+      }
+    }
+    else
+    {
+      while ( storage[level].size() > 1 )
+      {
+        /* explore multiple possibilities to find logic sharing */
+        if ( ps.minimize_levels )
+          pick_nodes_xor( storage[level], find_left_most_at_level( storage[level] ) );
+        else
+          pick_nodes_xor_area( storage[level] );
+
+        /* pop the two selected nodes to create the new XOR gate */
+        signal child1 = storage[level].back();
+        storage[level].pop_back();
+        signal child2 = storage[level].back();
+        storage[level].pop_back();
+        signal new_sig = ntk.create_xor( child1, child2 );
+
+        /* update level for XOR node */
+        update_level( ntk.get_node( new_sig ) );
+
+        /* insert the new node back */
+        insert_node_sorted_xor( storage[level], new_sig, polarity );
+      }
     }
 
-    signal root = storage[level][0];
+    signal root = storage[level][0] ^ polarity;
 
     /* replace if new */
     if ( n != ntk.get_node( root ) )
@@ -168,11 +212,11 @@ private:
     return root;
   }
 
-  void collect_leaves( node const& n, std::vector<signal>& leaves )
+  void collect_leaves_and( node const& n, std::vector<signal>& leaves )
   {
     ntk.incr_trav_id();
 
-    int ret = collect_leaves_rec( ntk.make_signal( n ), leaves, true );
+    int ret = collect_leaves_and_rec( ntk.make_signal( n ), leaves, true );
 
     /* check for constant false */
     if ( ret < 0 )
@@ -181,7 +225,7 @@ private:
     }
   }
 
-  int collect_leaves_rec( signal const& f, std::vector<signal>& leaves, bool is_root )
+  int collect_leaves_and_rec( signal const& f, std::vector<signal>& leaves, bool is_root )
   {
     node n = ntk.get_node( f );
 
@@ -202,8 +246,8 @@ private:
       return 0;
     }
 
-    /* set as leaf if signal is complemented or is a CI or has a multiple fanout */
-    if ( !is_root && ( ntk.is_complemented( f ) || ntk.is_ci( n ) || ntk.fanout_size( n ) > 1 ) )
+    /* set as leaf if signal is complemented or is a XOR or is a CI or has a multiple fanout */
+    if ( !is_root && ( ntk.is_complemented( f ) || ntk.is_xor( n ) || ntk.is_ci( n ) || ntk.fanout_size( n ) > 1 ) )
     {
       leaves.push_back( f );
       ntk.set_visited( n, ntk.trav_id() );
@@ -212,7 +256,60 @@ private:
 
     int ret = 0;
     ntk.foreach_fanin( n, [&]( auto const& child ) {
-      ret |= collect_leaves_rec( child, leaves, false );
+      ret |= collect_leaves_and_rec( child, leaves, false );
+    } );
+
+    return ret;
+  }
+
+  bool collect_leaves_xor( node const& n, std::vector<signal>& leaves )
+  {
+    ntk.incr_trav_id();
+
+    int ret = collect_leaves_xor_rec( ntk.make_signal( n ), leaves, true );
+
+    /* return top polarity */
+    return ret ? true : false;
+  }
+
+  int collect_leaves_xor_rec( signal const& f, std::vector<signal>& leaves, bool is_root )
+  {
+    node n = ntk.get_node( f );
+
+    /* check if already visited */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+    {
+      auto it = leaves.begin();
+      while ( it != leaves.end() )
+      {
+        if ( ntk.get_node( *it ) != n )
+        {
+          ++it;
+          continue;
+        }
+
+        /* remove node (XOR property) */
+        if ( ntk.get_node( *it ) == n )
+          leaves.erase( it );
+
+        return 0;
+      }
+
+      return 0;
+    }
+
+    /* set as leaf if signal is an AND or is a CI or has a multiple fanout */
+    if ( !is_root && ( ntk.is_and( n ) || ntk.is_ci( n ) || ntk.fanout_size( n ) > 1 ) )
+    {
+      leaves.push_back( f ^ ntk.is_complemented( f ) );
+      ntk.set_visited( n, ntk.trav_id() );
+      return 0;
+    }
+
+    int ret = 0;
+    ntk.foreach_fanin( n, [&]( auto const& child ) {
+      ret ^= ntk.is_complemented( child ) ? 1 : 0;
+      ret ^= collect_leaves_xor_rec( child, leaves, false );
     } );
 
     return ret;
@@ -235,7 +332,7 @@ private:
     return pointer;
   }
 
-  void pick_nodes( std::vector<signal>& leaves, size_t left_most )
+  void pick_nodes_and( std::vector<signal>& leaves, size_t left_most )
   {
     size_t right_most = leaves.size() - 2;
 
@@ -269,7 +366,7 @@ private:
     }
   }
 
-  void pick_nodes_area( std::vector<signal>& leaves )
+  void pick_nodes_and_area( std::vector<signal>& leaves )
   {
     for ( size_t right_pointer = leaves.size() - 1; right_pointer > 0; --right_pointer )
     {
@@ -296,7 +393,68 @@ private:
     }
   }
 
-  void insert_node_sorted( std::vector<signal>& leaves, signal const& f )
+  void pick_nodes_xor( std::vector<signal>& leaves, size_t left_most )
+  {
+    size_t right_most = leaves.size() - 2;
+
+    if ( ntk.level( ntk.get_node( leaves[leaves.size() - 1] ) ) == ntk.level( ntk.get_node( leaves[leaves.size() - 2] ) ) )
+      right_most = left_most;
+
+    for ( size_t right_pointer = leaves.size() - 1; right_pointer > right_most; --right_pointer )
+    {
+      assert( left_most < right_pointer );
+
+      size_t left_pointer = right_pointer;
+      while ( left_pointer-- > left_most )
+      {
+        /* select if node exists */
+        std::optional<signal> pnode = ntk.has_xor( leaves[right_pointer], leaves[left_pointer] );
+        if ( pnode.has_value() )
+        {
+          /* already present in TFI */
+          if ( ntk.visited( ntk.get_node( *pnode ) ) == ntk.trav_id() )
+          {
+            continue;
+          }
+
+          if ( leaves[right_pointer] != leaves[leaves.size() - 1] )
+            std::swap( leaves[right_pointer], leaves[leaves.size() - 1] );
+          if ( leaves[left_pointer] != leaves[leaves.size() - 2] )
+            std::swap( leaves[left_pointer], leaves[leaves.size() - 2] );
+          break;
+        }
+      }
+    }
+  }
+
+  void pick_nodes_xor_area( std::vector<signal>& leaves )
+  {
+    for ( size_t right_pointer = leaves.size() - 1; right_pointer > 0; --right_pointer )
+    {
+      size_t left_pointer = right_pointer;
+      while ( left_pointer-- > 0 )
+      {
+        /* select if node exists */
+        std::optional<signal> pnode = ntk.has_xor( leaves[right_pointer], leaves[left_pointer] );
+        if ( pnode.has_value() )
+        {
+          /* already present in TFI */
+          if ( ntk.visited( ntk.get_node( *pnode ) ) == ntk.trav_id() )
+          {
+            continue;
+          }
+
+          if ( leaves[right_pointer] != leaves[leaves.size() - 1] )
+            std::swap( leaves[right_pointer], leaves[leaves.size() - 1] );
+          if ( leaves[left_pointer] != leaves[leaves.size() - 2] )
+            std::swap( leaves[left_pointer], leaves[leaves.size() - 2] );
+          break;
+        }
+      }
+    }
+  }
+
+  void insert_node_sorted_and( std::vector<signal>& leaves, signal const& f )
   {
     node n = ntk.get_node( f );
 
@@ -305,6 +463,40 @@ private:
     {
       if ( s == f )
         return;
+    }
+
+    leaves.push_back( f );
+    for ( size_t i = leaves.size() - 1; i > 0; --i )
+    {
+      auto& s2 = leaves[i - 1];
+
+      if ( ntk.level( ntk.get_node( s2 ) ) < ntk.level( n ) )
+      {
+        std::swap( s2, leaves[i] );
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+
+  void insert_node_sorted_xor( std::vector<signal>& leaves, signal const& f, bool& polarity )
+  {
+    node n = ntk.get_node( f );
+
+    /* check uniqueness */
+    auto it = leaves.begin();
+    while ( it != leaves.end() )
+    {
+      if ( ntk.get_node( *it ) == ntk.get_node( f ) )
+      {
+        polarity ^= ntk.is_complemented( f ) ^ ntk.is_complemented( *it );
+        leaves.erase( it );
+        return;
+      }
+
+      ++it;
     }
 
     leaves.push_back( f );
@@ -364,7 +556,7 @@ private:
 
 private:
   Ntk& ntk;
-  aig_balancing_params const& ps;
+  xag_balancing_params const& ps;
 
   storage_t storage;
 };
@@ -395,7 +587,7 @@ private:
  * - `has_and`
  */
 template<class Ntk>
-void aig_balance( Ntk& ntk, aig_balancing_params const& ps = {} )
+void xag_balance( Ntk& ntk, xag_balancing_params const& ps = {} )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
   static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
@@ -412,11 +604,12 @@ void aig_balance( Ntk& ntk, aig_balancing_params const& ps = {} )
   static_assert( has_create_not_v<Ntk>, "Ntk does not implement the create_not method" );
   static_assert( has_is_complemented_v<Ntk>, "Ntk does not implement the is_complemented method" );
   static_assert( has_has_and_v<Ntk>, "Ntk does not implement the has_and method" );
+  static_assert( has_has_xor_v<Ntk>, "Ntk does not implement the has_xor method" );
 
   fanout_view<Ntk> f_ntk{ ntk };
   depth_view<fanout_view<Ntk>> d_ntk{ f_ntk };
 
-  detail::aig_balance_impl p( d_ntk, ps );
+  detail::xag_balance_impl p( d_ntk, ps );
   p.run();
 
   ntk = cleanup_dangling( ntk );
