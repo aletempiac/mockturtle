@@ -56,9 +56,6 @@ int main()
     ps.cut_enumeration_ps.cut_size = 4u;
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.sop_balancing = true;
-    ps.area_flow_rounds = 1;
-    ps.ela_rounds = 2;
-    ps.verbose = true;
     lut_map_stats st;
     const auto klut = lut_map<aig_network, true>( aig, ps, &st );
 

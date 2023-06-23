@@ -43,6 +43,7 @@
 #include <fmt/format.h>
 #include <kitty/cube.hpp>
 #include <kitty/dynamic_truth_table.hpp>
+#include <kitty/esop.hpp>
 #include <kitty/isop.hpp>
 #include <kitty/operations.hpp>
 
@@ -1185,7 +1186,8 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
-        compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
+        if ( !compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true ) )
+          continue;
 
         /* check required time */
         if constexpr ( DO_AREA )
@@ -1313,7 +1315,8 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
-        compute_cut_data<ELA>( new_cut, index, true );
+        if ( !compute_cut_data<ELA>( new_cut, index, true ) )
+          return true;
 
         /* check required time */
         if constexpr ( DO_AREA )
@@ -1351,7 +1354,8 @@ private:
           new_cut->func_id = compute_truth_table( index, { cut }, new_cut );
         }
 
-        compute_cut_data<ELA>( new_cut, n, true );
+        if ( !compute_cut_data<ELA>( new_cut, index, true ) )
+          continue;
 
         if constexpr ( DO_AREA )
         {
@@ -1864,7 +1868,7 @@ private:
   }
 
   template<bool ELA>
-  void compute_cut_data( cut_t& cut, node const& n, bool recompute_cut_cost )
+  bool compute_cut_data( cut_t& cut, node const& n, bool recompute_cut_cost )
   {
     uint32_t lut_area;
     uint32_t lut_delay;
@@ -1877,7 +1881,8 @@ private:
         {
           cut->data.lut_area = 0;
           cut->data.lut_delay = 0;
-          compute_isop( cut );
+          if ( !compute_isop( cut ) )
+            return false;
         }
         else
         {
@@ -1987,6 +1992,8 @@ private:
         compute_balancing_cost( cut );
       }
     }
+
+    return true;
   }
 
   void compute_cut_data_share( cut_t& cut )
@@ -2486,11 +2493,11 @@ private:
 #pragma endregion
 
 #pragma region balancing
-void compute_isop( cut_t const& cut )
+bool compute_isop( cut_t const& cut )
 {
   uint32_t func_id = cut->func_id >> 1;
   if ( func_id < isops.size() )
-    return;
+    return true;
   
   assert( func_id == isops.size() );
   
@@ -2504,9 +2511,12 @@ void compute_isop( cut_t const& cut )
     sop = exorcism( truth_tables[func_id << 1u] );
   }
 
-  /* TODO: check size of SOP < max_cubes */
+  /* check size of SOP < max_cubes */
+  if ( sop.size() > max_cubes )
+    return false;
 
   isops.push_back( sop );
+  return true;
 }
 
 void compute_balancing_cost( cut_t& cut )
@@ -2529,7 +2539,8 @@ void compute_balancing_cost( cut_t& cut )
   cubes_queue_t terms;
 
   /* get terms delay */
-  for ( kitty::cube const& c : isops[cut->func_id >> 1] )
+  auto const& sop = isops[cut->func_id >> 1];
+  for ( kitty::cube const& c : sop )
   {
     cubes_queue_t lits;
     for ( i = 0; i < cut.size(); ++i )
@@ -2540,7 +2551,8 @@ void compute_balancing_cost( cut_t& cut )
       }
     }
 
-    assert( lits.size() > 0 );
+    if ( lits.size() == 0 )
+      continue;
 
     decomposition_size += lits.size() - 1;
     terms.push( compute_balancing_cost_term( lits ) );
@@ -2618,7 +2630,9 @@ void compute_balancing_cost_required( uint32_t index )
       }
     }
 
-    assert( lits.size() > 0 );
+    if ( lits.size() == 0 )
+      continue;
+
     compute_balancing_cost_required_term( lits, connections, size );
 
     terms.push( lits.top() );
@@ -2692,7 +2706,7 @@ private:
   std::vector<uint32_t> tmp_visited;
   std::vector<node_lut> node_match;
 
-  std::deque<cut_set_t> cuts;   /* compressed representation of cuts */
+  std::vector<cut_set_t> cuts;   /* compressed representation of cuts */
   cut_merge_t lcuts;            /* cut merger container */
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
