@@ -178,6 +178,7 @@ struct cut_enumeration_lut_cut
   uint32_t lut_delay{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
+  bool ignore{ false };
 };
 
 enum class lut_cut_sort_type
@@ -265,6 +266,10 @@ public:
   static bool sort_delay( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->data.ignore && c2->data.ignore )
+      return true;
+    if ( c1->data.ignore )
+      return false;
     if ( c1->data.delay < c2->data.delay )
       return true;
     if ( c1->data.delay > c2->data.delay )
@@ -283,6 +288,10 @@ public:
   static bool sort_delay2( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->data.ignore && c2->data.ignore )
+      return true;
+    if ( c1->data.ignore )
+      return false;
     if ( c1->data.delay < c2->data.delay )
       return true;
     if ( c1->data.delay > c2->data.delay )
@@ -301,6 +310,10 @@ public:
   static bool sort_area( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->data.ignore && c2->data.ignore )
+      return true;
+    if ( c1->data.ignore )
+      return false;
     if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
     if ( c1->data.area_flow > c2->data.area_flow + eps )
@@ -315,6 +328,10 @@ public:
   static bool sort_area2( CutType const& c1, CutType const& c2 )
   {
     constexpr auto eps{ 0.005f };
+    if ( !c1->data.ignore && c2->data.ignore )
+      return true;
+    if ( c1->data.ignore )
+      return false;
     if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
     if ( c1->data.area_flow > c2->data.area_flow + eps )
@@ -588,8 +605,9 @@ private:
 
 public:
   static constexpr uint32_t max_cut_num = 16;
-  static constexpr uint32_t max_cut_size = 6;
-  static constexpr uint32_t max_cubes = 100;
+  static constexpr uint32_t max_cut_size = 8;
+  static constexpr uint32_t max_cubes = 64;
+  static constexpr uint32_t max_sop_decomp_size = max_cut_size * ( max_cubes + 1 );
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
   using node = typename Ntk::node;
@@ -1186,8 +1204,7 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
-        if ( !compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true ) )
-          continue;
+        compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
 
         /* check required time */
         if constexpr ( DO_AREA )
@@ -1315,8 +1332,7 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
-        if ( !compute_cut_data<ELA>( new_cut, index, true ) )
-          return true;
+        compute_cut_data<ELA>( new_cut, index, true );
 
         /* check required time */
         if constexpr ( DO_AREA )
@@ -1354,8 +1370,7 @@ private:
           new_cut->func_id = compute_truth_table( index, { cut }, new_cut );
         }
 
-        if ( !compute_cut_data<ELA>( new_cut, index, true ) )
-          continue;
+        compute_cut_data<ELA>( new_cut, index, true );
 
         if constexpr ( DO_AREA )
         {
@@ -1868,7 +1883,7 @@ private:
   }
 
   template<bool ELA>
-  bool compute_cut_data( cut_t& cut, node const& n, bool recompute_cut_cost )
+  void compute_cut_data( cut_t& cut, node const& n, bool recompute_cut_cost )
   {
     uint32_t lut_area;
     uint32_t lut_delay;
@@ -1881,8 +1896,7 @@ private:
         {
           cut->data.lut_area = 0;
           cut->data.lut_delay = 0;
-          if ( !compute_isop( cut ) )
-            return false;
+          compute_isop( cut );
         }
         else
         {
@@ -1992,8 +2006,6 @@ private:
         compute_balancing_cost( cut );
       }
     }
-
-    return true;
   }
 
   void compute_cut_data_share( cut_t& cut )
@@ -2493,12 +2505,12 @@ private:
 #pragma endregion
 
 #pragma region balancing
-bool compute_isop( cut_t const& cut )
+void compute_isop( cut_t& cut )
 {
   uint32_t func_id = cut->func_id >> 1;
   if ( func_id < isops.size() )
-    return true;
-  
+    return;
+
   assert( func_id == isops.size() );
   
   sop_t sop;
@@ -2513,10 +2525,12 @@ bool compute_isop( cut_t const& cut )
 
   /* check size of SOP < max_cubes */
   if ( sop.size() > max_cubes )
-    return false;
+  {
+    cut->data.ignore = true;
+  }
 
   isops.push_back( sop );
-  return true;
+  return;
 }
 
 void compute_balancing_cost( cut_t& cut )
@@ -2524,11 +2538,14 @@ void compute_balancing_cost( cut_t& cut )
   uint32_t decomposition_size = 0;
   uint32_t decomposition_delay = 0;
 
+  auto const& sop = isops[cut->func_id >> 1];
+
+  if ( sop.size() > max_cubes )
+    return;
+
   /* specific case size = 0 or = 1 */
   if ( cut.size() < 2 )
-  {
     return;
-  }
 
   /* collect arrival times for fanin */
   std::array<uint32_t, max_cut_size> arrival_pin;
@@ -2539,7 +2556,7 @@ void compute_balancing_cost( cut_t& cut )
   cubes_queue_t terms;
 
   /* get terms delay */
-  auto const& sop = isops[cut->func_id >> 1];
+  assert( sop.size() <= max_cubes );
   for ( kitty::cube const& c : sop )
   {
     cubes_queue_t lits;
@@ -2601,9 +2618,9 @@ void compute_balancing_cost_required( uint32_t index )
   }
 
   /* collect arrival times for fanin */
-  std::array<std::pair<uint16_t, uint16_t>, max_cut_size + max_cubes> connections;
+  std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> connections;
   std::array<uint32_t, max_cut_size> arrival_pin;
-  std::array<uint32_t, max_cut_size + max_cubes> required;
+  std::array<uint32_t, max_sop_decomp_size> required;
   unsigned size = 0;
   for ( auto l : cut )
   {
@@ -2619,6 +2636,7 @@ void compute_balancing_cost_required( uint32_t index )
 
   /* get terms delay */
   auto const& sop = isops[cut->func_id >> 1];
+  assert( sop.size() <= max_cubes );
   for ( kitty::cube const& c : sop )
   {
     cubes_queue2_t lits( priority_cmp );
@@ -2634,6 +2652,7 @@ void compute_balancing_cost_required( uint32_t index )
       continue;
 
     compute_balancing_cost_required_term( lits, connections, size );
+    assert( size <= connections.size() );
 
     terms.push( lits.top() );
   }
@@ -2662,7 +2681,7 @@ void compute_balancing_cost_required( uint32_t index )
 }
 
 template<typename Queue>
-inline void compute_balancing_cost_required_term( Queue& terms, std::array<std::pair<uint16_t, uint16_t>, max_cut_size + max_cubes>& connections, uint32_t& size )
+inline void compute_balancing_cost_required_term( Queue& terms, std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size>& connections, uint32_t& size )
 {
   while( terms.size() != 1 )
   {
@@ -2677,7 +2696,7 @@ inline void compute_balancing_cost_required_term( Queue& terms, std::array<std::
   }
 }
 
-inline void compute_balancing_cost_propagate_required( std::array<std::pair<uint16_t, uint16_t>, max_cut_size + max_cubes> const& connections, std::array<uint32_t, max_cut_size + max_cubes>& required, uint32_t size, uint32_t leaves )
+inline void compute_balancing_cost_propagate_required( std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> const& connections, std::array<uint32_t, max_sop_decomp_size>& required, uint32_t size, uint32_t leaves )
 {
   for ( auto i = size - 1; i >= leaves; --i )
   {
