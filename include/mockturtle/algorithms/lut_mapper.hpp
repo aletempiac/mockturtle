@@ -605,7 +605,7 @@ private:
 
 public:
   static constexpr uint32_t max_cut_num = 16;
-  static constexpr uint32_t max_cut_size = 8;
+  static constexpr uint32_t max_cut_size = 16;
   static constexpr uint32_t max_cubes = 64;
   static constexpr uint32_t max_sop_decomp_size = max_cut_size * ( max_cubes + 1 );
   using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
@@ -2351,7 +2351,6 @@ private:
 
       auto const& best_cut = cuts[index][0];
 
-      /* if wide cut, perform decomposition */
       kitty::dynamic_truth_table tt;
       std::vector<signal<klut_network>> children;
       std::tie( tt, children ) = create_lut( n, node_to_signal, node_driver_type );
@@ -2867,8 +2866,20 @@ void lut_map_inplace( Ntk& ntk, lut_map_params const& ps = {}, lut_map_stats* ps
   static_assert( has_clear_mapping_v<Ntk>, "Ntk does not implement the clear_mapping method" );
   static_assert( has_add_to_mapping_v<Ntk>, "Ntk does not implement the add_to_mapping method" );
 
+  lut_map_params tps = ps;
   lut_map_stats st;
-  detail::lut_map_impl<Ntk, StoreFunction, LUTCostFn> p( ntk, ps, st );
+
+  /* adjust params for balancing */
+  if ( ps.sop_balancing || ps.esop_balancing )
+  {
+    tps.area_oriented_mapping = false;
+    tps.recompute_cuts = false;
+    tps.area_share_rounds = 0;
+    tps.edge_optimization = false;
+    tps.cut_expansion = false;
+  }
+
+  detail::lut_map_impl<Ntk, StoreFunction, LUTCostFn> p( ntk, tps, st );
   p.run_inplace();
 
   if ( ps.verbose )
