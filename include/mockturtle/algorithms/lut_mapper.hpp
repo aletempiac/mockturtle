@@ -268,7 +268,7 @@ public:
     constexpr auto eps{ 0.005f };
     if ( !c1->data.ignore && c2->data.ignore )
       return true;
-    if ( c1->data.ignore )
+    if ( c1->data.ignore && !c2->data.ignore )
       return false;
     if ( c1->data.delay < c2->data.delay )
       return true;
@@ -290,7 +290,7 @@ public:
     constexpr auto eps{ 0.005f };
     if ( !c1->data.ignore && c2->data.ignore )
       return true;
-    if ( c1->data.ignore )
+    if ( c1->data.ignore && !c2->data.ignore )
       return false;
     if ( c1->data.delay < c2->data.delay )
       return true;
@@ -312,7 +312,7 @@ public:
     constexpr auto eps{ 0.005f };
     if ( !c1->data.ignore && c2->data.ignore )
       return true;
-    if ( c1->data.ignore )
+    if ( c1->data.ignore && !c2->data.ignore )
       return false;
     if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
@@ -330,7 +330,7 @@ public:
     constexpr auto eps{ 0.005f };
     if ( !c1->data.ignore && c2->data.ignore )
       return true;
-    if ( c1->data.ignore )
+    if ( c1->data.ignore && !c2->data.ignore )
       return false;
     if ( c1->data.area_flow < c2->data.area_flow - eps )
       return true;
@@ -849,7 +849,6 @@ private:
     }
 
     /* round stats */
-    if ( ps.verbose )
     {
       std::stringstream stats;
 
@@ -894,7 +893,6 @@ private:
     propagate_arrival_times();
 
     /* round stats */
-    if ( ps.verbose )
     {
       st.round_stats.push_back( fmt::format( "[i] AreaSh   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total ) );
     }
@@ -1890,6 +1888,7 @@ private:
 
     if ( recompute_cut_cost )
     {
+      cut->data.ignore = false;
       if constexpr ( StoreFunction )
       {
         if ( ps.sop_balancing || ps.esop_balancing )
@@ -2151,7 +2150,6 @@ private:
     st.delay = delay;
     st.edges = edges;
 
-    if ( ps.verbose )
     {
       std::stringstream stats;
       stats << fmt::format( "[i] Area MFFC: Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
