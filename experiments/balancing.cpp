@@ -56,27 +56,17 @@ int main()
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view{ aig }.depth();
 
-    // lut_map_params ps;
-    // ps.cut_enumeration_ps.cut_size = 4u;
-    // ps.cut_enumeration_ps.cut_limit = 8u;
-    // ps.sop_balancing = true;
-    // lut_map_stats st;
-    // const auto klut = lut_map<aig_network, true>( aig, ps, &st );
-
-    // depth_view<klut_network> klut_d{ klut };
-
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 4u;
     ps.cut_enumeration_ps.cut_limit = 8u;
-    // ps.sop_balancing = true;
     ps.verbose = true;
     lut_map_stats st;
-    const aig_network balanced_aig = sop_balancing( aig, ps, &st );
+    const aig_network balanced_aig = esop_balancing( aig, ps, &st );
 
     const uint32_t size_after = balanced_aig.num_gates();
     const uint32_t depth_after = depth_view{ balanced_aig }.depth();
 
-    auto const cec = true;
+    auto const cec = benchmark == "hyp" ? true : abc_cec( balanced_aig, benchmark );
 
     exp( benchmark, size_before, depth_before, size_after, depth_after, to_seconds( st.time_total ), cec );
   }

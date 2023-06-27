@@ -242,13 +242,10 @@ struct balancing_decomp_impl
         arrival_times.push_back( old_to_new[ntk_.index_to_node( leaf )] );
       } );
 
-      bool is_normal = kitty::is_normal( ntk_.cell_function( n ) );
       kitty::dynamic_truth_table tt = ntk_.cell_function( n );
 
-      rebalancing_fn_( dest, is_normal ? tt : ~tt, arrival_times, UINT32_MAX, UINT32_MAX, [&]( arrival_time_pair<Ntk> cand, uint32_t cand_size ) {
+      rebalancing_fn_( dest, tt, arrival_times, UINT32_MAX, UINT32_MAX, [&]( arrival_time_pair<Ntk> cand, uint32_t cand_size ) {
         ( void )cand_size;
-        if ( !is_normal )
-          cand.f = !cand.f;
         old_to_new[n] = cand;
       } );
     } );
@@ -414,6 +411,7 @@ Ntk esop_balancing( Ntk const& ntk, lut_map_params const& ps = {}, lut_map_stats
 
   /* decompose mapping */
   esop_rebalancing<Ntk> balance_fn;
+  balance_fn.both_phases = true;
   const auto dest = detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
 
   if ( pst )
