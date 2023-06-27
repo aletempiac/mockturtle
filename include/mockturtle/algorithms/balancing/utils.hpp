@@ -27,6 +27,7 @@
   \file utils.hpp
   \brief Balancing data types
 
+  \author Alessandro Tempia Calvino
   \author Heinz Riener
   \author Mathias Soeken
 */

@@ -362,6 +362,7 @@ Ntk sop_balancing( Ntk const& ntk, lut_map_params const& ps = {}, lut_map_stats*
 
   /* decompose mapping */
   sop_rebalancing<Ntk> balance_fn;
+  balance_fn.both_phases_ = true;
   const auto dest = detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
 
   if ( pst )

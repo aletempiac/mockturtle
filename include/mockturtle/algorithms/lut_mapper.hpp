@@ -1883,8 +1883,8 @@ private:
   template<bool ELA>
   void compute_cut_data( cut_t& cut, node const& n, bool recompute_cut_cost )
   {
-    uint32_t lut_area;
-    uint32_t lut_delay;
+    uint32_t lut_area = 0;
+    uint32_t lut_delay = 0;
 
     if ( recompute_cut_cost )
     {
@@ -1893,8 +1893,6 @@ private:
       {
         if ( ps.sop_balancing || ps.esop_balancing )
         {
-          cut->data.lut_area = 0;
-          cut->data.lut_delay = 0;
           compute_isop( cut );
         }
         else
@@ -2502,15 +2500,23 @@ private:
 #pragma endregion
 
 #pragma region balancing
-void compute_isop( cut_t& cut )
+void compute_isop( cut_t& cut, bool both_phases = true )
 {
   uint32_t func_id = cut->func_id >> 1;
+
   if ( func_id < isops.size() )
+  {
+    auto const& sop = isops[func_id];
+    if ( sop.size() > max_cubes )
+    {
+      cut->data.ignore = true;
+    }
     return;
+  }
 
   assert( func_id == isops.size() );
-  
-  sop_t sop;
+
+  sop_t sop, sop_n;
   if ( ps.sop_balancing )
   {
     sop = kitty::isop( truth_tables[func_id << 1u] );
@@ -2518,6 +2524,42 @@ void compute_isop( cut_t& cut )
   else
   {
     sop = exorcism( truth_tables[func_id << 1u] );
+  }
+
+  if ( both_phases )
+  {
+    sop_t n_sop;
+    if ( ps.sop_balancing )
+    {
+      n_sop = kitty::isop( ~truth_tables[func_id << 1u] );
+    }
+    else
+    {
+      n_sop = exorcism( ~truth_tables[func_id << 1u] );
+    }
+
+    if ( n_sop.size() < sop.size() )
+    {
+      sop.swap( n_sop );
+    }
+    else if ( n_sop.size() == sop.size() )
+    {
+      /* compute literal cost */
+      uint32_t lit = 0, n_lit = 0;
+      for ( auto const& c : sop )
+      {
+        lit += c.num_literals();
+      }
+      for ( auto const& c : n_sop )
+      {
+        n_lit += c.num_literals();
+      }
+
+      if ( n_lit < lit )
+      {
+        sop.swap( n_sop );
+      }
+    }
   }
 
   /* check size of SOP < max_cubes */
@@ -2537,7 +2579,7 @@ void compute_balancing_cost( cut_t& cut )
 
   auto const& sop = isops[cut->func_id >> 1];
 
-  if ( sop.size() > max_cubes )
+  if ( cut->data.ignore || sop.size() > max_cubes )
     return;
 
   /* specific case size = 0 or = 1 */

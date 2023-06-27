@@ -135,7 +135,37 @@ private:
     else
     {
       sop_cache_misses++;
-      return sop_hash_[func] = kitty::isop( func ); // TODO generalize
+      std::vector<kitty::cube> sop = kitty::isop( func );
+
+      if ( both_phases_ )
+      {
+        std::vector<kitty::cube> n_sop = kitty::isop( ~func );
+
+        if ( n_sop.size() < sop.size() )
+        {
+          sop.swap( n_sop );
+        }
+        else if ( n_sop.size() == sop.size() )
+        {
+          /* compute literal cost */
+          uint32_t lit = 0, n_lit = 0;
+          for ( auto const& c : sop )
+          {
+            lit += c.num_literals();
+          }
+          for ( auto const& c : n_sop )
+          {
+            n_lit += c.num_literals();
+          }
+
+          if ( n_lit < lit )
+          {
+            sop.swap( n_sop );
+          }
+        }
+      }
+
+      return sop_hash_[func] = sop;
     }
   }
 
@@ -143,6 +173,8 @@ private:
   mutable std::unordered_map<kitty::dynamic_truth_table, std::vector<kitty::cube>, kitty::hash<kitty::dynamic_truth_table>> sop_hash_;
 
 public:
+  mutable bool both_phases_{ false };
+
   mutable uint32_t sop_cache_hits{};
   mutable uint32_t sop_cache_misses{};
 
