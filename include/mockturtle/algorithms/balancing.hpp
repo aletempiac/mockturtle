@@ -245,7 +245,7 @@ struct balancing_decomp_impl
       kitty::dynamic_truth_table tt = ntk_.cell_function( n );
 
       rebalancing_fn_( dest, tt, arrival_times, UINT32_MAX, UINT32_MAX, [&]( arrival_time_pair<Ntk> cand, uint32_t cand_size ) {
-        ( void )cand_size;
+        (void)cand_size;
         old_to_new[n] = cand;
       } );
     } );

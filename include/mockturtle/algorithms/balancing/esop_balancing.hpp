@@ -217,7 +217,7 @@ private:
       sop_cache_hits++;
       return it->second;
     }
-    
+
     if ( both_phases )
     {
       if ( auto it = sop_hash_.find( ~func ); it != sop_hash_.end() )
@@ -268,7 +268,7 @@ private:
 
 public:
   bool both_phases{ false };
-  bool spp_optimization{ false }; 
+  bool spp_optimization{ false };
   bool mux_optimization{ false };
 
 public:

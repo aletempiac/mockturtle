@@ -36,9 +36,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <queue>
 #include <sstream>
 #include <string>
-#include <queue>
 
 #include <fmt/format.h>
 #include <kitty/cube.hpp>
@@ -47,8 +47,6 @@
 #include <kitty/isop.hpp>
 #include <kitty/operations.hpp>
 
-#include "cleanup.hpp"
-#include "exorcism.hpp"
 #include "../networks/klut.hpp"
 #include "../utils/cost_functions.hpp"
 #include "../utils/cuts.hpp"
@@ -59,7 +57,9 @@
 #include "../views/mapping_view.hpp"
 #include "../views/mffc_view.hpp"
 #include "../views/topo_view.hpp"
+#include "cleanup.hpp"
 #include "cut_enumeration.hpp"
+#include "exorcism.hpp"
 #include "simulation.hpp"
 
 namespace mockturtle
@@ -210,7 +210,7 @@ public:
       _pcend = _pend = _pcuts.begin();
 
       auto it = other.begin();
-      while( it != other.end() )
+      while ( it != other.end() )
       {
         **_pend++ = **it++;
         ++_pcend;
@@ -2426,7 +2426,7 @@ private:
         ntk.set_visited( ntk.index_to_node( leaf ), ntk.trav_id() );
       }
 
-      /* recursively compute the function */     
+      /* recursively compute the function */
       ntk.foreach_fanin( n, [&]( auto const& f ) {
         compute_function_rec( ntk.get_node( f ), node_to_value );
       } );
@@ -2455,7 +2455,7 @@ private:
     ntk.foreach_fanin( n, [&]( auto const& f ) {
       compute_function_rec( ntk.get_node( f ), node_to_value );
     } );
-    
+
     /* compute the function */
     std::vector<kitty::dynamic_truth_table> tts;
     ntk.foreach_fanin( n, [&]( auto const& f ) {
@@ -2500,250 +2500,250 @@ private:
 #pragma endregion
 
 #pragma region balancing
-void compute_isop( cut_t& cut, bool both_phases = true )
-{
-  uint32_t func_id = cut->func_id >> 1;
-
-  if ( func_id < isops.size() )
+  void compute_isop( cut_t& cut, bool both_phases = true )
   {
-    auto const& sop = isops[func_id];
+    uint32_t func_id = cut->func_id >> 1;
+
+    if ( func_id < isops.size() )
+    {
+      auto const& sop = isops[func_id];
+      if ( sop.size() > max_cubes )
+      {
+        cut->data.ignore = true;
+      }
+      return;
+    }
+
+    assert( func_id == isops.size() );
+
+    sop_t sop, sop_n;
+    if ( ps.sop_balancing )
+    {
+      sop = kitty::isop( truth_tables[func_id << 1u] );
+    }
+    else
+    {
+      sop = exorcism( truth_tables[func_id << 1u] );
+    }
+
+    if ( both_phases )
+    {
+      sop_t n_sop;
+      if ( ps.sop_balancing )
+      {
+        n_sop = kitty::isop( ~truth_tables[func_id << 1u] );
+      }
+      else
+      {
+        n_sop = exorcism( ~truth_tables[func_id << 1u] );
+      }
+
+      if ( n_sop.size() < sop.size() )
+      {
+        sop.swap( n_sop );
+      }
+      else if ( n_sop.size() == sop.size() )
+      {
+        /* compute literal cost */
+        uint32_t lit = 0, n_lit = 0;
+        for ( auto const& c : sop )
+        {
+          lit += c.num_literals();
+        }
+        for ( auto const& c : n_sop )
+        {
+          n_lit += c.num_literals();
+        }
+
+        if ( n_lit < lit )
+        {
+          sop.swap( n_sop );
+        }
+      }
+    }
+
+    /* check size of SOP < max_cubes */
     if ( sop.size() > max_cubes )
     {
       cut->data.ignore = true;
     }
+
+    isops.push_back( sop );
     return;
   }
 
-  assert( func_id == isops.size() );
-
-  sop_t sop, sop_n;
-  if ( ps.sop_balancing )
+  void compute_balancing_cost( cut_t& cut )
   {
-    sop = kitty::isop( truth_tables[func_id << 1u] );
-  }
-  else
-  {
-    sop = exorcism( truth_tables[func_id << 1u] );
-  }
+    uint32_t decomposition_size = 0;
+    uint32_t decomposition_delay = 0;
 
-  if ( both_phases )
-  {
-    sop_t n_sop;
-    if ( ps.sop_balancing )
-    {
-      n_sop = kitty::isop( ~truth_tables[func_id << 1u] );
-    }
-    else
-    {
-      n_sop = exorcism( ~truth_tables[func_id << 1u] );
-    }
+    auto const& sop = isops[cut->func_id >> 1];
 
-    if ( n_sop.size() < sop.size() )
+    if ( cut->data.ignore || sop.size() > max_cubes )
+      return;
+
+    /* specific case size = 0 or = 1 */
+    if ( cut.size() < 2 )
+      return;
+
+    /* collect arrival times for fanin */
+    std::array<uint32_t, max_cut_size> arrival_pin;
+    unsigned i = 0;
+    for ( auto l : cut )
+      arrival_pin[i++] = cuts[l].best()->data.delay;
+
+    cubes_queue_t terms;
+
+    /* get terms delay */
+    assert( sop.size() <= max_cubes );
+    for ( kitty::cube const& c : sop )
     {
-      sop.swap( n_sop );
-    }
-    else if ( n_sop.size() == sop.size() )
-    {
-      /* compute literal cost */
-      uint32_t lit = 0, n_lit = 0;
-      for ( auto const& c : sop )
+      cubes_queue_t lits;
+      for ( i = 0; i < cut.size(); ++i )
       {
-        lit += c.num_literals();
-      }
-      for ( auto const& c : n_sop )
-      {
-        n_lit += c.num_literals();
+        if ( c.get_mask( i ) )
+        {
+          lits.push( arrival_pin[i] );
+        }
       }
 
-      if ( n_lit < lit )
-      {
-        sop.swap( n_sop );
-      }
+      if ( lits.size() == 0 )
+        continue;
+
+      decomposition_size += lits.size() - 1;
+      terms.push( compute_balancing_cost_term( lits ) );
     }
+
+    assert( terms.size() > 0 );
+
+    decomposition_size += terms.size() - 1;
+    decomposition_delay = compute_balancing_cost_term( terms );
+
+    cut->data.delay = decomposition_delay;
+    cut->data.lut_area = decomposition_size;
+    cut->data.lut_delay = 1; /* not used */
+    cut->data.area_flow += decomposition_size;
+    /* edge flow not used */
   }
 
-  /* check size of SOP < max_cubes */
-  if ( sop.size() > max_cubes )
+  inline uint32_t compute_balancing_cost_term( cubes_queue_t& terms )
   {
-    cut->data.ignore = true;
-  }
-
-  isops.push_back( sop );
-  return;
-}
-
-void compute_balancing_cost( cut_t& cut )
-{
-  uint32_t decomposition_size = 0;
-  uint32_t decomposition_delay = 0;
-
-  auto const& sop = isops[cut->func_id >> 1];
-
-  if ( cut->data.ignore || sop.size() > max_cubes )
-    return;
-
-  /* specific case size = 0 or = 1 */
-  if ( cut.size() < 2 )
-    return;
-
-  /* collect arrival times for fanin */
-  std::array<uint32_t, max_cut_size> arrival_pin;
-  unsigned i = 0;
-  for ( auto l : cut )
-    arrival_pin[i++] = cuts[l].best()->data.delay;
-
-  cubes_queue_t terms;
-
-  /* get terms delay */
-  assert( sop.size() <= max_cubes );
-  for ( kitty::cube const& c : sop )
-  {
-    cubes_queue_t lits;
-    for ( i = 0; i < cut.size(); ++i )
+    while ( terms.size() != 1 )
     {
-      if ( c.get_mask( i ) )
+      uint32_t l0 = terms.top();
+      terms.pop();
+      uint32_t l1 = terms.top();
+      terms.pop();
+      terms.push( std::max( l0, l1 ) + 1 );
+    }
+
+    return terms.top();
+  }
+
+  void compute_balancing_cost_required( uint32_t index )
+  {
+    cut_t const& cut = cuts[index][0];
+
+    if ( cut.size() == 0 )
+      return;
+
+    /* propagate unit delay back */
+    if ( cut.size() == 1 )
+    {
+      for ( auto l : cut )
       {
-        lits.push( arrival_pin[i] );
+        node_match[l].required = std::min( node_match[l].required, node_match[index].required );
       }
     }
 
-    if ( lits.size() == 0 )
-      continue;
-
-    decomposition_size += lits.size() - 1;
-    terms.push( compute_balancing_cost_term( lits ) );
-  }
-
-  assert( terms.size() > 0 );
-
-  decomposition_size += terms.size() - 1;
-  decomposition_delay = compute_balancing_cost_term( terms );
-
-  cut->data.delay = decomposition_delay;
-  cut->data.lut_area = decomposition_size;
-  cut->data.lut_delay = 1; /* not used */
-  cut->data.area_flow += decomposition_size;
-  /* edge flow not used */
-}
-
-inline uint32_t compute_balancing_cost_term( cubes_queue_t& terms )
-{
-  while( terms.size() != 1 )
-  {
-    uint32_t l0 = terms.top();
-    terms.pop();
-    uint32_t l1 = terms.top();
-    terms.pop();
-    terms.push( std::max( l0, l1 ) + 1 );
-  }
-
-  return terms.top();
-}
-
-void compute_balancing_cost_required( uint32_t index )
-{
-  cut_t const& cut = cuts[index][0];
-
-  if ( cut.size() == 0 )
-    return;
-
-  /* propagate unit delay back */
-  if ( cut.size() == 1 )
-  {
+    /* collect arrival times for fanin */
+    std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> connections;
+    std::array<uint32_t, max_cut_size> arrival_pin;
+    std::array<uint32_t, max_sop_decomp_size> required;
+    unsigned size = 0;
     for ( auto l : cut )
     {
-      node_match[l].required = std::min( node_match[l].required, node_match[index].required );
+      arrival_pin[size] = cuts[l].best()->data.delay;
+      connections[size] = std::make_pair( size, size );
+      ++size;
     }
-  }
 
-  /* collect arrival times for fanin */
-  std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> connections;
-  std::array<uint32_t, max_cut_size> arrival_pin;
-  std::array<uint32_t, max_sop_decomp_size> required;
-  unsigned size = 0;
-  for ( auto l : cut )
-  {
-    arrival_pin[size] = cuts[l].best()->data.delay;
-    connections[size] = std::make_pair( size, size );
-    ++size;
-  }
+    auto priority_cmp = []( std::pair<uint32_t, uint16_t> const& a, std::pair<uint32_t, uint16_t> const& b ) { return a.first > b.first; };
+    using cubes_queue2_t = std::priority_queue<std::pair<uint32_t, uint16_t>, std::vector<std::pair<uint32_t, uint16_t>>, decltype( priority_cmp )>;
 
-  auto priority_cmp = []( std::pair<uint32_t, uint16_t> const& a, std::pair<uint32_t, uint16_t> const& b ) { return a.first > b.first; };
-  using cubes_queue2_t = std::priority_queue<std::pair<uint32_t, uint16_t>, std::vector<std::pair<uint32_t, uint16_t>>, decltype( priority_cmp )>;
+    cubes_queue2_t terms( priority_cmp );
 
-  cubes_queue2_t terms( priority_cmp );
-
-  /* get terms delay */
-  auto const& sop = isops[cut->func_id >> 1];
-  assert( sop.size() <= max_cubes );
-  for ( kitty::cube const& c : sop )
-  {
-    cubes_queue2_t lits( priority_cmp );
-    for ( auto i = 0; i < cut.size(); ++i )
+    /* get terms delay */
+    auto const& sop = isops[cut->func_id >> 1];
+    assert( sop.size() <= max_cubes );
+    for ( kitty::cube const& c : sop )
     {
-      if ( c.get_mask( i ) )
+      cubes_queue2_t lits( priority_cmp );
+      for ( auto i = 0; i < cut.size(); ++i )
       {
-        lits.push( { arrival_pin[i], i } );
+        if ( c.get_mask( i ) )
+        {
+          lits.push( { arrival_pin[i], i } );
+        }
       }
+
+      if ( lits.size() == 0 )
+        continue;
+
+      compute_balancing_cost_required_term( lits, connections, size );
+      assert( size <= connections.size() );
+
+      terms.push( lits.top() );
     }
 
-    if ( lits.size() == 0 )
-      continue;
+    assert( terms.size() > 0 );
+    compute_balancing_cost_required_term( terms, connections, size );
 
-    compute_balancing_cost_required_term( lits, connections, size );
-    assert( size <= connections.size() );
+    uint32_t required_node = node_match[index].required;
+    assert( terms.top().first == cut->data.delay );
+    assert( required_node >= terms.top().first );
 
-    terms.push( lits.top() );
+    /* init required times */
+    for ( auto i = 0; i < size - 1; ++i )
+      required[i] = UINT32_MAX;
+    required[size - 1] = required_node;
+
+    compute_balancing_cost_propagate_required( connections, required, size, cut.size() );
+
+    /* assign required time */
+    uint32_t ctr = 0;
+    for ( auto l : cut )
+    {
+      node_match[l].required = std::min( node_match[l].required, required[ctr++] );
+      assert( node_match[l].required >= cuts[l][0]->data.delay );
+    }
   }
 
-  assert( terms.size() > 0 );
-  compute_balancing_cost_required_term( terms, connections, size );
-
-  uint32_t required_node = node_match[index].required;
-  assert( terms.top().first == cut->data.delay );
-  assert( required_node >= terms.top().first );
-
-  /* init required times */
-  for ( auto i = 0; i < size - 1; ++i )
-    required[i] = UINT32_MAX;
-  required[size - 1] = required_node;
-
-  compute_balancing_cost_propagate_required( connections, required, size, cut.size() );
-
-  /* assign required time */
-  uint32_t ctr = 0;
-  for ( auto l : cut )
+  template<typename Queue>
+  inline void compute_balancing_cost_required_term( Queue& terms, std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size>& connections, uint32_t& size )
   {
-    node_match[l].required = std::min( node_match[l].required, required[ctr++] );
-    assert( node_match[l].required >= cuts[l][0]->data.delay );
+    while ( terms.size() != 1 )
+    {
+      std::pair<uint32_t, uint16_t> l0 = terms.top();
+      terms.pop();
+      std::pair<uint32_t, uint16_t> l1 = terms.top();
+      terms.pop();
+      uint32_t arrival = std::max( l0.first, l1.first ) + 1;
+      terms.push( { arrival, size } );
+      connections[size] = std::make_pair( l0.second, l1.second );
+      ++size;
+    }
   }
-}
 
-template<typename Queue>
-inline void compute_balancing_cost_required_term( Queue& terms, std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size>& connections, uint32_t& size )
-{
-  while( terms.size() != 1 )
+  inline void compute_balancing_cost_propagate_required( std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> const& connections, std::array<uint32_t, max_sop_decomp_size>& required, uint32_t size, uint32_t leaves )
   {
-    std::pair<uint32_t, uint16_t> l0 = terms.top();
-    terms.pop();
-    std::pair<uint32_t, uint16_t> l1 = terms.top();
-    terms.pop();
-    uint32_t arrival = std::max( l0.first, l1.first ) + 1;
-    terms.push( { arrival, size } );
-    connections[size] = std::make_pair( l0.second, l1.second );
-    ++size;
+    for ( auto i = size - 1; i >= leaves; --i )
+    {
+      uint32_t time = required[i] - 1;
+      required[connections[i].first] = std::min( time, required[connections[i].first] );
+      required[connections[i].second] = std::min( time, required[connections[i].second] );
+    }
   }
-}
-
-inline void compute_balancing_cost_propagate_required( std::array<std::pair<uint16_t, uint16_t>, max_sop_decomp_size> const& connections, std::array<uint32_t, max_sop_decomp_size>& required, uint32_t size, uint32_t leaves )
-{
-  for ( auto i = size - 1; i >= leaves; --i )
-  {
-    uint32_t time = required[i] - 1;
-    required[connections[i].first] = std::min( time, required[connections[i].first] );
-    required[connections[i].second] = std::min( time, required[connections[i].second] );
-  }
-}
 #pragma endregion
 
 private:
@@ -2751,20 +2751,20 @@ private:
   lut_map_params const& ps;
   lut_map_stats& st;
 
-  uint32_t iteration{ 0 };        /* current mapping iteration */
-  uint32_t area_iteration{ 0 };   /* current area iteration */
-  uint32_t delay{ 0 };            /* current delay of the mapping */
-  uint32_t area{ 0 };             /* current area of the mapping */
-  uint32_t edges{ 0 };            /* current edges of the mapping */
-  uint32_t cuts_total{ 0 };       /* current computed cuts */
-  const float epsilon{ 0.005f };  /* epsilon */
+  uint32_t iteration{ 0 };       /* current mapping iteration */
+  uint32_t area_iteration{ 0 };  /* current area iteration */
+  uint32_t delay{ 0 };           /* current delay of the mapping */
+  uint32_t area{ 0 };            /* current area of the mapping */
+  uint32_t edges{ 0 };           /* current edges of the mapping */
+  uint32_t cuts_total{ 0 };      /* current computed cuts */
+  const float epsilon{ 0.005f }; /* epsilon */
   LUTCostFn lut_cost{};
 
   std::vector<node> topo_order;
   std::vector<uint32_t> tmp_visited;
   std::vector<node_lut> node_match;
 
-  std::vector<cut_set_t> cuts;   /* compressed representation of cuts */
+  std::vector<cut_set_t> cuts;  /* compressed representation of cuts */
   cut_merge_t lcuts;            /* cut merger container */
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
@@ -2781,13 +2781,13 @@ private:
  * whether the LUT function is computed or the mapping is structural. In the
  * former case, truth tables are computed during cut enumeration,
  * which requires more runtime.
- * 
+ *
  * This function returns a k-LUT network.
  *
  * The template `LUTCostFn` sets the cost function to evaluate depth and
  * size of a truth table given its support size if `ComputeTruth` is set
  * to false, or its function if `ComputeTruth` is set to true.
- * 
+ *
  * This implementation offers more options such as delay oriented mapping
  * and edges minimization compared to the command `lut_mapping`.
  *
@@ -2854,7 +2854,7 @@ klut_network lut_map( Ntk& ntk, lut_map_params ps = {}, lut_map_stats* pst = nul
  * whether the LUT function is stored in the mapping. In that case
  * truth tables are computed during cut enumeration, which requires more
  * runtime.
- * 
+ *
  * The input network must be wrapped in a `mapping_view`. The computed mapping
  * is stored in the view. In this version, some features of the mapper are
  * disabled, such as on-the-fly decompositions, due to incompatibility.
@@ -2862,7 +2862,7 @@ klut_network lut_map( Ntk& ntk, lut_map_params ps = {}, lut_map_stats* pst = nul
  * The template `LUTCostFn` sets the cost function to evaluate depth and
  * size of a truth table given its support size, if `StoreFunction` is set
  * to false, or its function, if `StoreFunction` is set to true.
- * 
+ *
  * This implementation offers more options such as delay oriented mapping
  * and edges minimization compared to the command `lut_mapping`.
  *

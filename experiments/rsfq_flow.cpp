@@ -31,37 +31,36 @@
 #include <lorina/genlib.hpp>
 #include <lorina/super.hpp>
 #include <mockturtle/algorithms/aig_balancing.hpp>
-#include <mockturtle/algorithms/xag_balancing.hpp>
-#include <mockturtle/algorithms/mapper.hpp>
-#include <mockturtle/algorithms/lut_mapper.hpp>
-#include <mockturtle/algorithms/rewrite.hpp>
-#include <mockturtle/algorithms/cut_rewriting.hpp>
-#include <mockturtle/algorithms/xag_optimization.hpp>
-#include <mockturtle/algorithms/collapse_mapped.hpp>
-#include <mockturtle/algorithms/functional_reduction.hpp>
-#include <mockturtle/algorithms/node_resynthesis.hpp>
-#include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
-#include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
-#include <mockturtle/algorithms/node_resynthesis/xag_minmc.hpp>
-#include <mockturtle/algorithms/node_resynthesis/xag_minmc2.hpp>
-#include <mockturtle/algorithms/xag_algebraic_rewriting.hpp>
-#include <mockturtle/algorithms/xmg_algebraic_rewriting.hpp>
-#include <mockturtle/algorithms/retiming.hpp>
 #include <mockturtle/algorithms/balancing.hpp>
 #include <mockturtle/algorithms/balancing/sop_balancing.hpp>
-#include <mockturtle/algorithms/rsfq/rsfq_path_balancing.hpp>
-// #include <mockturtle/algorithms/rsfq/rsfq_splitter.hpp>
+#include <mockturtle/algorithms/collapse_mapped.hpp>
+#include <mockturtle/algorithms/cut_rewriting.hpp>
+#include <mockturtle/algorithms/functional_reduction.hpp>
+#include <mockturtle/algorithms/lut_mapper.hpp>
+#include <mockturtle/algorithms/mapper.hpp>
+#include <mockturtle/algorithms/node_resynthesis.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xag_minmc.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xag_minmc2.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xag_npn.hpp>
+#include <mockturtle/algorithms/node_resynthesis/xmg_npn.hpp>
+#include <mockturtle/algorithms/retiming.hpp>
+#include <mockturtle/algorithms/rewrite.hpp>
 #include <mockturtle/algorithms/rsfq/rsfq_network_conversion.hpp>
+#include <mockturtle/algorithms/rsfq/rsfq_path_balancing.hpp>
+#include <mockturtle/algorithms/xag_algebraic_rewriting.hpp>
+#include <mockturtle/algorithms/xag_balancing.hpp>
+#include <mockturtle/algorithms/xag_optimization.hpp>
+#include <mockturtle/algorithms/xmg_algebraic_rewriting.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/io/super_reader.hpp>
-#include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/io/write_blif.hpp>
+#include <mockturtle/io/write_verilog.hpp>
 #include <mockturtle/networks/aig.hpp>
+#include <mockturtle/networks/generic.hpp>
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/networks/xag.hpp>
 #include <mockturtle/networks/xmg.hpp>
-#include <mockturtle/networks/generic.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/binding_view.hpp>
 #include <mockturtle/views/depth_view.hpp>
@@ -132,9 +131,9 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
   /*  XAG algebraic rewriting */
   {
     auto xag_rw = cleanup_dangling( xag );
-    fanout_view xag_fout{xag_rw};
-    depth_view d_xag{xag_fout};
-    fmt::print("Pre RW XAG:      size = {}\t depth = {}\n", xag_rw.num_gates(), d_xag.depth() );
+    fanout_view xag_fout{ xag_rw };
+    depth_view d_xag{ xag_fout };
+    fmt::print( "Pre RW XAG:      size = {}\t depth = {}\n", xag_rw.num_gates(), d_xag.depth() );
     xag_algebraic_depth_rewriting_params ps;
     ps.allow_area_increase = true;
     xag_algebraic_depth_rewriting( d_xag, ps );
@@ -143,7 +142,7 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
     if ( d_xag.depth() < depth_view( xag ).depth() )
       xag = cleanup_dangling( xag_rw );
 
-    fmt::print("Post RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+    fmt::print( "Post RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
   }
 
   /* delay-oriented remapping */
@@ -155,15 +154,25 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
     auto xag_map = cleanup_dangling( xag );
     xag_balance( xag_map, { false } );
     xag_network new_xag = map( xag_map, exact_lib );
-    
+
     if ( depth_view( new_xag ).depth() > old_xag_depth ||
-            ( depth_view( new_xag ).depth() == old_xag_depth && new_xag.num_gates() >= old_xag_size ) )
+         ( depth_view( new_xag ).depth() == old_xag_depth && new_xag.num_gates() >= old_xag_size ) )
     {
       break;
     }
     xag = cleanup_dangling( new_xag );
   }
-  fmt::print("Map XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+  fmt::print( "Map XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+
+  /* ESOP balancing */
+  {
+    lut_map_params ps;
+    ps.cut_enumeration_ps.cut_size = 4;
+    xag_network balanced_xag = esop_balancing( xag );
+    if ( depth_view( balanced_xag ).depth() < depth_view( xag ).depth() )
+      xag = balanced_xag;
+    fmt::print( "ESOP RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+  }
 
   /* recover area */
   {
@@ -179,7 +188,7 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
       if ( xag.num_gates() >= xag_gates_before )
         break;
     }
-    fmt::print("ARec RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+    fmt::print( "ARec RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
   }
 
   /* XOR optimization: multiplicative complexity reduction */
@@ -198,7 +207,8 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
           num_xor++;
         }
       } );
-      std::cout << "Pre  MC opt: num ANDs = " << num_and << " \t" << "num XORs = " << num_xor << "\n";
+      std::cout << "Pre  MC opt: num ANDs = " << num_and << " \t"
+                << "num XORs = " << num_xor << "\n";
 
       cut_rewriting_params cps;
       cps.cut_enumeration_ps.cut_size = 5;
@@ -216,7 +226,8 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
           num_xor++;
         }
       } );
-      std::cout << "Post MC opt: num ANDs = " << num_and << " \t" << "num XORs = " << num_xor << "\n";
+      std::cout << "Post MC opt: num ANDs = " << num_and << " \t"
+                << "num XORs = " << num_xor << "\n";
     }
 
     /* Don't cares based multiplicative complexity reduction */
@@ -272,7 +283,6 @@ void rsfq_flow( int opt_iter )
   tech_library<5, classification_type::np_configurations> tech_lib( gates, super_data, tps );
   // tech_library<5, classification_type::np_configurations> tech_lib( gates, tps );
 
-
   /* exact XAG database */
   using xag_resyn = xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete>;
   xag_resyn resyn;
@@ -289,7 +299,7 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -297,20 +307,20 @@ void rsfq_flow( int opt_iter )
       continue;
 
     xag_network aig;
-    if ( lorina::read_aiger( "rsfq_opt/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
-    {
-      continue;
-    }
-
-    // if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    // if ( lorina::read_aiger( "rsfq_opt/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     // {
     //   continue;
     // }
 
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    {
+      continue;
+    }
+
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
-    fmt::print("Initial AIG: size = {}\t depth = {}\n", size_before, depth_before );
+    fmt::print( "Initial AIG: size = {}\t depth = {}\n", size_before, depth_before );
 
     xag_network fraig = cleanup_dangling( aig );
 
@@ -328,7 +338,7 @@ void rsfq_flow( int opt_iter )
       xag_network xag_opt = depth_opt( xag, false );
 
       if ( depth_view( xag_opt ).depth() > depth_view( xag ).depth() ||
-          ( depth_view( xag_opt ).depth() == depth_view( xag ).depth() && xag_opt.num_gates() >= xag.num_gates() ) )
+           ( depth_view( xag_opt ).depth() == depth_view( xag ).depth() && xag_opt.num_gates() >= xag.num_gates() ) )
       {
         break;
       }
@@ -349,7 +359,7 @@ void rsfq_flow( int opt_iter )
     /* path balancing with buffers */
     auto res_test = rsfq_path_balancing( res );
 
-    fmt::print("TMap XAG:    area = {:>5.2f}\t delay = {:>5.2f}\n", res_test.compute_area(), res_test.compute_worst_delay() );
+    fmt::print( "TMap XAG:    area = {:>5.2f}\t delay = {:>5.2f}\n", res_test.compute_area(), res_test.compute_worst_delay() );
 
     /* retime registers */
     retime_params rps;
@@ -379,8 +389,7 @@ void rsfq_flow( int opt_iter )
   exp.table();
 }
 
-
-int main( int argc, char** argv)
+int main( int argc, char** argv )
 {
   int opt_iter = 1;
 
