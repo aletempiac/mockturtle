@@ -264,7 +264,7 @@ void rsfq_flow( int opt_iter )
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
+  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -272,7 +272,7 @@ void rsfq_flow( int opt_iter )
   }
 
   super_lib super_data;
-  std::ifstream in_super( "/Users/tempia/Documents/phd/libraries/aletempiac/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.super" );
+  std::ifstream in_super( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.super" );
 
   if ( lorina::read_super( in_super, super_reader( super_data ) ) != lorina::return_code::success )
   {
@@ -299,7 +299,7 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iscas_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
