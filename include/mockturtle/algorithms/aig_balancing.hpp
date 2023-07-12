@@ -155,7 +155,7 @@ private:
     /* replace if new */
     if ( n != ntk.get_node( root ) )
     {
-      ntk.substitute_node( n, root );
+      ntk.substitute_node_no_restrash( n, root );
     }
 
     /* remember the substitution and the new node as already balanced */
