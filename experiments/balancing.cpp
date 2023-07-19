@@ -31,7 +31,7 @@
 #include <mockturtle/algorithms/balancing.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
-#include <mockturtle/networks/aig.hpp>
+#include <mockturtle/networks/xag.hpp>
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/views/depth_view.hpp>
 
@@ -47,7 +47,7 @@ int main()
   for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
-    aig_network aig;
+    xag_network aig;
     if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
@@ -61,7 +61,7 @@ int main()
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.verbose = true;
     lut_map_stats st;
-    const aig_network balanced_aig = esop_balancing( aig, ps, &st );
+    const xag_network balanced_aig = esop_balancing( aig, ps, &st );
 
     const uint32_t size_after = balanced_aig.num_gates();
     const uint32_t depth_after = depth_view{ balanced_aig }.depth();
