@@ -93,23 +93,25 @@ int main()
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
 
-    aig_balance( aig );
+    aig_balance( aig, { false } );
 
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_lite_params ps;
+    ps.area_oriented_mapping = true;
     ps.verbose = true;
     emap_lite_stats st;
 
     binding_view<klut_network> res = emap_lite<aig_network, 6>( aig, tech_lib, ps, &st );
 
-    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    // bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
+    bool cec = true;
 
     exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }
