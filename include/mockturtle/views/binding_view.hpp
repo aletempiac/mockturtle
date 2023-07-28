@@ -186,7 +186,7 @@ public:
     double worst_delay = 0;
 
     ntk_topo.foreach_node( [&]( auto const& n, auto ) {
-      if ( Ntk::is_constant( n ) || Ntk::is_pi( n ) )
+      if ( Ntk::is_constant( n ) || Ntk::is_ci( n ) )
       {
         delays[n] = 0;
         return true;

@@ -82,6 +82,12 @@ private:
     _ntk.foreach_pi( [&]( auto const& n ) {
       old2new[n].push_back( res.create_pi() );
     } );
+    if constexpr ( has_foreach_ro_v<Ntk> )
+    {
+      _ntk.foreach_ro( [&]( auto const& n ) {
+        old2new[n].push_back( res.create_ro() );
+      } );
+    }
 
     rsfq_view<Ntk> rsfq_res{ res };
     return {rsfq_res, old2new};
@@ -169,6 +175,31 @@ private:
       }
       res.create_po( old2new[f][i - 1] );
     } );
+
+    /* pad RIs based on circuit worst delay */
+    if constexpr ( has_foreach_ri_v<Ntk> )
+    {
+      _ntk.foreach_ri( [&]( auto const& f ) {
+        /* don't buffer constant POs */
+        if ( _ntk.is_constant( _ntk.get_node( f ) ) )
+        {
+          res.create_ri( old2new[f][0] );
+          return; 
+        }
+
+        uint32_t slack = _worst_delay - delays[old2new[f][0]];
+        auto& dffs = old2new[f];
+        /* create dffs to pad up to the depth */
+        auto i = 0u;
+        for ( i = dffs.size(); i <= slack; ++i )
+        {
+          /* create a buffer */
+          auto const buf = create_dff( res, dffs[i - 1], delays );
+          dffs.push_back( buf );
+        }
+        res.create_ri( old2new[f][i - 1] );
+      } );
+    }
 
     assert( check_balancing( res, delays ) );
   }

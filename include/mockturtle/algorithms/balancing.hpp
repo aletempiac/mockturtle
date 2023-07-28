@@ -219,15 +219,23 @@ struct balancing_decomp_impl
     {
       old_to_new[ntk_.get_constant( true )] = { dest.get_constant( true ), 0u };
     }
+
     ntk_.foreach_pi( [&]( auto const& n ) {
       old_to_new[n] = { dest.create_pi(), 0u };
     } );
+
+    if constexpr ( has_foreach_ro_v<Ntk> )
+    {
+      ntk_.foreach_ro( [&]( auto const& n ) {
+        old_to_new[n] = { dest.create_ro(), 0u };
+      } );
+    }
 
     std::shared_ptr<depth_view<Ntk>> depth_ntk;
     // stopwatch<> t( st_.time_total );
 
     topo_view<Ntk>{ ntk_ }.foreach_node( [&]( auto const& n, auto index ) {
-      if ( ntk_.is_constant( n ) || ntk_.is_pi( n ) )
+      if ( ntk_.is_constant( n ) || ntk_.is_ci( n ) )
       {
         return;
       }
@@ -254,6 +262,14 @@ struct balancing_decomp_impl
       const auto s = old_to_new[f].f;
       dest.create_po( ntk_.is_complemented( f ) ? dest.create_not( s ) : s );
     } );
+
+    if constexpr ( has_foreach_ri_v<Ntk> )
+    {
+      ntk_.foreach_ri( [&]( auto const& f ) {
+        const auto s = old_to_new[f].f;
+        dest.create_ri( ntk_.is_complemented( f ) ? dest.create_not( s ) : s );
+      } );
+    }
 
     return dest;
   }

@@ -1058,7 +1058,7 @@ private:
     {
       auto index = ntk.node_to_index( n );
 
-      if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
+      if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
       {
         continue;
       }
@@ -2449,7 +2449,7 @@ private:
       return;
     }
 
-    assert( !ntk.is_pi( n ) );
+    assert( !ntk.is_ci( n ) );
     ntk.set_visited( n, ntk.trav_id() );
 
     ntk.foreach_fanin( n, [&]( auto const& f ) {
