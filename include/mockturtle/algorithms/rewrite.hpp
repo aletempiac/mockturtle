@@ -293,7 +293,7 @@ public:
         assert( n != ntk.get_node( new_f ) );
 
         _estimated_gain += best_gain;
-        ntk.substitute_node( n, new_f ^ best_phase );
+        ntk.substitute_node_no_restrash( n, new_f ^ best_phase );
 
         if constexpr ( has_level_v<Ntk> )
         {
