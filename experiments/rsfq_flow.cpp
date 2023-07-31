@@ -23,6 +23,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -299,12 +300,15 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  for ( auto const& benchmark : iscas_benchmarks() )
+  std::vector<std::string> seq_benchmark_set = { "s1196", "s1238", "s38417" };
+  for ( auto const& benchmark : seq_benchmark_set )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
-    if ( benchmark == "hyp" || benchmark == "sqrt" )
-      continue;
+    // if ( benchmark == "hyp" || benchmark == "sqrt" )
+    //   continue;
+    // if ( benchmark != "dec" )
+    //   continue;
 
     xag_network aig;
     // if ( lorina::read_aiger( "rsfq_opt/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
@@ -319,6 +323,9 @@ void rsfq_flow( int opt_iter )
 
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
+    
+    // if ( size_before > 5500 )
+    //   continue;
 
     fmt::print( "Initial AIG: size = {}\t depth = {}\n", size_before, depth_before );
 
@@ -327,6 +334,9 @@ void rsfq_flow( int opt_iter )
     /* functional reduction */
     functional_reduction( fraig );
     fraig = cleanup_dangling( fraig );
+
+    using clock = typename std::chrono::steady_clock;
+    clock::time_point time_begin = clock::now();
 
     /* Map to XAG */
     aig_balance( fraig, { false } );
@@ -350,6 +360,9 @@ void rsfq_flow( int opt_iter )
     map_params ps;
     ps.cut_enumeration_ps.minimize_truth_table = true;
     ps.cut_enumeration_ps.cut_limit = 49;
+    // ps.skip_delay_round = true;
+    // ps.required_time = 200;
+    // ps.verbose = true;
     map_stats st;
     xag_balance( xag, { true } );
     binding_view<klut_network> res = map( xag, tech_lib, ps, &st );
@@ -367,7 +380,9 @@ void rsfq_flow( int opt_iter )
     rps.verbose = false;
     auto net = rsfq_generic_network_create_from_mapped( res_test );
     retime( net, rps, &rst );
+    // rst.report();
     auto retime_res = rsfq_mapped_create_from_generic_network( net );
+    std::cout << fmt::format( "DFFs before = {}\t DFFs after = {}\n", rst.registers_pre, rst.registers_post );
 
     /* splitter insertion */
     double area_final = retime_res.compute_area();
@@ -376,13 +391,15 @@ void rsfq_flow( int opt_iter )
         area_final += splitter_jj * ( retime_res.fanout_size( n ) - 1 );
     } );
 
+    clock::time_point time_end = clock::now();
+
     // const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
     const auto cec = true;
 
     std::cout << "Area after retime and splitters: " << area_final << " check: " << rsfq_check_buffering( retime_res );
     std::cout << " cec: " << cec << "\n";
 
-    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), area_final, retime_res.compute_worst_delay(), to_seconds( rst.time_total ), cec );
+    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), area_final, retime_res.compute_worst_delay(), to_seconds( time_end - time_begin ), cec );
   }
 
   exp.save();

@@ -81,11 +81,17 @@ binding_view<generic_network> rsfq_generic_network_create_from_mapped( Ntk const
   ntk.foreach_pi( [&]( auto const& n ) {
     old2new[n] = res.create_pi();
   } );
+  if constexpr ( has_foreach_ro_v<Ntk> )
+  {
+    ntk.foreach_ro( [&]( auto const& n ) {
+      old2new[n] = res.create_ro();
+    } );
+  }
 
   topo_view topo{ ntk };
 
   topo.foreach_node( [&] ( auto const& n ) {
-    if ( ntk.is_pi( n ) || ntk.is_constant( n ) )
+    if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
       return true;
 
     std::vector<signal> children;
@@ -115,6 +121,12 @@ binding_view<generic_network> rsfq_generic_network_create_from_mapped( Ntk const
   ntk.foreach_po( [&]( auto const& f ) {
     res.create_po( old2new[f] );
   } );
+  if constexpr ( has_foreach_ri_v<Ntk> )
+  {
+    ntk.foreach_ri( [&]( auto const& f ) {
+      res.create_ri( old2new[f] );
+    } );
+  }
 
   return res;
 }
@@ -199,6 +211,100 @@ rsfq_view<binding_view<klut_network>> rsfq_mapped_create_from_generic_network( b
   } );
 
   return rsfq_res;
+}
+
+/*! \brief Generate a sequential RSFQ network.
+ *
+ * This function converts a combinational RSFQ network into
+ * a sequential one by representing registers as RI/RO signals.
+ *
+ * \param ntk Mapped RSFQ network
+ */
+template<class Ntk>
+binding_view<generic_network> seq_to_comb_generic_rsfq( Ntk const& ntk )
+{
+  static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
+  static_assert( has_get_node_v<Ntk>, "Ntk does not implement the get_node method" );
+  static_assert( has_node_to_index_v<Ntk>, "Ntk does not implement the node_to_index method" );
+  static_assert( has_get_constant_v<Ntk>, "Ntk does not implement the get_constant method" );
+  static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
+  static_assert( has_foreach_pi_v<Ntk>, "Ntk does not implement the foreach_pi method" );
+  static_assert( has_foreach_po_v<Ntk>, "Ntk does not implement the foreach_po method" );
+  static_assert( has_is_pi_v<Ntk>, "Ntk does not implement the is_pi method" );
+  static_assert( has_is_constant_v<Ntk>, "Ntk does not implement the is_constant method" );
+  static_assert( has_is_complemented_v<Ntk>, "NtkDest does not implement the is_complemented method" );
+  static_assert( has_has_binding_v<Ntk>, "Ntk does not implement the has_binding method" );
+  static_assert( has_set_dff_v<Ntk>, "Ntk does not implement the set_dff method" );
+
+  using signal = typename generic_network::signal;
+
+  node_map<signal, Ntk> old2new( ntk );
+  binding_view<generic_network> res( ntk.get_library() );
+
+  old2new[ntk.get_constant( false )] = res.get_constant( false );
+  if ( ntk.get_node( ntk.get_constant( true ) ) != ntk.get_node( ntk.get_constant( false ) ) )
+  {
+    old2new[ntk.get_constant( true )] = res.get_constant( true );
+  }
+  ntk.foreach_pi( [&]( auto const& n ) {
+    old2new[n] = res.create_pi();
+  } );
+
+  std::vector<signal> register_inputs;
+  if constexpr ( has_foreach_ro_v<Ntk> )
+  {
+    /* create dummy nodes to be disconnected later */
+    register_inputs.reserve( ntk.num_registers() );
+    ntk.foreach_ro( [&]( auto const& n ) {
+      auto const out_register = res.create_box_output( res.get_constant( false ) );
+      register_inputs.push_back( out_register );
+      old2new[n] = out_register;
+    } );
+  }
+
+  topo_view topo{ ntk };
+  topo.foreach_node( [&] ( auto const& n ) {
+    if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
+      return true;
+
+    std::vector<signal> children;
+    
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      children.push_back( old2new[f] );
+    } );
+
+    if ( ntk.is_dff( n ) )
+    {
+      auto const in_latch = res.create_box_input( children[0] );
+      auto const latch = res.create_register( in_latch );
+      auto const latch_out = res.create_box_output( latch );
+      res.add_binding( res.get_node( latch ), ntk.get_binding_index( n ) );
+      old2new[n] = latch_out;
+    }
+    else
+    {
+      const auto f = res.create_node( children, ntk.node_function( n ) );
+      res.add_binding( res.get_node( f ), ntk.get_binding_index( n ) );
+      old2new[n] = f;
+    }
+
+    return true;
+  } );
+
+  ntk.foreach_po( [&]( auto const& f ) {
+    res.create_po( old2new[f] );
+  } );
+
+  if constexpr ( has_foreach_ri_v<Ntk> )
+  {
+    /* connect RI registers */
+    auto it = register_inputs.begin();
+    ntk.foreach_ri( [&]( auto const& f ) {
+      res.substitute_node( ( *it )++, old2new[f] );
+    } );
+  }
+
+  return res;
 }
 
 } // namespace mockturtle

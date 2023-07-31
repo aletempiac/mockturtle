@@ -311,25 +311,32 @@ void rsfq_flow( int opt_iter )
 
     /* path balancing with buffers */
     auto res_test = rsfq_path_balancing( res );
+    // const uint32_t dffs = res_test.num_dffs();
 
     /* retime registers */
     retime_params rps;
     retime_stats rst;
-    rps.verbose = false;
-    auto net = rsfq_generic_network_create_from_mapped( res_test );
+    // rps.verbose = false;
+    auto net = seq_to_comb_generic_rsfq( res_test );
     retime( net, rps, &rst );
-    auto retime_res = rsfq_mapped_create_from_generic_network( net );
+    const uint32_t dffs = net.num_registers();
+
+    std::cout << fmt::format( "DFFs before = {}\t DFFs after = {}\n", res_test.num_dffs(), dffs );
+    // auto retime_res = rsfq_mapped_create_from_generic_network( net );
 
     /* splitter insertion */
-    double area_final = retime_res.compute_area();
-    retime_res.foreach_node( [&]( auto const& n ) {
-      if ( !retime_res.is_constant( n ) )
-        area_final += splitter_jj * ( retime_res.fanout_size( n ) - 1 );
-    } );
+    double area_final = res.compute_area();
+    double area_splitters = 0;
+    // res.foreach_node( [&]( auto const& n ) {
+    //   if ( !res.is_constant( n ) )
+    //     area_splitters += splitter_jj * ( res.fanout_size( n ) - 1 );
+    // } );
+    // area_final += area_splitters;
 
     clock::time_point time_end = clock::now();
+    fmt::print( "RSFQ stats : area = {}\t delay = {}\t dff = {}\t s_area = {}\n", area_final, res_test.compute_worst_delay(), dffs, area_splitters );
 
-    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), area_final, res_test.compute_worst_delay(), to_seconds( time_end - time_begin ), cec );
+    exp( benchmark, size_before, depth_before, xag.num_gates(), depth_view( xag ).depth(), area_final, res_test.compute_worst_delay(), to_seconds( time_end - time_begin ), true );
   }
 
   exp.save();
