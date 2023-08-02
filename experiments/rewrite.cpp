@@ -60,6 +60,7 @@ int main()
     }
 
     rewrite_params ps;
+    ps.preserve_depth = true;
     rewrite_stats st;
 
     uint32_t const size_before = xag.num_gates();

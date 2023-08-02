@@ -51,7 +51,7 @@
 #include <mockturtle/algorithms/xag_algebraic_rewriting.hpp>
 #include <mockturtle/algorithms/xag_balancing.hpp>
 #include <mockturtle/algorithms/xag_optimization.hpp>
-#include <mockturtle/algorithms/xmg_algebraic_rewriting.hpp>
+#include <mockturtle/algorithms/xag_resub.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/genlib_reader.hpp>
 #include <mockturtle/io/super_reader.hpp>
@@ -146,6 +146,18 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
     fmt::print( "Post RW XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
   }
 
+  {
+    resubstitution_params ps;
+    ps.max_inserts = 2;
+    ps.max_pis = 8;
+    ps.preserve_depth = true;
+
+    xag_resub( xag, ps );
+    xag = cleanup_dangling( xag );
+
+    fmt::print( "Post RS XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+  }
+
   /* delay-oriented remapping */
   for ( auto i = 0; i < 5; ++i )
   {
@@ -164,6 +176,18 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
     xag = cleanup_dangling( new_xag );
   }
   fmt::print( "Map XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+
+  {
+    resubstitution_params ps;
+    ps.max_inserts = 2;
+    ps.max_pis = 8;
+    ps.preserve_depth = true;
+
+    xag_resub( xag, ps );
+    xag = cleanup_dangling( xag );
+
+    fmt::print( "Post RS XAG:     size = {}\t depth = {}\n", xag.num_gates(), depth_view( xag ).depth() );
+  }
 
   /* ESOP balancing */
   {
