@@ -109,6 +109,9 @@ struct lut_map_params
   /*! \brief Try to expand the cuts. */
   bool cut_expansion{ true };
 
+  /*! \brief Use multiple topological orders. */
+  bool multiple_topo_orders{ false };
+
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ true };
 
@@ -912,9 +915,8 @@ public:
 
     /* compute and save topological order */
     topo_order.reserve( ntk.size() );
-    topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
-      topo_order.push_back( n );
-    } );
+    topo_init_cos();
+    compute_topo();
 
     perform_mapping();
     return create_lut_network();
@@ -932,9 +934,8 @@ public:
 
     /* compute and save topological order */
     topo_order.reserve( ntk.size() );
-    topo_view<Ntk>( ntk ).foreach_node( [this]( auto n ) {
-      topo_order.push_back( n );
-    } );
+    topo_init_cos();
+    compute_topo();
 
     if ( ps.collapse_mffcs )
     {
@@ -990,6 +991,9 @@ private:
     uint32_t i = 0;
     while ( i < ps.area_share_rounds )
     {
+      if ( ps.multiple_topo_orders )
+        compute_topo( i % 2 );
+
       compute_share_mapping( area_sort, i == 0 );
 
       if ( ps.cut_expansion )
@@ -1018,6 +1022,9 @@ private:
     i = 0;
     while ( i < ps.ela_rounds )
     {
+      if ( ps.multiple_topo_orders )
+        compute_topo( i % 2 );
+
       compute_required_time();
       compute_mapping<true, true>( area_sort, false, ps.recompute_cuts, false );
 
@@ -3692,6 +3699,102 @@ private:
   }
 #pragma endregion
 
+#pragma region topological order
+  void topo_init_cos()
+  {
+    co_signals.reserve( ntk.num_cos() );
+    ntk.foreach_co( [this]( auto f ) {
+      co_signals.push_back( f );
+    } );
+  }
+
+  void compute_topo( uint32_t mode = 0 )
+  {
+    topo_order.clear();
+    ntk.incr_trav_id();
+    ntk.incr_trav_id();
+
+    /* constants and PIs */
+    const auto c0 = ntk.get_node( ntk.get_constant( false ) );
+    topo_order.push_back( c0 );
+    ntk.set_visited( c0, ntk.trav_id() );
+
+    if ( const auto c1 = ntk.get_node( ntk.get_constant( true ) ); ntk.visited( c1 ) != ntk.trav_id() )
+    {
+      topo_order.push_back( c1 );
+      ntk.set_visited( c1, ntk.trav_id() );
+    }
+
+    ntk.foreach_ci( [this]( auto n ) {
+      if ( ntk.visited( n ) != ntk.trav_id() )
+      {
+        topo_order.push_back( n );
+        ntk.set_visited( n, ntk.trav_id() );
+      }
+    } );
+
+    if ( mode == 0 )
+    {
+      /* reverse topo order */
+      for ( signal<Ntk> f : co_signals )
+      {
+        if ( ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() )
+          continue;
+        create_topo_rec( ntk.get_node( f ), mode );
+      }
+    }
+    else //if ( mode == 1 )
+    {
+      /* reverse topo order */
+      for ( auto it = co_signals.rbegin(); it != co_signals.rend(); ++it )
+      {
+        if ( ntk.visited( ntk.get_node( *it ) ) == ntk.trav_id() )
+          continue;
+        create_topo_rec( ntk.get_node( *it ), mode );
+      }
+    }
+    // else
+    // {
+    //   /* random */
+    // }
+  }
+
+  void create_topo_rec( node const& n, uint32_t mode )
+  {
+    /* is permanently marked? */
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    /* ensure that the node is not temporarily marked */
+    assert( ntk.visited( n ) != ntk.trav_id() - 1 );
+
+    /* mark node temporarily */
+    ntk.set_visited( n, ntk.trav_id() - 1 );
+
+    /* mark children */
+    if ( mode == 0 )
+    {
+      for ( int i = 0; i < ntk.fanin_size( n ); ++i )
+        create_topo_rec( ntk._storage->nodes[n].children[i].index, mode );
+    }
+    else //if ( mode == 1 )
+    {
+      for ( int i = ntk.fanin_size( n ) - 1; i >= 0; --i )
+        create_topo_rec( ntk._storage->nodes[n].children[i].index, mode );
+    }
+    // else
+    // {
+
+    // }
+
+    /* mark node n permanently */
+    ntk.set_visited( n, ntk.trav_id() );
+
+    /* visit node */
+    topo_order.push_back( n );
+  }
+#pragma endregion
+
 private:
   Ntk& ntk;
   lut_map_params const& ps;
@@ -3709,6 +3812,7 @@ private:
 
   std::vector<node> topo_order;
   std::vector<node> topo_order2;
+  std::vector<signal<Ntk>> co_signals;
   std::vector<uint32_t> tmp_visited;
   std::vector<node_lut> node_match;
 

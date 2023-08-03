@@ -65,6 +65,7 @@ int main()
     ps.area_share_rounds = 2;
     ps.area_flow_rounds = 1;
     ps.ela_rounds = 2;
+    ps.multiple_topo_orders = false;
     ps.verbose = false;
     lut_map_stats st;
     const auto klut = lut_map( aig, ps, &st );
