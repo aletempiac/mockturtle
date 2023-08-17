@@ -46,8 +46,8 @@ int main()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, uint32_t, uint32_t, double, bool> exp(
-      "lut_mapper_d", "benchmark", "size", "depth", "size_c", "depth_c", "luts", "lut_depth", "time", "luts_d", "luts_depth_d", "time_d", "equivalent_d" );
+  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, uint32_t, uint32_t, uint32_t, double, bool> exp(
+      "lut_mapper_d", "benchmark", "size", "depth", "size_c", "depth_c", "luts", "edges", "lut_depth", "time", "luts_d", "edges_d", "luts_depth_d", "time_d", "equivalent_d" );
 
   // adder | bar | arbiter | cavlc | experiments::sin
   for ( auto const& benchmark : epfl_benchmarks() )
@@ -57,7 +57,7 @@ int main()
 
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -81,7 +81,7 @@ int main()
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
-    ps.area_oriented_mapping = true;
+    ps.area_oriented_mapping = false;
     ps.verbose = false;
 
     /* FLOW1: map AIG */
@@ -101,7 +101,7 @@ int main()
     // auto const cec = benchmark == "hyp" ? true : abc_cec( klut2, benchmark );
     auto const cec = true;
 
-    exp( benchmark, initial_size, initial_depth, collapsed_size, collapsed_depth, flow1_luts, flow1_depth, to_seconds( st1.time_total ), flow2_luts, flow2_depth, to_seconds( st2.time_total ), cec );
+    exp( benchmark, initial_size, initial_depth, collapsed_size, collapsed_depth, flow1_luts, st1.edges, flow1_depth, to_seconds( st1.time_total ), flow2_luts, st2.edges, flow2_depth, to_seconds( st2.time_total ), cec );
   }
 
   exp.save();

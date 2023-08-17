@@ -100,11 +100,14 @@ struct lut_map_params
   /*! \brief Number of rounds for area flow optimization. */
   uint32_t area_flow_rounds{ 1u };
 
+  /*! \brief Number of rounds for exact area sharing optimization. */
+  uint32_t area_ela_share_rounds{ 0u };
+
   /*! \brief Number of rounds for exact area optimization. */
   uint32_t ela_rounds{ 2u };
 
   /*! \brief Use edge count reduction. */
-  bool edge_optimization{ false };
+  bool edge_optimization{ true };
 
   /*! \brief Try to expand the cuts. */
   bool cut_expansion{ true };
@@ -176,6 +179,7 @@ struct cut_enumeration_lut_cut
   uint32_t lut_delay{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
+  bool has_immediate{ false }; /* stats on immediate fanin as leaf */
 };
 
 struct cut_enumeration_adaptive_cut
@@ -311,13 +315,13 @@ public:
       return true;
     if ( c1->data.delay > c2->data.delay )
       return false;
-    if ( c1->data.area_flow < c2->data.area_flow - eps )
-      return true;
-    if ( c1->data.area_flow > c2->data.area_flow + eps )
-      return false;
     if ( c1->data.edge_flow < c2->data.edge_flow - eps )
       return true;
     if ( c1->data.edge_flow > c2->data.edge_flow + eps )
+      return false;
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
+      return true;
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
       return false;
     return c1.size() < c2.size();
   }
@@ -957,6 +961,8 @@ private:
     init_nodes();
     init_cuts();
 
+    uint32_t i;
+
     /* compute mapping for depth or area */
     if ( !ps.area_oriented_mapping )
     {
@@ -988,7 +994,7 @@ private:
     }
 
     /* try backward area iterations */
-    uint32_t i = 0;
+    i = 0;
     while ( i < ps.area_share_rounds )
     {
       if ( ps.multiple_topo_orders )
@@ -1013,6 +1019,20 @@ private:
       if ( ps.cut_expansion )
       {
         compute_required_time();
+        expand_cuts<false>();
+      }
+      ++i;
+    }
+
+    /* try exact area share iterations */
+    i = 0;
+    while ( i < ps.area_ela_share_rounds )
+    {
+      compute_required_time();
+      compute_exact_share_mapping( area_sort, ps.recompute_cuts );
+
+      if ( ps.cut_expansion )
+      {
         expand_cuts<false>();
       }
       ++i;
@@ -1144,6 +1164,8 @@ private:
       ++area_iteration;
     }
 
+    double immediate_ratio = ( double )immediate_count / area * 100;
+
     /* round stats */
     if ( ps.verbose )
     {
@@ -1165,6 +1187,7 @@ private:
       {
         stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
+      stats << fmt::format( "[i]          : Ratio = {}\n", immediate_ratio );
       st.round_stats.push_back( stats.str() );
     }
   }
@@ -1193,6 +1216,62 @@ private:
     if ( ps.verbose )
     {
       st.round_stats.push_back( fmt::format( "[i] AreaSh   : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total ) );
+    }
+  }
+
+  void compute_exact_share_mapping( lut_cut_sort_type const sort, bool recompute_cuts )
+  {
+    /* save lowest index LUT parent */
+    std::vector<uint32_t> parent( ntk.size() );
+    std::vector<bool> was_ref( ntk.size() );
+    compute_exact_share_mapping_init( parent, was_ref );
+
+    cuts_total = 0;
+    for ( auto const& n : topo_order )
+    {
+      auto const index = ntk.node_to_index( n );
+      if ( iteration != 0 )
+      {
+        node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + 1.0 * node_match[index].map_refs ) / 3.0;
+      }
+      else
+      {
+        node_match[index].est_refs = static_cast<float>( node_match[index].map_refs );
+      }
+
+      if ( ntk.is_constant( n ) || ntk.is_ci( n ) )
+      {
+        continue;
+      }
+
+      if ( recompute_cuts )
+      {
+        if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+        {
+          compute_ela_share_best_cut2( n, sort, parent, was_ref[index] );
+        }
+        else
+        {
+          // compute_ela_share_best_cut( n, sort );
+          update_cut_data_ela_share( n, sort, parent, was_ref[index] );
+        }
+      }
+      else
+      {
+        /* update cost the function and move the best one first */
+        update_cut_data_ela_share( n, sort, parent, was_ref[index] );
+      }
+    }
+
+    set_mapping_refs<true>();
+
+    if ( ps.verbose )
+    {
+      std::stringstream stats;
+
+      stats << fmt::format( "[i] AreaElas : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
+      // stats << fmt::format( "[i]          : Ratio = {}\n", immediate_ratio );
+      st.round_stats.push_back( stats.str() );
     }
   }
 
@@ -1250,6 +1329,7 @@ private:
     /* compute current area and update mapping refs in top-down order */
     area = 0;
     edges = 0;
+    immediate_count = 0;
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       /* skip constants and PIs */
@@ -1266,6 +1346,9 @@ private:
         continue;
 
       auto& best_cut = cuts[index][0];
+
+      if ( best_cut->data.has_immediate )
+        ++immediate_count;
 
       if constexpr ( !ELA )
       {
@@ -1404,7 +1487,7 @@ private:
         node_match[i].est_refs = std::max( 1.0, ( 1.0 * node_match[i].est_refs + 2.0 * node_match[i].map_refs ) / 3.0 );
       node_match[i].map_refs = 0;
 
-      /* update flows if in area-oriented mapping */
+      /* update flows if in area-oriented mapping: empirical?? */
       if ( ps.area_oriented_mapping )
         compute_cut_data<false>( cuts[i].best(), ntk.index_to_node( i ), false );
     }
@@ -1435,6 +1518,138 @@ private:
       node_match[index].required = required;
       node_match[index].map_refs++;
     } );
+  }
+
+  void compute_exact_share_mapping_init( std::vector<uint32_t>& parent, std::vector<bool>& was_ref )
+  {
+    for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
+    {
+      if ( ntk.is_ci( *it ) || ntk.is_constant( *it ) )
+        continue;
+
+      const auto index = ntk.node_to_index( *it );
+
+      if ( node_match[index].map_refs == 0 )
+        continue;
+
+      /* compute parent information */
+      for ( auto leaf : cuts[index][0] )
+      {
+        parent[leaf] = index;
+      }
+
+      /* save referencing */
+      was_ref[index] = node_match[index].map_refs > 0;
+      node_match[index].map_refs = 0;
+    }
+  }
+
+  void compute_ela_share_best_cut2( node const& n, lut_cut_sort_type const sort, std::vector<uint32_t> parent, bool was_referenced )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    cut_t best_cut;
+
+    /* compute cuts */
+    const auto fanin = 2;
+    uint32_t pairs{ 1 };
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
+      pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+    } );
+    lcuts[2] = &cuts[index];
+    auto& rcuts = *lcuts[fanin];
+
+    /* dereference leaves selectively */
+    if ( iteration != 0 && was_referenced )
+    {
+      for ( auto leaf : rcuts[0] )
+      {
+        if ( parent[leaf] == index )
+        {
+          /* dereference cut */
+          if ( --node_match[leaf].map_refs == 0u )
+          {
+            cut_deref( cuts[leaf][0] );
+          }
+        }
+      }
+    }
+
+    /* recompute the data of the best cut */
+    if ( iteration != 0 )
+    {
+      best_cut = rcuts[0];
+      compute_cut_data<true>( best_cut, n, true );
+    }
+
+    /* clear cuts */
+    rcuts.clear();
+
+    /* insert the previous best cut */
+    if ( iteration != 0 )
+    {
+      rcuts.simple_insert( best_cut, sort );
+    }
+
+    cut_t new_cut;
+    std::vector<cut_t const*> vcuts( fanin );
+
+    for ( auto const& c1 : *lcuts[0] )
+    {
+      for ( auto const& c2 : *lcuts[1] )
+      {
+        if ( !c1->merge( *c2, new_cut, ps.cut_enumeration_ps.cut_size ) )
+        {
+          continue;
+        }
+
+        if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+        {
+          continue;
+        }
+
+        if constexpr ( StoreFunction )
+        {
+          vcuts[0] = c1;
+          vcuts[1] = c2;
+          new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+        }
+
+        new_cut->data.has_immediate = false;
+
+        if ( c1->size() == 1 || c2->size() == 1 )
+          new_cut->data.has_immediate = true;
+
+        compute_cut_data<true>( new_cut, ntk.index_to_node( index ), true );
+
+        /* check required time */
+        if ( new_cut->data.delay <= node_data.required )
+        {
+          if ( ps.remove_dominated_cuts )
+            rcuts.insert( new_cut, false, sort );
+          else
+            rcuts.simple_insert( new_cut, sort );
+        }
+      }
+    }
+
+    cuts_total += rcuts.size();
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
+
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+
+    if ( iteration != 0 && was_referenced )
+    {
+      node_data.map_refs = 1;
+      cut_ref( rcuts[0] );
+    }
   }
 
   template<bool DO_AREA, bool ELA>
@@ -1478,6 +1693,12 @@ private:
       rcuts.simple_insert( best_cut, sort );
     }
 
+    /* mark fanin */
+    ntk.incr_trav_id();
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      ntk.set_visited( ntk.get_node( f ), ntk.trav_id() );
+    } );
+
     cut_t new_cut;
     std::vector<cut_t const*> vcuts( fanin );
 
@@ -1501,6 +1722,11 @@ private:
           vcuts[1] = c2;
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
+
+        new_cut->data.has_immediate = false;
+
+        if ( c1->size() == 1 || c2->size() == 1 )
+          new_cut->data.has_immediate = true;
 
         compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
 
@@ -1532,7 +1758,11 @@ private:
 
     /* replace the new best cut with previous one */
     if ( preprocess && !is_new && rcuts[0]->data.delay > node_data.required )
+    {
+      cut_t tmp = rcuts[0];
       rcuts.replace( 0, best_cut );
+      rcuts.replace( ps.cut_enumeration_ps.cut_limit - 2, tmp );
+    }
 
     /* add trivial cut */
     if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
@@ -2495,6 +2725,68 @@ private:
     node_cut_set.update_best( best_cut_index );
   }
 
+  void update_cut_data_ela_share( node const& n, lut_cut_sort_type const sort, std::vector<uint32_t> const& parent, bool was_referenced )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    auto& node_cut_set = cuts[index];
+    uint32_t best_cut_index = 0;
+    uint32_t cut_index = 0;
+
+    cut_t const* best_cut = &node_cut_set.best();
+
+    /* dereference leaves selectively */
+    if ( iteration != 0 && was_referenced )
+    {
+      for ( auto leaf : *best_cut )
+      {
+        if ( parent[leaf] == index )
+        {
+          /* dereference cut */
+          if ( --node_match[leaf].map_refs == 0u )
+          {
+            cut_deref<cut_t>( cuts[leaf][0] );
+          }
+        }
+      }
+    }
+
+    /* recompute the data for all the cuts and pick the best */
+    for ( cut_t* cut : node_cut_set )
+    {
+      /* skip trivial cut */
+      if ( cut->size() == 1 && *cut->begin() == index )
+      {
+        ++cut_index;
+        continue;
+      }
+
+      compute_cut_data<true>( *cut, n, false );
+
+      /* update best */
+      if ( ( *cut )->data.delay <= node_data.required )
+      {
+        if ( node_cut_set.compare( *cut, *best_cut, sort ) )
+        {
+          best_cut = cut;
+          best_cut_index = cut_index;
+        }
+      }
+
+      ++cut_index;
+    }
+
+    /* add the LUT with exactly one reference */
+    if ( iteration != 0 && was_referenced )
+    {
+      node_data.map_refs = 1;
+      cut_ref( *best_cut );
+    }
+
+    /* update the best cut */
+    node_cut_set.update_best( best_cut_index );
+  }
+
   // template<bool DO_AREA, bool ELA>
   // void update_wide_cut_data( node const& n, lut_cut_sort_type const sort )
   // {
@@ -3001,16 +3293,28 @@ private:
       {
         const auto& best_leaf_cut = cuts[leaf][0];
         delay = std::max( delay, best_leaf_cut->data.delay );
+
+        double penalty = 1;
+        // if ( cut.size() < ps.cut_enumeration_ps.cut_size && ntk.visited( ntk.index_to_node( leaf ) ) == ntk.trav_id() )
+        // {
+        //   penalty = node_match[leaf].est_refs * ( ps.cut_enumeration_ps.cut_size - cut.size() ) / ( ps.cut_enumeration_ps.cut_size - 2 );
+        // }
+
         if ( node_match[leaf].map_refs > 0 && leaf != 0 )
         {
-          area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
-          edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
+          area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs * penalty;
+          edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs * penalty;
         }
         else
         {
           area_flow += best_leaf_cut->data.area_flow;
           edge_flow += best_leaf_cut->data.edge_flow;
         }
+
+        if ( area_flow > (float)1e32 )
+          area_flow = (float)1e32;
+        if ( edge_flow > (float)1e32 )
+          edge_flow = (float)1e32;
       }
 
       cut->data.delay = lut_delay + delay;
@@ -3025,7 +3329,7 @@ private:
   {
     uint32_t delay{ 0 };
     float area_flow = static_cast<float>( cut->data.lut_area );
-    float edge_flow = cut.size();
+    float edge_flow = cut.size() + 1;
 
     for ( auto leaf : cut )
     {
@@ -3064,7 +3368,7 @@ private:
     {
       // uint32_t delay{ 0 };
       float area_flow = static_cast<float>( cut->data.lut_area );
-      float edge_flow = cut->data.lut_edges;
+      float edge_flow = cut->data.lut_edges + 1;
 
       for ( auto leaf : cut )
       {
@@ -3809,6 +4113,7 @@ private:
   uint32_t multi_gates{ 0 };       /* number of detected multi-input ANDs */
   const float epsilon{ 0.005f };  /* epsilon */
   LUTCostFn lut_cost{};
+  uint32_t immediate_count{ 0 };
 
   std::vector<node> topo_order;
   std::vector<node> topo_order2;

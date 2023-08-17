@@ -50,23 +50,28 @@ int main()
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
+    // if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    // {
+    //   continue;
+    // }
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.recompute_cuts = true;
-    ps.area_oriented_mapping = true;
+    ps.area_oriented_mapping = false;
     ps.edge_optimization = false;
     ps.cut_expansion = true;
     ps.area_share_rounds = 2;
     ps.area_flow_rounds = 1;
+    ps.area_ela_share_rounds = 0;
     ps.ela_rounds = 2;
     ps.multiple_topo_orders = false;
-    ps.verbose = false;
+    ps.verbose = true;
     lut_map_stats st;
     const auto klut = lut_map( aig, ps, &st );
 
@@ -74,7 +79,7 @@ int main()
 
     auto const cec = true;
 
-    // write_blif( klut, "lut_out/" + benchmark + ".blif" );
+    write_blif( klut, "lut_out/" + benchmark + ".blif" );
 
     exp( benchmark, st.area, st.delay, st.edges, to_seconds( st.time_total ), cec );
   }
