@@ -61,6 +61,8 @@ std::string const mcnc_library = "GATE   inv1    1  O=!a;             PIN * INV 
                                  "GATE   aoi22   4  O=!(a*b+c*d);     PIN * INV 1 999 2.0 0.4 2.0 0.4\n"
                                  "GATE   oai21   3  O=!((a+b)*c);     PIN * INV 1 999 1.6 0.4 1.6 0.4\n"
                                  "GATE   oai22   4  O=!((a+b)*(c+d)); PIN * INV 1 999 2.0 0.4 2.0 0.4\n"
+                                 "GATE   ha      5  O=!(a*b);          PIN * INV 1 999 1.7 0.4 1.7 0.4\n"
+                                 "GATE   ha      5  O=!a*b+a*!b;      PIN * INV 1 999 2.1 0.4 2.1 0.4\n"
                                  "GATE   buf     2  O=a;              PIN * NONINV 1 999 1.0 0.0 1.0 0.0\n"
                                  "GATE   zero    0  O=CONST0;\n"
                                  "GATE   one     0  O=CONST1;";
@@ -102,6 +104,7 @@ int main()
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_params ps;
+    ps.map_multioutput = true;
     emap_stats st;
     binding_view<klut_network> res = emap( aig, tech_lib, ps, &st );
 

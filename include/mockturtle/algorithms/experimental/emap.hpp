@@ -288,6 +288,22 @@ public:
     return cut;
   }
 
+  /*! \brief Appends a cut to the end of the set.
+   *
+   * This function should only be called to create a set of cuts which is known
+   * to be sorted and irredundant (i.e., no cut in the set dominates another
+   * cut).
+   *
+   * \param cut Cut to insert
+   */
+  void append_cut( CutType const& cut )
+  {
+    assert( _pend != _pcuts.end() );
+
+    **_pend++ = cut;
+    ++_pcend;
+  }
+
   /*! \brief Checks whether cut is dominates by any cut in the set.
    *
    * \param cut Cut outside of the set
@@ -969,7 +985,10 @@ private:
       /* load and try a multi-output matches */
       if ( ps.map_multioutput && node_tuple_match[index] != UINT32_MAX )
       {
-        match_multi_add_cuts<DO_AREA>( n );
+        /* continue if matches do not fit in the cut data structure due to bad settings */
+        if ( !match_multi_add_cuts<DO_AREA>( n ) )
+          continue;
+
         if constexpr ( DO_AREA )
         {
           bool multi_success = match_multioutput<DO_AREA>( n );
@@ -3091,16 +3110,19 @@ private:
   }
 
   template<bool DO_AREA>
-  void match_multi_add_cuts( node<Ntk> const& n )
+  bool match_multi_add_cuts( node<Ntk> const& n )
   {
     uint32_t index = ntk.node_to_index( n );
     auto& matches = multi_node_match[node_tuple_match[index]];
 
     /* get the cuts */
-    for ( multi_match_t& tuple_data : matches )
+    auto tuple_data_it = matches.begin();
+    while ( tuple_data_it != matches.end() )
     {
+      multi_match_t& tuple_data = *tuple_data_it;
       uint32_t cut_index = tuple_data[0].cut_index;
       auto& cut_pair = multi_cut_set[cut_index];
+      bool remove_entry = false;
 
       /* insert multi-output cuts into the standard cut set */
       for ( auto i = 0; i < max_multioutput_output_size; ++i )
@@ -3111,17 +3133,32 @@ private:
 
         auto& rcuts = cuts[node_index];
 
-        /* insert single cut if unique */
+        /* not enough space in the data structure: abort */
+        if ( rcuts.size() == max_cut_num )
+        {
+          remove_entry = true;
+          break;
+        }
+
+        /* insert single cut variation if unique (for delay preservation) */
         if ( !rcuts.is_contained( single_cut ) )
         {
           compute_cut_data<DO_AREA>( single_cut, ntk.index_to_node( node_index ) );
-          rcuts.simple_insert( single_cut );
+          rcuts.append_cut( single_cut );
+
+          /* not enough space in the data structure: abort */
+          if ( rcuts.size() == max_cut_num )
+          {
+            rcuts.limit( rcuts.size() - 1 );
+            remove_entry = true;
+            break;
+          }
         }
 
         /* add multi-output cut */
         uint32_t num_cuts_pre = rcuts.size();
         cut->ignore = true;
-        rcuts.simple_insert( cut );
+        rcuts.append_cut( cut );
 
         uint32_t num_cuts_after = rcuts.size();
         assert( num_cuts_after == num_cuts_pre + 1 );
@@ -3131,7 +3168,19 @@ private:
         /* update tuple data */
         tuple_data[i].cut_index = num_cuts_pre;
       }
+
+      if ( remove_entry )
+        matches.erase( tuple_data_it );
+      else
+        ++tuple_data_it;
     }
+
+    /* matches do not fit in the data structure, remove multi-output option */
+    if ( matches.empty() )
+      node_tuple_match[index] = UINT32_MAX;
+
+    /* return if the insertion is (partially) successful */
+    return !matches.empty();
   }
 
   inline bool multi_node_update_cut_check( uint32_t index, uint64_t signature, uint8_t phase )
