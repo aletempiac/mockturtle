@@ -170,7 +170,7 @@ struct tuple_tt_hash
       mockturtle::tech_library lib_super( gates, supergates_spec );
    \endverbatim
  */
-template<unsigned NInputs = 5u, classification_type Configuration = classification_type::np_configurations>
+template<unsigned NInputs = 6u, classification_type Configuration = classification_type::np_configurations>
 class tech_library
 {
 private:

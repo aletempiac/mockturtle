@@ -78,7 +78,6 @@ int main()
   /* library to map to technology */
   std::vector<gate> gates;
   std::stringstream in( mcnc_library );
-  // std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/build/asap7.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -87,7 +86,7 @@ int main()
 
   tech_library_params tps;
   tps.verbose = true;
-  tech_library<6, classification_type::np_configurations> tech_lib( gates, tps );
+  tech_library tech_lib( gates, tps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -99,19 +98,14 @@ int main()
       continue;
     }
 
-    aig_balance( aig, { false } );
-
     const uint32_t size_before = aig.num_gates();
     const uint32_t depth_before = depth_view( aig ).depth();
 
     emap_params ps;
-    ps.verbose = true;
     emap_stats st;
+    binding_view<klut_network> res = emap( aig, tech_lib, ps, &st );
 
-    binding_view<klut_network> res = emap<aig_network, 6>( aig, tech_lib, ps, &st );
-
-    // bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
-    bool cec = true;
+    bool const cec = benchmark != "hyp" ? abc_cec( res, benchmark ) : true;
 
     exp( benchmark, size_before, st.area, depth_before, st.delay, to_seconds( st.time_total ), cec );
   }

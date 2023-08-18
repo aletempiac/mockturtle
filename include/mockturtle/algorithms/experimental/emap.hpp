@@ -4793,7 +4793,7 @@ private:
  * \param pst Mapping statistics
  *
  */
-template<class Ntk, unsigned CutSize = 6u, unsigned NInputs, classification_type Configuration>
+template<unsigned CutSize = 6u, class Ntk, unsigned NInputs, classification_type Configuration>
 binding_view<klut_network> emap( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps = {}, emap_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -4843,7 +4843,7 @@ binding_view<klut_network> emap( Ntk const& ntk, tech_library<NInputs, Configura
  * \param ntk Network
  *
  */
-template<class Ntk, unsigned CutSize = 5u, unsigned NInputs, classification_type Configuration>
+template<unsigned CutSize = 6u, class Ntk, unsigned NInputs, classification_type Configuration>
 binding_view<klut_network> emap_node_map( Ntk const& ntk, tech_library<NInputs, Configuration> const& library, emap_params const& ps = {}, emap_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
