@@ -27,6 +27,7 @@
   \file npn.hpp
   \brief Implements NPN canonization algorithms
 
+  \author Alessandro Tempia Calvino
   \author Mathias Soeken
 */
 
