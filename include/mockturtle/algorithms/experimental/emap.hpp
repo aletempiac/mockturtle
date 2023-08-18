@@ -80,8 +80,10 @@ struct emap_params
 
   /*! \brief Parameters for cut enumeration
    *
-   * The default cut limit is 16. By default,
-   * truth table minimization is performed.
+   * The default cut limit is 16.
+   * The maximum cut limit is 15.
+   * By default, truth table minimization
+   * is performed.
    */
   cut_enumeration_params cut_enumeration_ps{};
 
@@ -214,7 +216,7 @@ enum class emap_cut_sort_type
   NONE = 4
 };
 
-template<typename CutType, int MaxCuts>
+template<typename CutType, uint32_t MaxCuts>
 class emap_cut_set
 {
 public:
@@ -261,8 +263,7 @@ public:
    */
   void set_cut_limit( uint32_t limit )
   {
-    assert( limit <= MaxCuts );
-    _set_limit = limit;
+    _set_limit = std::min( MaxCuts, limit );
   }
 
   /*! \brief Adds a cut to the end of the set.
@@ -343,7 +344,7 @@ public:
       return true;
     if ( c1->flow > c2->flow + eps )
       return false;
-     if ( c1.size() < c2.size() )
+    if ( c1.size() < c2.size() )
       return true;
     if ( c1.size() > c2.size() )
       return false;
@@ -414,22 +415,23 @@ public:
    */
   void simple_insert( CutType const& cut, emap_cut_sort_type sort = emap_cut_sort_type::NONE )
   {
-    ( void ) sort;
     /* insert cut in a sorted way */
     typename std::array<CutType*, MaxCuts>::iterator ipos = _pcuts.begin();
 
-    // if ( sort == emap_cut_sort_type::DELAY )
-    // {
-    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_delay( *a, *b ); } );
-    // }
-    // else if ( sort == emap_cut_sort_type::AREA )
-    // {
-    //   ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
-    // }
-    // else /* NONE */
-    // {
-    //   ipos = _pend;
-    // }
+    bool limit_reached = std::distance( _pcuts.begin(), _pend ) >= _set_limit;
+
+    /* do not insert if worst than set_limit */
+    if ( limit_reached )
+    {
+      if ( sort == emap_cut_sort_type::AREA && !sort_area( cut, **( ipos + _set_limit - 1 ) ) )
+      {
+        return;
+      }
+      else if ( sort != emap_cut_sort_type::AREA )
+      {
+        return;
+      }
+    }
   
     if ( sort == emap_cut_sort_type::NONE )
     {
@@ -437,12 +439,12 @@ public:
     }
     else /* AREA */
     {
-      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
+      ipos = std::upper_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area( *a, *b ); } );
     }
 
 
     /* too many cuts, we need to remove one */
-    if ( _pend == _pcuts.end() )
+    if ( _pend == _pcuts.end() || limit_reached )
     {
       /* cut to be inserted is worse than all the others, return */
       if ( ipos == _pend )
@@ -1024,7 +1026,7 @@ private:
     auto& rcuts = *lcuts[fanin];
 
     /* set cut limit for run-time optimization*/
-    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit - 1 );
+    rcuts.set_cut_limit( ps.cut_enumeration_ps.cut_limit );
 
     cut_t new_cut;
     fanin_cut_t vcuts;
