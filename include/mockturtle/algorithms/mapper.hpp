@@ -1927,10 +1927,11 @@ private:
 
       std::vector<cut_match_t<NtkDest, NInputs>> node_matches;
 
-      auto const extended_leaves = reconv_cuts.run( { n } ).first;
+      std::vector<node<Ntk>> roots = { n };
+      auto const extended_leaves = reconv_cuts.run( roots ).first;
 
-      std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, {n} )};
-      window_view window_ntk{color_ntk, extended_leaves, {n}, gates};
+      std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, roots )};
+      window_view window_ntk{color_ntk, extended_leaves, roots, gates};
 
       default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
       const auto tts = simulate_nodes<kitty::dynamic_truth_table>( window_ntk, sim );

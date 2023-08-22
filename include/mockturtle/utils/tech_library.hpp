@@ -762,6 +762,12 @@ public:
   }
 
   /*! \brief Returns the NPN database of structures. */
+  Ntk& get_database()
+  {
+    return _database;
+  }
+
+  /*! \brief Returns the NPN database of structures. */
   const Ntk& get_database() const
   {
     return _database;

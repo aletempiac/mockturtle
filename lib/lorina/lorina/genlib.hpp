@@ -253,7 +253,13 @@ private:
     uint64_t i{4};
     for ( ; i+8 < tokens.size(); i += 9 )
     {
-      /* check PIN specification */
+      /* skip comments */
+      if ( tokens[i].front() == '#' )
+      {
+        i = tokens.size();
+        break;
+      }
+
       if ( tokens[i] != "PIN" )
       {
         if ( diag )
@@ -263,6 +269,7 @@ private:
         return false;
       }
 
+      /* check PIN specification */
       std::string const& name = tokens[i+1];
       if ( tokens[i+1] == "*" )
       {
@@ -307,7 +314,7 @@ private:
       return false;
     }
 
-    if ( i != tokens.size() )
+    if ( i != tokens.size() && tokens[i].front() != '#' )
     {
       if ( diag )
       {

@@ -814,7 +814,7 @@ public:
   cut_set_t& cuts( uint32_t node_index )
   {
     if ( node_index >= _cuts.size() )
-      _cuts.resize( node_index );
+      _cuts.resize( node_index + 1 );
 
     return _cuts[node_index];
   }
@@ -908,6 +908,11 @@ private:
     {
       cut->func_id = 2;
     }
+  }
+
+  void clear_cut_set( uint32_t index )
+  {
+    _cuts[index].clear();
   }
 
 private:
@@ -1250,6 +1255,15 @@ public:
     ntk.foreach_pi( [&]( auto const& n ) {
       cuts.add_unit_cut( ntk.node_to_index( n ) );
     } );
+  }
+
+  void clear_cuts( node<Ntk> const& n )
+  {
+    const auto index = ntk.node_to_index( n );
+    if ( cuts.cuts( index ).size() == 0 )
+      return;
+
+    cuts.clear_cut_set( index );
   }
 
 private:

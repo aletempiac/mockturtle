@@ -150,7 +150,7 @@ private:
   {
     uint64_t best_cost{std::numeric_limits<uint64_t>::max()};
     std::optional<node> best_fanin;
-    uint64_t best_position;
+    uint64_t best_position{ 0 };
 
     /* evaluate fanins of the cut */
     uint64_t position{0};

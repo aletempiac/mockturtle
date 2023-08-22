@@ -28,6 +28,7 @@
   \brief Implements functions to print truth tables
 
   \author Mathias Soeken
+  \author Alessandro Tempia Calvino
 */
 
 #pragma once
@@ -42,6 +43,7 @@
 #include <vector>
 
 #include "algorithm.hpp"
+#include "isop.hpp"
 #include "operations.hpp"
 
 namespace kitty
@@ -379,6 +381,59 @@ std::string anf_to_expression( const TT& anf )
   } );
 
   return terms == 1 ? expr : "[" + expr + "]";
+}
+
+template<typename TT>
+void print_expression( const TT& tt, std::ostream& os )
+{
+  std::vector<cube> cubes = isop( tt );
+  std::vector<cube> cubes_n = isop( ~tt );
+
+  bool inverted = false;
+  if ( cubes_n.size() < cubes.size() )
+  {
+    inverted = true;
+    cubes = cubes_n;
+    os << "!(";
+  }
+
+  for ( auto i = 0u; i < cubes.size(); ++i )
+  {
+    auto const& cube = cubes[i];
+    uint32_t num_lit_cube;
+
+    /* count ones */
+    uint64_t mask = static_cast<uint64_t>( cube._mask );
+    for ( num_lit_cube = 0; mask; ++num_lit_cube ) { mask &= mask - 1u; };
+
+    uint32_t count_lit = 0;
+    for ( auto j = 0u; j < tt.num_vars(); ++j )
+    {
+      if ( cube.get_mask( j ) )
+      {
+        char lit = 'a' + j;
+        if ( !cube.get_bit( j ) )
+          os << "!";
+        os << lit;
+        if ( ++count_lit < num_lit_cube )
+          os << '*';
+      }
+    }
+
+    if ( i < cubes.size() - 1 )
+      os << " + ";
+  }
+
+  if ( inverted )
+    os << ")";
+}
+
+template<typename TT>
+std::string to_expression( const TT& tt )
+{
+  std::stringstream ss;
+  print_expression( tt, ss );
+  return ss.str();
 }
 
 } /* namespace kitty */
