@@ -51,21 +51,24 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float, float, bool, bool> exp(
       "mapper_dc", "benchmark", "size", "size_mig", "size_mig_dc", "depth", "depth_mig", "depth_mig_dc", "runtime1", "runtime2", "equivalent1", "equivalent2" );
 
+  using Ntk = mig_network;
+  const uint32_t iterations = 1;
+
   /* library to map to migs */
-  // xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> resyn;
-  mig_npn_resynthesis resyn{true};
+  // xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete> resyn;
+  mig_npn_resynthesis resyn{ true };
   exact_library_params eps;
   eps.np_classification = true;
   eps.use_dont_cares = true;
-  exact_library<mig_network, decltype( resyn )> exact_lib( resyn, eps );
+  exact_library<Ntk, decltype( resyn )> exact_lib( resyn, eps );
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
-    if ( benchmark == "leon2" || benchmark == "leon3_opt" || benchmark == "leon3" || benchmark == "leon3mp" )
-      continue;
+    // if ( benchmark == "leon2" || benchmark == "leon3_opt" || benchmark == "leon3" || benchmark == "leon3mp" )
+    //   continue;
 
     fmt::print( "[i] processing {}\n", benchmark );
-    mig_network mig;
+    Ntk mig;
     if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( mig ) ) != lorina::return_code::success )
     {
       continue;
@@ -87,14 +90,14 @@ int main()
     ps.required_time = std::numeric_limits<double>::max();
     map_stats st1;
 
-    mig_network res1 = cleanup_dangling( mig );
-    mig_network res2 = cleanup_dangling( mig );
+    Ntk res1 = cleanup_dangling( mig );
+    Ntk res2 = cleanup_dangling( mig );
 
-    auto i = 10;
+    auto i = iterations;
     while ( i-- > 0 )
     {
       const uint32_t size_before_map = res1.size();
-      mig_network res1_map = map( res1, exact_lib, ps, &st1 );
+      Ntk res1_map = map( res1, exact_lib, ps, &st1 );
 
       if ( res1_map.size() >= size_before_map )
         break;
@@ -107,11 +110,11 @@ int main()
     ps.window_size = 12u;
     ps.verbose = false;
 
-    i = 10;
+    i = iterations;
     while ( i-- > 0 )
     {
       const uint32_t size_before_map = res2.size();
-      mig_network res2_map = map( res2, exact_lib, ps, &st2 );
+      Ntk res2_map = map( res2, exact_lib, ps, &st2 );
 
       if ( res2_map.size() >= size_before_map )
         break;
@@ -120,9 +123,9 @@ int main()
     }
 
     // const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
-    const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
+    // const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
     const auto cec1 = true;
-    // const auto cec2 = true;
+    const auto cec2 = true;
 
     const uint32_t depth_mig1 = depth_view( res1 ).depth();
     const uint32_t depth_mig2 = depth_view( res2 ).depth();
