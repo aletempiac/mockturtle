@@ -51,16 +51,19 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float, float, bool, bool> exp(
       "mapper_dc", "benchmark", "size", "size_mig", "size_mig_dc", "depth", "depth_mig", "depth_mig_dc", "runtime1", "runtime2", "equivalent1", "equivalent2" );
 
-  using Ntk = mig_network;
+  using Ntk = xag_network;
   const uint32_t iterations = 1;
 
   /* library to map to migs */
-  // xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete> resyn;
-  mig_npn_resynthesis resyn{ true };
+  xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete> resyn;
+  // mig_npn_resynthesis resyn{ true };
   exact_library_params eps;
   eps.np_classification = true;
   eps.use_dont_cares = true;
   exact_library<Ntk, decltype( resyn )> exact_lib( resyn, eps );
+
+  double time_projection = 0;
+  uint32_t projections = 0;
 
   for ( auto const& benchmark : epfl_benchmarks() )
   {
@@ -108,6 +111,7 @@ int main()
     map_stats st2;
     ps.use_dont_cares = true;
     ps.window_size = 12u;
+    // ps.use_dont_care_filter = false;
     ps.verbose = false;
 
     i = iterations;
@@ -122,10 +126,13 @@ int main()
       res2 = res2_map;
     }
 
-    // const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
-    // const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
-    const auto cec1 = true;
-    const auto cec2 = true;
+    // time_projection += to_seconds( st2.time_projection );
+    // projections += st2.projections;
+
+    const auto cec1 = benchmark == "hyp" ? true : abc_cec( res1, benchmark );
+    const auto cec2 = benchmark == "hyp" ? true : abc_cec( res2, benchmark );
+    // const auto cec1 = true;
+    // const auto cec2 = true;
 
     const uint32_t depth_mig1 = depth_view( res1 ).depth();
     const uint32_t depth_mig2 = depth_view( res2 ).depth();
@@ -135,6 +142,8 @@ int main()
 
   exp.save();
   exp.table();
+
+  std::cout << fmt::format( "[i] Time projection = {:>5.2f}\n[i] Projections    = {}\nAverage time   = {:>7.7f}\n", time_projection, projections, time_projection / (double) projections );
 
   return 0;
 }

@@ -48,12 +48,12 @@ int main()
   exact_library<xag_network, decltype( resyn )> exact_lib( resyn );
 
   /* XAG heuristic */
-  using engine_abc_t = xag_resyn_abc<kitty::static_truth_table<4>>;
+  using engine_abc_t = xag_resyn_decompose<kitty::static_truth_table<12>>;
   engine_abc_t::stats st;
 
   std::vector<uint32_t> divisors;
-  std::vector<kitty::static_truth_table<4>> divisor_functions;
-  kitty::static_truth_table<4> x;
+  std::vector<kitty::static_truth_table<12>> divisor_functions;
+  kitty::static_truth_table<12> x;
   for ( uint32_t i = 0; i < 4; ++i )
   {
     kitty::create_nth_var( x, i );
@@ -66,8 +66,9 @@ int main()
   uint32_t failures = 0;
   double percentage = 0;
   double count_classes = 0;
+  uint32_t neq = 0;
   kitty::static_truth_table<4> tt;
-  stopwatch<>::duration time_total;
+  stopwatch<>::duration time_total{ 0 };
   do
   {
     /* exact method */
@@ -77,8 +78,8 @@ int main()
     cost_exact += gates->at( 0 ).area;
 
     /* heuristic method */
-    kitty::static_truth_table<4> target, care;
-    target = tt;
+    kitty::static_truth_table<12> target = kitty::extend_to<12>( tt ); 
+    kitty::static_truth_table<12> care;
     care = ~care;
     engine_abc_t engine{ st };
     auto const index =  call_with_stopwatch( time_total, [&]() {
@@ -94,6 +95,15 @@ int main()
       cost_heuristics += index->num_gates();
       if ( index->num_gates() == gates->at( 0 ).area )
         ++percentage;
+      
+      /* check correctness */
+      xag_network xag_res;
+      decode( xag_res, *index );
+
+      default_simulator<kitty::static_truth_table<4>> sim;
+      const auto tt_out = simulate<kitty::static_truth_table<4>>( xag_res, sim );
+      if ( tt_out.front() != tt )
+        ++neq;
     }
 
     ++count_classes;
@@ -101,8 +111,8 @@ int main()
   } while ( !kitty::is_const0( tt ) );
 
   std::cout << fmt::format( "[i] Cost exact     = {}\n[i] Cost heuristic = {}\n", cost_exact, cost_heuristics );
-  std::cout << fmt::format( "[i] Percentage     = {:>5.2f}%\n[i] Failures       = {}\n", percentage / count_classes * 100, failures );
-  std::cout << fmt::format( "[i] Time total     = {:>5.2f}\n[i] Average time   = {:>7.7f}\n", to_seconds( time_total ), to_seconds( time_total ) / count_classes );
+  std::cout << fmt::format( "[i] Percentage     = {:>5.2f}%\n[i] Failures       = {}\n[i] NEQ            = {}\n", percentage / count_classes * 100, failures, neq );
+  std::cout << fmt::format( "[i] Time total     = {:>5.3f}\n[i] Average time   = {:>7.7f}\n", to_seconds( time_total ), to_seconds( time_total ) / count_classes );
 
   return 0;
 }
