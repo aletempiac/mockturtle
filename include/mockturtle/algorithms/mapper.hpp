@@ -38,6 +38,7 @@
 #include <fmt/format.h>
 
 #include "../networks/klut.hpp"
+#include "../networks/xag.hpp"
 #include "../utils/node_map.hpp"
 #include "../utils/stopwatch.hpp"
 #include "../utils/tech_library.hpp"
@@ -51,6 +52,8 @@
 #include "cut_enumeration/exact_map_cut.hpp"
 #include "cut_enumeration/tech_map_cut.hpp"
 #include "reconv_cut.hpp"
+#include "resyn_engines/mig_resyn.hpp"
+#include "resyn_engines/xag_resyn.hpp"
 #include "simulation.hpp"
 #include "detail/mffc_utils.hpp"
 #include "detail/switching_activity.hpp"
@@ -102,6 +105,9 @@ struct map_params
 
   /*! \brief Window size for don't cares calculation. */
   uint32_t window_size{ 12u };
+
+  /*! \brief Use a filtering heuristic to prune don't care computations. */
+  bool use_dont_care_filter{ true };
 
   /*! \brief Exploit logic sharing in exact area optimization of graph mapping. */
   bool enable_logic_sharing{ false };
@@ -1921,6 +1927,14 @@ private:
     fanout_view<Ntk> fanout_ntk{ntk};
     color_view<Ntk> color_ntk{fanout_ntk};
 
+    using engine_t = xag_resyn_decompose<kitty::dynamic_truth_table>;
+    engine_t::stats est;
+    std::array<uint32_t, NInputs> divisors;
+    for ( uint32_t i = 0; i < NInputs; ++i )
+    {
+      divisors[i] = i;
+    }
+
     /* match gates */
     ntk.foreach_gate( [&]( auto const& n ) {
       const auto index = ntk.node_to_index( n );
@@ -1961,10 +1975,14 @@ private:
         auto perm_neg = perm;
         auto neg_neg = neg;
 
+        const std::vector<exact_supergate<Ntk, NInputs>>* supergates_npn = nullptr;
+        const std::vector<exact_supergate<Ntk, NInputs>>* supergates_npn_neg = nullptr;
+
         /* dont cares computation */
         kitty::static_truth_table<NInputs> care;
 
         bool containment = true;
+        bool filter = false;
         for ( auto const& l : *cut )
         {
           if ( color_ntk.color( ntk.index_to_node( l ) ) != color_ntk.current_color() )
@@ -1974,7 +1992,51 @@ private:
           }
         }
 
-        if ( containment )
+        if ( containment && ps.use_dont_care_filter )
+        {
+          /* get area filter */
+          uint32_t area_filter = UINT32_MAX;
+          {
+            supergates_npn = library.get_supergates( tt_npn );
+            supergates_npn_neg = library.get_supergates( ~tt_npn );
+
+            if ( supergates_npn != nullptr )
+              area_filter = (uint32_t) supergates_npn->at( 0 ).area;
+            if ( supergates_npn_neg != nullptr )
+              area_filter = std::min( area_filter, (uint32_t) supergates_npn_neg->at( 0 ).area );
+          }
+
+          /* try resyn */
+          std::vector<kitty::dynamic_truth_table> divisor_functions;
+          for ( auto const& l : *cut )
+          {
+            divisor_functions.emplace_back( tts[l] );
+          }
+
+          kitty::dynamic_truth_table target = tts[n]; 
+          kitty::dynamic_truth_table target_care( window_ntk.num_pis() );
+          engine_t engine{ est };
+          auto const index_list = engine( target, ~target_care, divisors.begin(), divisors.begin() + cut->size(), divisor_functions, area_filter - 1 );
+
+          if ( !index_list.has_value() )
+          {
+            filter = true;
+          }
+          else
+          {
+            /* compute care by simulating the solution */
+            xag_network xag;
+            decode( xag, *index_list );
+
+            default_simulator<kitty::static_truth_table<4>> sim_filter;
+            const auto tt_out = simulate<kitty::static_truth_table<NInputs>>( xag, sim_filter );
+
+            care = fe ^ tt_out.front();
+            filter = true;
+          }
+        }
+
+        if ( containment && !filter )
         {
           /* compute care set */
           for ( auto i = 0u; i < ( 1u << window_ntk.num_pis() ); ++i )
@@ -2004,10 +2066,12 @@ private:
         // auto dc_set = satisfiability_dont_cares( fanout_ntk, pivots, 8u );
         // const auto dc = kitty::extend_to<NInputs>( ~care );
 
-        auto const dc_npn = apply_npn_transformation( ~care, neg & ~( 1 << NInputs ), perm );
-
-        auto const supergates_npn = library.get_supergates( tt_npn, dc_npn, neg, perm );
-        auto const supergates_npn_neg = library.get_supergates( ~tt_npn, dc_npn, neg_neg, perm_neg );
+        if ( !kitty::is_const0( ~care ) || !containment || !ps.use_dont_care_filter )
+        {
+          auto const dc_npn = apply_npn_transformation( ~care, neg & ~( 1 << NInputs ), perm );
+          supergates_npn = library.get_supergates( tt_npn, dc_npn, neg, perm );
+          supergates_npn_neg = library.get_supergates( ~tt_npn, dc_npn, neg_neg, perm_neg );
+        }
 
         if ( supergates_npn != nullptr || supergates_npn_neg != nullptr )
         {
