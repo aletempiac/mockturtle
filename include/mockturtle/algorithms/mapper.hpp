@@ -38,6 +38,7 @@
 #include <fmt/format.h>
 
 #include "../networks/klut.hpp"
+#include "../networks/mig.hpp"
 #include "../networks/xag.hpp"
 #include "../utils/node_map.hpp"
 #include "../utils/stopwatch.hpp"
@@ -107,7 +108,7 @@ struct map_params
   uint32_t window_size{ 12u };
 
   /*! \brief Use a filtering heuristic to prune don't care computations. */
-  bool use_dont_care_filter{ true };
+  bool use_dont_care_filter{ false };
 
   /*! \brief Exploit logic sharing in exact area optimization of graph mapping. */
   bool enable_logic_sharing{ false };
@@ -1927,8 +1928,8 @@ private:
     fanout_view<Ntk> fanout_ntk{ntk};
     color_view<Ntk> color_ntk{fanout_ntk};
 
-    using engine_t = xag_resyn_decompose<kitty::dynamic_truth_table>;
-    engine_t::stats est;
+
+    constexpr uint32_t max_window_size = 12;
     std::array<uint32_t, NInputs> divisors;
     for ( uint32_t i = 0; i < NInputs; ++i )
     {
@@ -1947,8 +1948,8 @@ private:
       std::vector<node<Ntk>> gates{collect_nodes( color_ntk, extended_leaves, roots )};
       window_view window_ntk{color_ntk, extended_leaves, roots, gates};
 
-      default_simulator<kitty::dynamic_truth_table> sim( window_ntk.num_pis() );
-      const auto tts = simulate_nodes<kitty::dynamic_truth_table>( window_ntk, sim );
+      default_simulator<kitty::static_truth_table<max_window_size>> sim;
+      const auto tts = simulate_nodes<kitty::static_truth_table<max_window_size>>( window_ntk, sim );
 
       auto i = 0u;
       for ( auto& cut : cuts.cuts( index ) )
@@ -2007,32 +2008,63 @@ private:
           }
 
           /* try resyn */
-          std::vector<kitty::dynamic_truth_table> divisor_functions;
+          std::vector<kitty::static_truth_table<max_window_size>> divisor_functions;
           for ( auto const& l : *cut )
           {
             divisor_functions.emplace_back( tts[l] );
           }
 
-          kitty::dynamic_truth_table target = tts[n]; 
-          kitty::dynamic_truth_table target_care( window_ntk.num_pis() );
-          engine_t engine{ est };
-          auto const index_list = engine( target, ~target_care, divisors.begin(), divisors.begin() + cut->size(), divisor_functions, area_filter - 1 );
+          kitty::static_truth_table<max_window_size> target = tts[n]; 
+          kitty::static_truth_table<max_window_size> target_care;
 
-          if ( !index_list.has_value() )
+          if constexpr ( std::is_same_v<Ntk, xag_network> )
           {
-            filter = true;
+            using engine_t = xag_resyn_decompose<kitty::static_truth_table<max_window_size>>;
+            engine_t::stats est;
+            engine_t engine{ est };
+            auto const index_list = engine( target, ~target_care, divisors.begin(), divisors.begin() + cut->size(), divisor_functions, area_filter + 1 );
+
+            if ( !index_list.has_value() )
+            {
+              filter = true;
+            }
+            else
+            {
+              /* compute care by simulating the solution */
+              xag_network xag;
+              decode( xag, *index_list );
+
+              default_simulator<kitty::static_truth_table<4>> sim_filter;
+              const auto tt_out = simulate<kitty::static_truth_table<NInputs>>( xag, sim_filter );
+
+              care = fe ^ tt_out.front();
+              filter = true;
+            }
           }
-          else
+          else if ( std::is_same_v<Ntk, mig_network> )
           {
-            /* compute care by simulating the solution */
-            xag_network xag;
-            decode( xag, *index_list );
+            mig_resyn_static_params;
+            using engine_t = mig_resyn_topdown<kitty::static_truth_table<max_window_size>>;
+            engine_t::stats est;
+            engine_t engine{ est };
+            auto const index_list = engine( target, ~target_care, divisors.begin(), divisors.begin() + cut->size(), divisor_functions, area_filter + 1 );
 
-            default_simulator<kitty::static_truth_table<4>> sim_filter;
-            const auto tt_out = simulate<kitty::static_truth_table<NInputs>>( xag, sim_filter );
+            if ( !index_list.has_value() )
+            {
+              filter = true;
+            }
+            else
+            {
+              /* compute care by simulating the solution */
+              mig_network mig;
+              decode( mig, *index_list );
 
-            care = fe ^ tt_out.front();
-            filter = true;
+              default_simulator<kitty::static_truth_table<4>> sim_filter;
+              const auto tt_out = simulate<kitty::static_truth_table<NInputs>>( mig, sim_filter );
+
+              care = fe ^ tt_out.front();
+              filter = true;
+            }
           }
         }
 
