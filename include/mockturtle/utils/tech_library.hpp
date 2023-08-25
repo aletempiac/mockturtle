@@ -968,6 +968,10 @@ private:
          /* evaluate DC only for size improvement */
         if ( size >= current_size )
           continue;
+
+        /* skip the same NPN class if gates are constructed in NP classes */
+        if ( _ps.np_classification && tt_i == ~tt_j )
+          continue;
         
         exact_npn_enumeration( tt_j, [&]( auto const& tt, uint32_t phase,  std::vector<uint8_t> const& perm ) {
           /* extract the DC set */
