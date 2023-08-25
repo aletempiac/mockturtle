@@ -96,6 +96,13 @@ struct aqfp_optimize_depth_stats
   }
 };
 
+struct aqfp_reconstruct_splitter_trees_params
+{
+  buffer_insertion_params buffer_insertion_ps{};
+  bool det_randomization{false};
+  std::default_random_engine::result_type seed{1};
+};
+
 namespace detail
 {
 
@@ -175,7 +182,9 @@ public:
     buf_ps.assume = _ps.aqfp_assumptions_ps;
     buf_ps.scheduling = buffer_insertion_params::provided;
     buf_ps.optimization_effort = buffer_insertion_params::none;
-    return aqfp_reconstruct_splitter_trees( ntk, buf_ps, &_st.buffers_post );
+    aqfp_reconstruct_splitter_trees_params reconstruct_ps;
+    reconstruct_ps.buffer_insertion_ps = buf_ps;
+    return aqfp_reconstruct_splitter_trees( ntk, reconstruct_ps, &_st.buffers_post );
   }
 
 private:
@@ -2338,13 +2347,6 @@ Ntk aqfp_optimize_depth( Ntk const& ntk, aqfp_optimize_depth_params const& ps = 
 
   return res;
 }
-
-struct aqfp_reconstruct_splitter_trees_params
-{
-  buffer_insertion_params buffer_insertion_ps{};
-  bool det_randomization{false};
-  std::default_random_engine::result_type seed{1};
-};
 
 namespace detail
 {
