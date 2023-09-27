@@ -39,6 +39,16 @@
 
 #include <experiments.hpp>
 
+uint32_t compute_num_edges( mockturtle::klut_network const& klut )
+{
+  uint32_t edges = 0;
+  klut.foreach_gate( [&]( auto const& n ) {
+    edges += klut.fanin_size( n );
+  } );
+
+  return edges;
+}
+
 int main()
 {
   using namespace experiments;
@@ -64,7 +74,7 @@ int main()
     ps.cut_enumeration_ps.cut_limit = 8u;
     ps.recompute_cuts = true;
     ps.area_oriented_mapping = false;
-    ps.edge_optimization = false;
+    ps.edge_optimization = true;
     ps.cut_expansion = true;
     ps.area_share_rounds = 2;
     ps.area_flow_rounds = 1;
@@ -81,7 +91,11 @@ int main()
 
     write_blif( klut, "lut_out/" + benchmark + ".blif" );
 
-    exp( benchmark, st.area, st.delay, st.edges, to_seconds( st.time_total ), cec );
+    uint32_t const luts = klut.num_gates();
+    uint32_t const lut_depth = depth_view( klut ).depth();
+    uint32_t const edges = compute_num_edges( klut );
+
+    exp( benchmark, luts, lut_depth, edges, to_seconds( st.time_total ), cec );
   }
 
   exp.save();

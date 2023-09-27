@@ -88,7 +88,7 @@ int main()
       continue;
     }
 
-    aig_network res = abc_opt( aig, "dfraig; resyn; resyn2; resyn; resyn2" );
+    aig_network res = abc_opt( aig, "dfraig; resyn; resyn2; resyn2rs; resyn; resyn2" );
     write_aiger( res, "optimized/" + benchmark + ".aig" );
   }
 

@@ -179,7 +179,6 @@ struct cut_enumeration_lut_cut
   uint32_t lut_delay{ 0 };
   float area_flow{ 0 };
   float edge_flow{ 0 };
-  bool has_immediate{ false }; /* stats on immediate fanin as leaf */
 };
 
 struct cut_enumeration_adaptive_cut
@@ -214,6 +213,7 @@ enum class lut_cut_sort_type
   DELAY2,
   AREA,
   AREA2,
+  EDGE,
   NONE
 };
 
@@ -357,6 +357,24 @@ public:
       return false;
     return c1->data.delay < c2->data.delay;
   }
+  
+  static bool sort_edge( CutType const& c1, CutType const& c2 )
+  {
+    constexpr auto eps{ 0.005f };
+    if ( c1->data.edge_flow < c2->data.edge_flow - eps )
+      return true;
+    if ( c1->data.edge_flow > c2->data.edge_flow + eps )
+      return false;
+    if ( c1.size() < c2.size() )
+      return true;
+    if ( c1.size() > c2.size() )
+      return false;
+    if ( c1->data.area_flow < c2->data.area_flow - eps )
+      return true;
+    if ( c1->data.area_flow > c2->data.area_flow + eps )
+      return false;
+    return c1->data.delay < c2->data.delay;
+  }
 
   /*! \brief Compare two cuts using sorting functions.
    *
@@ -383,6 +401,10 @@ public:
     else if ( sort == lut_cut_sort_type::AREA2 )
     {
       return sort_area2( cut1, cut2 );
+    }
+    else if ( sort == lut_cut_sort_type::EDGE )
+    {
+      return sort_edge( cut1, cut2 );
     }
     else
     {
@@ -422,6 +444,10 @@ public:
     else if ( sort == lut_cut_sort_type::AREA2 )
     {
       ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_area2( *a, *b ); } );
+    }
+    else if ( sort == lut_cut_sort_type::EDGE )
+    {
+      ipos = std::lower_bound( _pcuts.begin(), _pend, &cut, []( auto a, auto b ) { return sort_edge( *a, *b ); } );
     }
     else /* NONE */
     {
@@ -984,7 +1010,7 @@ private:
     else
     {
       compute_required_time();
-      compute_mapping<true, false>( area_sort, false, true, true );
+      compute_mapping<true, false>( ps.edge_optimization ? lut_cut_sort_type::EDGE : area_sort, false, true, true );
     }
 
     if ( ps.cut_expansion )
@@ -1164,8 +1190,6 @@ private:
       ++area_iteration;
     }
 
-    double immediate_ratio = ( double )immediate_count / area * 100;
-
     /* round stats */
     if ( ps.verbose )
     {
@@ -1187,7 +1211,6 @@ private:
       {
         stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
-      stats << fmt::format( "[i]          : Ratio = {}\n", immediate_ratio );
       st.round_stats.push_back( stats.str() );
     }
   }
@@ -1270,7 +1293,6 @@ private:
       std::stringstream stats;
 
       stats << fmt::format( "[i] AreaElas : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
-      // stats << fmt::format( "[i]          : Ratio = {}\n", immediate_ratio );
       st.round_stats.push_back( stats.str() );
     }
   }
@@ -1329,7 +1351,6 @@ private:
     /* compute current area and update mapping refs in top-down order */
     area = 0;
     edges = 0;
-    immediate_count = 0;
     for ( auto it = topo_order.rbegin(); it != topo_order.rend(); ++it )
     {
       /* skip constants and PIs */
@@ -1346,9 +1367,6 @@ private:
         continue;
 
       auto& best_cut = cuts[index][0];
-
-      if ( best_cut->data.has_immediate )
-        ++immediate_count;
 
       if constexpr ( !ELA )
       {
@@ -1616,11 +1634,6 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
-        new_cut->data.has_immediate = false;
-
-        if ( c1->size() == 1 || c2->size() == 1 )
-          new_cut->data.has_immediate = true;
-
         compute_cut_data<true>( new_cut, ntk.index_to_node( index ), true );
 
         /* check required time */
@@ -1722,11 +1735,6 @@ private:
           vcuts[1] = c2;
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
-
-        new_cut->data.has_immediate = false;
-
-        if ( c1->size() == 1 || c2->size() == 1 )
-          new_cut->data.has_immediate = true;
 
         compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
 
@@ -4113,7 +4121,6 @@ private:
   uint32_t multi_gates{ 0 };       /* number of detected multi-input ANDs */
   const float epsilon{ 0.005f };  /* epsilon */
   LUTCostFn lut_cost{};
-  uint32_t immediate_count{ 0 };
 
   std::vector<node> topo_order;
   std::vector<node> topo_order2;

@@ -81,7 +81,8 @@ int main()
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
-    ps.area_oriented_mapping = false;
+    ps.area_oriented_mapping = true;
+    ps.edge_optimization = false;
     ps.verbose = false;
 
     /* FLOW1: map AIG */

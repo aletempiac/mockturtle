@@ -44,7 +44,7 @@ using namespace mockturtle;
 std::tuple<uint32_t, uint32_t, uint32_t> abc_map( aig_network const& aig )
 {
   write_aiger( aig, "/tmp/tmp.aig" );
-  std::string command = fmt::format( "abc -q \"&read /tmp/tmp.aig; &dch; &if -a -K 6; &ps;\"" );
+  std::string command = fmt::format( "abc -q \"&read /tmp/tmp.aig; &if -K 6; &ps;\"" );
 
   std::array<char, 128> buffer;
   std::string result;
