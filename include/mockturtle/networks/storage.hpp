@@ -27,6 +27,7 @@
   \file storage.hpp
   \brief Configurable storage container
 
+  \author Alessandro Tempia Calvino
   \author Andrea Costamagna
   \author Bruno Schmitt
   \author Heinz Riener

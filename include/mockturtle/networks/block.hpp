@@ -516,7 +516,7 @@ public:
   signal clone_node( block_network const& other, node const& source, std::vector<signal> const& children )
   {
     assert( !children.empty() );
-    if ( is_multioutput( source ) )
+    if ( other.is_multioutput( source ) )
     {
       std::vector<kitty::dynamic_truth_table> tts;
       for ( auto i = 2; i < other._storage->nodes[source].data.size(); ++i )

@@ -24,69 +24,72 @@
  */
 
 /*!
-  \file supergate.hpp
-  \brief Defines the composed gate and supergate data structure.
+  \file cell.hpp
+  \brief Defines logic cells.
 
   \author Alessandro Tempia Calvino
 */
 
 #pragma once
 
-#include <array>
+#include <unordered_map>
 #include <vector>
 
-#include "../../io/genlib_reader.hpp"
-
-#include <kitty/dynamic_truth_table.hpp>
+#include "../io/genlib_reader.hpp"
 
 namespace mockturtle
 {
 
-template<unsigned NInputs>
-struct composed_gate
+struct standard_cell
 {
-  /* unique ID */
-  uint32_t id;
+  /* unique name */
+  std::string name;
 
-  /* gate is a supergate */
-  bool is_super{ false };
-
-  /* pointer to the root library gate */
-  gate const* root{ nullptr };
-
-  /* support of the composed gate */
-  uint32_t num_vars{ 0 };
-
-  /* function */
-  kitty::dynamic_truth_table function;
+  /* pointer to a gate representing each individual output */
+  std::vector<gate> gates;
 
   /* area */
-  double area{ 0.0 };
-
-  /* pin-to-pin delays */
-  std::array<float, NInputs> tdelay{};
-
-  /* fanin gates */
-  std::vector<composed_gate<NInputs>*> fanin{};
+  double area;
 };
 
-template<unsigned NInputs>
-struct supergate
+/*! \brief Reconstruct standard cells from GENLIB gates.
+ *
+ * This function returns a vector of standard cells given
+ * GENLIB gates.
+ *
+   \verbatim embed:rst
+
+   Example
+
+   .. code-block:: c++
+
+      std::vector<gate> gates;
+      lorina::read_genlib( in, genlib_reader( gates ) );
+
+      // Extract standard cells
+      std::vector<standard_cell> cells = get_standard_cells( gates );
+   \endverbatim
+ */
+inline std::vector<standard_cell> get_standard_cells( std::vector<gate> const& gates )
 {
-  /* pointer to the root gate */
-  composed_gate<NInputs> const* root{};
+  std::unordered_map<std::string, uint32_t> name_to_index;
+  std::vector<standard_cell> cells;
 
-  /* area */
-  double area{ 0.0 };
+  for ( gate const& g : gates )
+  {
+    if ( auto it = name_to_index.find( g.name ); it != name_to_index.end() )
+    {
+      /* add to existing cell (multi-output) */
+      cells[it->second].gates.push_back( g );
+    }
+    else
+    {
+      name_to_index[g.name] = cells.size();
+      cells.emplace_back( standard_cell{ g.name, { g }, g.area } );
+    }
+  }
 
-  /* pin-to-pin delay */
-  std::array<float, NInputs> tdelay{};
-
-  /* np permutation vector */
-  std::vector<uint8_t> permutation{};
-
-  /* pin negations */
-  uint16_t polarity{ 0 };
-};
+  return cells;
+}
 
 } // namespace mockturtle
