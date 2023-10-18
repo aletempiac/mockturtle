@@ -3883,7 +3883,7 @@ private:
       if ( !node_data.same_match && node_data.map_refs[phase] > 0 )
       {
         create_lut_for_gate2( res, old2new, index, phase, genlib_to_cell );
-        assert( ps.map_multioutput && !node_data.multioutput_match[phase] );
+        assert( !ps.map_multioutput || !node_data.multioutput_match[phase] );
       }
     }
 
