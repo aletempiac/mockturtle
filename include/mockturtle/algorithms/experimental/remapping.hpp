@@ -48,11 +48,15 @@
 #include "../../utils/tech_library.hpp"
 #include "../../views/binding_view.hpp"
 #include "../../views/cell_view.hpp"
+#include "../../views/depth_view.hpp"
+#include "../../views/fanout_view.hpp"
 #include "../../views/topo_view.hpp"
+#include "../../views/window_view.hpp"
 #include "../cleanup.hpp"
 #include "../cut_enumeration.hpp"
 #include "../detail/mffc_utils.hpp"
 #include "../detail/switching_activity.hpp"
+#include "../../traits.hpp"
 
 namespace mockturtle
 {
@@ -105,14 +109,19 @@ struct remap_params
  */
 struct remap_stats
 {
+  /*! \brief Recovered area. */
+  double area_save{ 0 };
+  /*! \brief Successful remappings. */
+  uint32_t num_success{ 0 };
+  /*! \brief Failed remappings. */
+  uint32_t num_fail{ 0 };
+
   /*! \brief Area result. */
   double area{ 0 };
   /*! \brief Worst delay result. */
   double delay{ 0 };
   /*! \brief Power result. */
   double power{ 0 };
-  /*! \brief Power result. */
-  uint32_t inverters{ 0 };
 
   /*! \brief Mapped multi-output gates. */
   uint32_t multioutput_gates{ 0 };
@@ -133,7 +142,6 @@ struct remap_stats
     if ( multioutput_gates )
     {
       std::cout << fmt::format( "[i] Multi-output gates   = {:>5}\n", multioutput_gates );
-      std::cout << fmt::format( "[i] Multi-output runtime = {:>5.2f} secs\n", to_seconds( time_multioutput ) );
     }
     std::cout << fmt::format( "[i] Total runtime        = {:>5.2f} secs\n", to_seconds( time_total ) );
   }
@@ -142,21 +150,248 @@ struct remap_stats
 namespace detail
 {
 
-template<class Ntk, typename WindowEngine, typename ResynFn, typename MapperFn, unsigned CutSize, unsigned NInputs, classification_type Configuration>
+struct remap_windowing_params
+{
+  /*! \brief Window number of PIs */
+  uint32_t num_pis{ 12 };
+
+  /*! \brief Window number of POs */
+  uint32_t num_pos{ 12 };
+
+  /*! \brief TFI max levels */
+  uint32_t tfi_levels{ 4 };
+
+  /*! \brief TFO max levels */
+  uint32_t tfo_levels{ 3 };
+
+  /*! \brief Maximum number of gates to include in a window. */
+  uint32_t max_gates{ 20 };
+
+  /*! \brief Maximum fanout of a node to expand. */
+  uint32_t skip_fanout_limit{ 5 };
+};
+
+template<class Ntk>
+class remap_windowing
+{
+private:
+  using node = typename Ntk::node;
+  using signal = typename Ntk::signal;
+
+public:
+  explicit remap_windowing( Ntk const& ntk, remap_windowing_params const& ps )
+      : ntk( ntk )
+      , ps( ps )
+  {
+    leaves.reserve( ps.max_gates );
+    roots.reserve( ps.max_gates );
+    gates.reserve( ps.max_gates );
+  }
+
+  bool compute_window( node const& pivot )
+  {
+    leaves.clear();
+    roots.clear();
+    gates.clear();
+
+    /* use fanout count to track which nodes to add */
+
+    /* add TFI of pivot */
+    ntk.incr_trav_id();
+    if ( !collect_tfi( pivot, 0 ) )
+      return false;
+
+    /* expand TFI */
+    expand_tfi();
+
+    collect_leaves();
+    collect_roots();
+
+    // /* add TFO of pivot */
+    // if ( gates.size() < ps.max_gates )
+    // {
+    //   ntk.set_visited( n, ntk.trav_id() - 1 );
+    //   leaves = gates;
+    //   leaves.pop_back();
+    //   gates.clear();
+    //   collect_tfo( pivot, 0 );
+
+    //   /* find POs */
+    //   collect_pos();
+
+    //   /* mark paths to TFI */
+    // }
+
+    return true;
+  }
+
+private:
+  bool collect_tfi( node const& n, uint32_t level )
+  {
+    // if ( gates.size() >= ps.max_gates )
+    //   return;
+    if ( level > ps.tfi_levels )
+      return;
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return true;
+
+    ntk.set_visited( n, ntk.trav_id() );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      return collect_tfi( ntk.get_node( f ), level + 1 );
+    } );
+
+    if ( gates.size() < ps.max_gates )
+    {
+      gates.push_back( n );
+      return true;
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  void expand_tfi()
+  {
+    bool update = true;
+    while( update && gates.size() < ps.max_gates )
+    {
+      update = false;
+      auto it = gates.begin();
+
+      while ( it != gates.end() && gates.size() < ps.max_gates )
+      {
+        if ( ntk.fanout_size( *it ) > ps.skip_fanout_limit )
+        {
+          ++it;
+          continue;
+        }
+
+        /* find a a new node in the fanout */
+        ntk.foreach_fanout( *it, [&]( auto const& g ) {
+          if ( ntk.visited( g ) == ntk.trav_id() )
+            return true;
+
+          /* check fanin in gates */
+          bool to_add = true;
+          ntk.foreach_fanin( g, [&]( auto const& f ) {
+            if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+            {
+              to_add = false;
+              return false;
+            }
+            return true;
+          } );
+
+          if ( to_add )
+          {
+            ntk.set_visited( g, ntk.trav_id() );
+            gates.push_back( g ); /* safe because below the capacity */
+            update = true;
+            return gates.size() < ps.max_gates;
+          }
+
+          return true;
+        } );
+
+        ++it;
+      }
+    }
+  }
+
+  void collect_tfo( node const& n, uint32_t level )
+  {
+    if ( gates.size() >= ps.max_gates )
+      return;
+    // if ( level > ps.tfo_levels )
+    //   return;
+    if ( ntk.visited( n ) == ntk.trav_id() )
+      return;
+
+    ntk.set_visited( n, ntk.trav_id() );
+    gates.push_back( n );
+
+    ntk.foreach_fanout( n, [&]( auto const& g ) {
+      if ( ntk.fanout_size( g ) <= ps.skip_fanout_limit )
+        collect_tfo( g, level + 1 );
+    } );
+  }
+
+  void collect_leaves()
+  {
+    for ( auto const& n : gates )
+    {
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+        {
+          ntk.set_visited( ntk.get_node( f ), ntk.trav_id() );
+          leaves.push_back( ntk.get_node( f ) );
+        }
+      } );
+    }
+  }
+
+  void collect_roots()
+  {
+    for ( auto const& n : gates )
+    {
+      ntk.foreach_fanout( n, [&]( auto const& g ) {
+        if ( ntk.visited( g ) != ntk.trav_id() )
+        {
+          roots.push_back( n );
+          return false;
+        }
+        return true;
+      } );        
+    }
+  }
+
+private:
+  Ntk const& ntk;
+  remap_windowing_params const& ps;
+
+  uint32_t num_pis{ 0 };
+
+  std::vector<node> leaves;
+  std::vector<node> roots;
+  std::vector<node> gates;
+};
+
+template<class Ntk, typename WindowEngine, typename MapperFn, unsigned NInputs, classification_type Configuration>
 class remap_impl
 {
 private:
 public:
-  explicit remap_impl( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap_params const& ps = {}, remap_stats& pst )
+  explicit remap_impl( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap_params const& ps, remap_stats& st )
       : ntk( ntk ),
         library( library ),
         ps( ps ),
-        pst( pst )
+        st( st )
   {}
 
   void run()
   {
-    /* TODO: implement */
+    stopwatch t( st.time_total );
+
+    remap_windowing_params win_ps;
+    remap_windowing<Ntk> win( ntk, win_ps );
+
+    ntk.foreach_gate( [&]( auto const& n ) {
+      /* extract window */
+      if ( win.compute_window( n ) )
+        st.num_success++;
+      else
+        st.num_fail++;
+      // window_view<Ntk> win{ ntk };
+
+      /* optimize */
+
+      /* remap */
+
+      /* evaluate */
+      // st.num_fail++;
+    } );
   }
 
 private:
@@ -164,7 +399,7 @@ private:
   // WindowsEngine engine;
   // ResynFn resyn;
   tech_library<NInputs, Configuration> const& library; /* TODO: replace with &&Lib? */
-  remap_params& ps;
+  remap_params const& ps;
   remap_stats& st;
 };
 
@@ -192,7 +427,8 @@ private:
  * \param ntk Network
  *
  */
-template<class Ntk, typename WindowEngine, typename ResynFn, typename MapperFn, unsigned CutSize = 6u, unsigned NInputs, classification_type Configuration>
+/* TODO: add resynFn */
+template<class Ntk, unsigned CutSize = 6u, unsigned NInputs, classification_type Configuration>
 void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap_params const& ps = {}, remap_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -206,9 +442,16 @@ void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap
   static_assert( has_foreach_node_v<Ntk>, "Ntk does not implement the foreach_node method" );
   static_assert( has_has_binding_v<Ntk> || has_has_cell_v<Ntk>, "Ntk does not implement the has_binding or has_cell method" );
 
+  using remap_view_t = fanout_view<depth_view<Ntk>>;
+  depth_view<Ntk> d_ntk{ ntk };
+  remap_view_t remap_ntk{ d_ntk };
+
+  using WindowEngine = detail::remap_windowing<remap_view_t>;
+  using MapperFn = detail::emap_impl<remap_view_t, CutSize, NInputs, Configuration>;
+
   remap_stats st;
-  detail::remap_impl<Ntk, CutSize, NInputs, Configuration> p( ntk, library, ps, st );
-  auto res = p.run();
+  detail::remap_impl<remap_view_t, WindowEngine, MapperFn, NInputs, Configuration> p( remap_ntk, library, ps, st );
+  p.run();
 
   if ( ps.verbose && !st.remapping_error )
   {
