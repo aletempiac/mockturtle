@@ -44,7 +44,7 @@ using namespace mockturtle;
 std::tuple<uint32_t, uint32_t, uint32_t> abc_map( aig_network const& aig )
 {
   write_aiger( aig, "/tmp/tmp.aig" );
-  std::string command = fmt::format( "abc -q \"&read /tmp/tmp.aig; &if -K 6; &ps;\"" );
+  std::string command = fmt::format( "abc -q \"&read /tmp/tmp.aig; &dch; &if -K 6; &ps;\"" );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -100,7 +100,7 @@ int main()
   experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float> exp(
       "ABC_if", "benchmark", "size", "depth", "luts_abc", "edges_abc", "depth_abc", "runtime_abc" );
 
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iwls_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -109,6 +109,10 @@ int main()
     {
       continue;
     }
+
+    /* skip very large designs */
+    if ( aig.num_gates() > 650000 )
+      continue;
 
     /* balancing */
     // aig_balance( aig, { false } );

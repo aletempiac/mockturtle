@@ -78,7 +78,7 @@ int main()
 {
   using namespace experiments;
 
-  for ( auto const& benchmark : epfl_benchmarks() )
+  for ( auto const& benchmark : iwls_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -87,6 +87,9 @@ int main()
     {
       continue;
     }
+
+    if ( aig.num_gates() > 650000 )
+      continue;
 
     aig_network res = abc_opt( aig, "dfraig; resyn; resyn2; resyn2rs; resyn; resyn2" );
     write_aiger( res, "optimized/" + benchmark + ".aig" );
