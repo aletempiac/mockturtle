@@ -34,7 +34,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,6 +44,7 @@
 
 #include "../../networks/block.hpp"
 #include "../../networks/klut.hpp"
+#include "../../utils/algorithm.hpp"
 #include "../../utils/cuts.hpp"
 #include "../../utils/node_map.hpp"
 #include "../../utils/stopwatch.hpp"
@@ -165,7 +168,7 @@ struct remap_windowing_params
   uint32_t tfo_levels{ 3 };
 
   /*! \brief Maximum number of gates to include in a window. */
-  uint32_t max_gates{ 20 };
+  uint32_t max_gates{ 10 };
 
   /*! \brief Maximum fanout of a node to expand. */
   uint32_t skip_fanout_limit{ 5 };
@@ -186,165 +189,241 @@ public:
     leaves.reserve( ps.max_gates );
     roots.reserve( ps.max_gates );
     gates.reserve( ps.max_gates );
+    candidates.reserve( ps.max_gates );
   }
 
-  bool compute_window( node const& pivot )
+  void compute_window( node const& pivot )
   {
     leaves.clear();
     roots.clear();
     gates.clear();
 
-    /* use fanout count to track which nodes to add */
-
-    /* add TFI of pivot */
+    /* add pivot to gates */
     ntk.incr_trav_id();
-    if ( !collect_tfi( pivot, 0 ) )
-      return false;
+    ntk.set_visited( pivot, ntk.trav_id() );
+    gates.push_back( pivot );
 
-    /* expand TFI */
-    expand_tfi();
+    if ( ps.max_gates < 2 )
+      return;
+    
+    /* decrement fanout size of leaves */
+    ntk.foreach_fanin( pivot, [&]( auto const& f ) {
+      ntk.decr_fanout_size( ntk.get_node( f ) );
+    } );
 
-    collect_leaves();
+    /* increment traverse ID */
+    ntk.incr_trav_id();
+
+    /* add iteratively nodes to the window */
+    std::optional<node> next;
+    while ( gates.size() < ps.max_gates && ( next = find_next_pivot() ) )
+    {
+      assert( ntk.visited( *next ) < ntk.trav_id() - 1 );
+      gates.push_back( *next );
+      ntk.set_visited( *next, ntk.trav_id() - 1 );
+
+      /* decrement fanout size of leaves */
+      ntk.foreach_fanin( *next, [&]( auto const& f ) {
+        ntk.decr_fanout_size( ntk.get_node( f ) );
+      } );
+    }
+
+    /* restore fanout counts */
+    for ( node const& n : gates )
+    {
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        ntk.incr_fanout_size( ntk.get_node( f ) );
+      } );
+    }
+
+    /* collect roots, leaves, and gates in topo order */
     collect_roots();
+    collect_nodes();
 
-    // /* add TFO of pivot */
-    // if ( gates.size() < ps.max_gates )
-    // {
-    //   ntk.set_visited( n, ntk.trav_id() - 1 );
-    //   leaves = gates;
-    //   leaves.pop_back();
-    //   gates.clear();
-    //   collect_tfo( pivot, 0 );
+    assert( gates.size() <= ps.max_gates );
+    return;
+  }
 
-    //   /* find POs */
-    //   collect_pos();
+  std::vector<node> const& get_gates() const
+  {
+    return gates;
+  }
 
-    //   /* mark paths to TFI */
-    // }
-
-    return true;
+  void report_info( std::ostream& out = std::cout )
+  {
+    out << fmt::format( "[i] W: I = {};\t G = {};\t O = {}\n", leaves.size(), gates.size(), roots.size() );
   }
 
 private:
-  bool collect_tfi( node const& n, uint32_t level )
+  std::optional<node> find_next_pivot()
   {
-    // if ( gates.size() >= ps.max_gates )
-    //   return;
-    if ( level > ps.tfi_levels )
-      return;
-    if ( ntk.visited( n ) == ntk.trav_id() )
-      return true;
+    candidates.clear();
+    auto best = candidates.cend();
 
-    ntk.set_visited( n, ntk.trav_id() );
+    /* marks meaning */
+    /* visited == trav_id - 1 --> in the window */
+    /* visited == trav_id --> candidate in the TFI of the window */
 
-    ntk.foreach_fanin( n, [&]( auto const& f ) {
-      return collect_tfi( ntk.get_node( f ), level + 1 );
-    } );
-
-    if ( gates.size() < ps.max_gates )
+    /* look for MFFC nodes */
+    do
     {
-      gates.push_back( n );
-      return true;
-    }
-    else
-    {
-      return false;
-    }
-  }
-
-  void expand_tfi()
-  {
-    bool update = true;
-    while( update && gates.size() < ps.max_gates )
-    {
-      update = false;
-      auto it = gates.begin();
-
-      while ( it != gates.end() && gates.size() < ps.max_gates )
+      for ( node const& n : gates )
       {
-        if ( ntk.fanout_size( *it ) > ps.skip_fanout_limit )
-        {
-          ++it;
-          continue;
-        }
-
-        /* find a a new node in the fanout */
-        ntk.foreach_fanout( *it, [&]( auto const& g ) {
-          if ( ntk.visited( g ) == ntk.trav_id() )
-            return true;
-
-          /* check fanin in gates */
-          bool to_add = true;
-          ntk.foreach_fanin( g, [&]( auto const& f ) {
-            if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
-            {
-              to_add = false;
-              return false;
-            }
-            return true;
-          } );
-
-          if ( to_add )
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          node const& g = ntk.get_node( f );
+          if ( ntk.visited( g ) < ntk.trav_id() - 1 && ntk.fanout_size( g ) == 0 && !ntk.is_ci( g ) )
           {
+            candidates.push_back( g );
             ntk.set_visited( g, ntk.trav_id() );
-            gates.push_back( g ); /* safe because below the capacity */
-            update = true;
-            return gates.size() < ps.max_gates;
           }
-
-          return true;
         } );
-
-        ++it;
       }
-    }
-  }
 
-  void collect_tfo( node const& n, uint32_t level )
-  {
-    if ( gates.size() >= ps.max_gates )
-      return;
-    // if ( level > ps.tfo_levels )
-    //   return;
-    if ( ntk.visited( n ) == ntk.trav_id() )
-      return;
+      if ( !candidates.empty() )
+      {
+        /* select the best candidate */
+        best = max_element_unary(
+                  candidates.begin(), candidates.end(),
+                  [&]( auto const& cand ) {
+                    auto cnt{ 0 };
+                    ntk.foreach_fanin( cand, [&]( auto const& f ) {
+                      cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
+                    } );
+                    return cnt;
+                  },
+                  -1 );
+        break;
+      }
 
-    ntk.set_visited( n, ntk.trav_id() );
-    gates.push_back( n );
+      /* add all the input candidates */
+      for ( node const& n : gates )
+      {
+        ntk.foreach_fanin( n, [&]( auto const& f ) {
+          node const& g = ntk.get_node( f );
+          if ( ntk.visited( g ) < ntk.trav_id() - 1 && !ntk.is_ci( g ) )
+          {
+            candidates.push_back( g );
+            ntk.set_visited( g, ntk.trav_id() );
+          }
+        } );
+      }
 
-    ntk.foreach_fanout( n, [&]( auto const& g ) {
-      if ( ntk.fanout_size( g ) <= ps.skip_fanout_limit )
-        collect_tfo( g, level + 1 );
-    } );
-  }
+      /* add all the output candidates */
+      for ( node const& n : gates )
+      {
+        if ( ntk.fanout_size( n ) == 0 || ntk.fanout_size( n ) > ps.skip_fanout_limit )
+          continue;
 
-  void collect_leaves()
-  {
-    for ( auto const& n : gates )
-    {
-      ntk.foreach_fanin( n, [&]( auto const& f ) {
-        if ( ntk.visited( ntk.get_node( f ) ) != ntk.trav_id() )
+        /* Output candidate member of the MFFC */
+        auto const& fanout_v = ntk.fanout( n );
+        if ( ntk.fanout_size( n ) == 1 && fanout_v.size() == 1 && ntk.visited( fanout_v.front() ) < ntk.trav_id() - 1 )
         {
-          ntk.set_visited( ntk.get_node( f ), ntk.trav_id() );
-          leaves.push_back( ntk.get_node( f ) );
+          candidates.push_back( fanout_v.front() );
+          best = candidates.cend() - 1;
+          break;
         }
-      } );
+        
+        /* does not mark the nodes (TFI has the priority to avoid reconvergences passing from outside the window) */
+        std::copy_if( fanout_v.begin(), fanout_v.end(),
+                      std::back_inserter( candidates ),
+                      [&]( auto const& g ) {
+                        return ntk.visited( g ) < ntk.trav_id() - 1;
+                      } );
+      }
+
+      if ( !candidates.empty() )
+      {
+        /* select the best candidate */
+        best = max_element_unary(
+                  candidates.begin(), candidates.end(),
+                  [&]( auto const& cand ) {
+                    auto cnt{ 0 };
+                    ntk.foreach_fanin( cand, [&]( auto const& f ) {
+                      cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
+                    } );
+                    return cnt;
+                  },
+                  -1 );
+      }
+    } while ( false );
+
+    if ( candidates.empty() )
+    {
+      return std::nullopt;
     }
+
+    assert( best != candidates.end() );
+
+    /* reset the marks */
+    for ( auto const& n : candidates )
+    {
+      ntk.set_visited( n, ntk.trav_id() - 2 );
+    }
+
+    return *best;
   }
 
   void collect_roots()
   {
-    for ( auto const& n : gates )
+    for ( node const& n : gates )
     {
+      /* equivalent to is_po() */
+      if ( ntk.fanout_size( n ) != ntk.fanout( n ).size() )
+      {
+        roots.push_back( n );
+        continue;
+      }
+
       ntk.foreach_fanout( n, [&]( auto const& g ) {
-        if ( ntk.visited( g ) != ntk.trav_id() )
+        if ( ntk.visited( g ) < ntk.trav_id() - 1 )
         {
           roots.push_back( n );
           return false;
         }
         return true;
-      } );        
+      } );      
     }
+  }
+
+  void collect_nodes()
+  {
+    auto prev_size = gates.size();
+    gates.clear();
+
+    /* collects gates and leaves */
+    for ( node const& n : roots )
+    {
+      if ( ntk.visited( n ) == ntk.trav_id() );
+        continue;
+
+      collect_nodes_rec( n );
+    }
+
+    assert( gates.size() == prev_size );
+  }
+
+  void collect_nodes_rec( node const& n )
+  {
+    assert( ntk.visited( n ) != ntk.trav_id() );
+    ntk.set_visited( n, ntk.trav_id() );
+
+    ntk.foreach_fanin( n, [&]( auto const& f ) {
+      node const& g = ntk.get_node( f );
+
+      if ( ntk.visited( g ) < ntk.trav_id() - 1 )
+      {
+        /* leaf */
+        leaves.push_back( g );
+        ntk.set_visited( g, ntk.trav_id() );
+      }
+      else if ( ntk.visited( g ) == ntk.trav_id() - 1 )
+      {
+        /* gate */
+        collect_nodes_rec( g );
+      }
+    } );
+
+    gates.push_back( n );
   }
 
 private:
@@ -356,6 +435,7 @@ private:
   std::vector<node> leaves;
   std::vector<node> roots;
   std::vector<node> gates;
+  std::vector<node> candidates;
 };
 
 template<class Ntk, typename WindowEngine, typename MapperFn, unsigned NInputs, classification_type Configuration>
@@ -379,10 +459,9 @@ public:
 
     ntk.foreach_gate( [&]( auto const& n ) {
       /* extract window */
-      if ( win.compute_window( n ) )
-        st.num_success++;
-      else
-        st.num_fail++;
+      win.compute_window( n );
+      win.report_info();
+      ++st.num_success;
       // window_view<Ntk> win{ ntk };
 
       /* optimize */
