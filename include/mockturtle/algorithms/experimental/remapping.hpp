@@ -44,6 +44,7 @@
 
 #include "../../networks/block.hpp"
 #include "../../networks/klut.hpp"
+#include "../../traits.hpp"
 #include "../../utils/algorithm.hpp"
 #include "../../utils/cuts.hpp"
 #include "../../utils/node_map.hpp"
@@ -59,7 +60,6 @@
 #include "../cut_enumeration.hpp"
 #include "../detail/mffc_utils.hpp"
 #include "../detail/switching_activity.hpp"
-#include "../../traits.hpp"
 
 namespace mockturtle
 {
@@ -183,8 +183,7 @@ private:
 
 public:
   explicit remap_windowing( Ntk const& ntk, remap_windowing_params const& ps )
-      : ntk( ntk )
-      , ps( ps )
+      : ntk( ntk ), ps( ps )
   {
     leaves.reserve( ps.max_gates );
     roots.reserve( ps.max_gates );
@@ -205,7 +204,7 @@ public:
 
     if ( ps.max_gates < 2 )
       return;
-    
+
     /* decrement fanout size of leaves */
     ntk.foreach_fanin( pivot, [&]( auto const& f ) {
       ntk.decr_fanout_size( ntk.get_node( f ) );
@@ -283,15 +282,15 @@ private:
       {
         /* select the best candidate */
         best = max_element_unary(
-                  candidates.begin(), candidates.end(),
-                  [&]( auto const& cand ) {
-                    auto cnt{ 0 };
-                    ntk.foreach_fanin( cand, [&]( auto const& f ) {
-                      cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
-                    } );
-                    return cnt;
-                  },
-                  -1 );
+            candidates.begin(), candidates.end(),
+            [&]( auto const& cand ) {
+              auto cnt{ 0 };
+              ntk.foreach_fanin( cand, [&]( auto const& f ) {
+                cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
+              } );
+              return cnt;
+            },
+            -1 );
         break;
       }
 
@@ -322,7 +321,7 @@ private:
           best = candidates.cend() - 1;
           break;
         }
-        
+
         /* does not mark the nodes (TFI has the priority to avoid reconvergences passing from outside the window) */
         std::copy_if( fanout_v.begin(), fanout_v.end(),
                       std::back_inserter( candidates ),
@@ -335,15 +334,15 @@ private:
       {
         /* select the best candidate */
         best = max_element_unary(
-                  candidates.begin(), candidates.end(),
-                  [&]( auto const& cand ) {
-                    auto cnt{ 0 };
-                    ntk.foreach_fanin( cand, [&]( auto const& f ) {
-                      cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
-                    } );
-                    return cnt;
-                  },
-                  -1 );
+            candidates.begin(), candidates.end(),
+            [&]( auto const& cand ) {
+              auto cnt{ 0 };
+              ntk.foreach_fanin( cand, [&]( auto const& f ) {
+                cnt += ntk.visited( ntk.get_node( f ) ) == ntk.trav_id() ? 1 : 0;
+              } );
+              return cnt;
+            },
+            -1 );
       }
     } while ( false );
 
@@ -381,7 +380,7 @@ private:
           return false;
         }
         return true;
-      } );      
+      } );
     }
   }
 
@@ -393,7 +392,7 @@ private:
     /* collects gates and leaves */
     for ( node const& n : roots )
     {
-      if ( ntk.visited( n ) == ntk.trav_id() );
+      if ( ntk.visited( n ) == ntk.trav_id() )
         continue;
 
       collect_nodes_rec( n );
