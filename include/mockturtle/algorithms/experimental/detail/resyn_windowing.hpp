@@ -24,7 +24,7 @@
  */
 
 /*!
-  \file rw_windowing.hpp
+  \file resyn_windowing.hpp
   \brief A windowing engine for rewriting
 
   \author Alessandro Tempia Calvino
@@ -36,13 +36,12 @@
 #include <optional>
 #include <vector>
 
+#include "../../../utils/algorithm.hpp"
+
 namespace mockturtle
 {
 
-namespace detail
-{
-
-struct remap_windowing_params
+struct resyn_windowing_params
 {
   /*! \brief Maximum number of gates to include in a window. */
   uint32_t max_gates{ 10 };
@@ -51,15 +50,18 @@ struct remap_windowing_params
   uint32_t skip_fanout_limit{ 5 };
 };
 
+namespace detail
+{
+
 template<class Ntk>
-class remap_windowing
+class resyn_windowing
 {
 private:
   using node = typename Ntk::node;
   using signal = typename Ntk::signal;
 
 public:
-  explicit remap_windowing( Ntk const& ntk, remap_windowing_params const& ps )
+  explicit resyn_windowing( Ntk const& ntk, resyn_windowing_params const& ps )
       : ntk( ntk ), ps( ps ), leaves(), roots(), gates(), candidates()
   {
     leaves.reserve( ps.max_gates );
@@ -134,6 +136,26 @@ public:
   std::vector<signal> const& get_roots() const
   {
     return roots;
+  }
+
+  uint32_t const num_gates() const
+  {
+    return gates.size();
+  }
+
+  uint32_t const num_leaves() const
+  {
+    return leaves.size();
+  }
+
+  uint32_t const num_roots() const
+  {
+    return leaves.size();
+  }
+
+  std::array<uint64_t, 2> const& get_hash() const
+  {
+    return hash;
   }
 
   void report_info( std::ostream& out = std::cout )
@@ -252,12 +274,15 @@ private:
 
   void collect_roots()
   {
+    hash[0] = 0;
+
     for ( node const& n : gates )
     {
       /* equivalent to is_po() */
       if ( ntk.fanout_size( n ) != ntk.fanout( n ).size() )
       {
         roots.push_back( ntk.make_signal( n ) );
+        hash[0] |= UINT64_C( 1 ) << ( ntk.node_to_index( n ) % 64 );
         continue;
       }
 
@@ -276,6 +301,7 @@ private:
   {
     auto prev_size = gates.size();
     gates.clear();
+    hash[1] = 0;
 
     /* collects gates and leaves */
     for ( signal const& s : roots )
@@ -303,6 +329,7 @@ private:
         /* leaf */
         leaves.push_back( g );
         ntk.set_visited( g, ntk.trav_id() );
+        hash[1] |= UINT64_C( 1 ) << ( ntk.node_to_index( g ) % 64 );
       }
       else if ( ntk.visited( g ) == ntk.trav_id() - 1 )
       {
@@ -316,12 +343,14 @@ private:
 
 private:
   Ntk const& ntk;
-  remap_windowing_params const& ps;
+  resyn_windowing_params const& ps;
 
   std::vector<node> leaves;
   std::vector<signal> roots;
   std::vector<node> gates;
   std::vector<node> candidates;
+
+  std::array<uint64_t, 2> hash;
 };
 
 } /* namespace detail */
