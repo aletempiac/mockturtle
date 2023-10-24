@@ -69,7 +69,65 @@ std::string const mcnc_library = "GATE   inv1    1  O=!a;             PIN * INV 
                                  "GATE   zero    0  O=CONST0;\n"
                                  "GATE   one     0  O=CONST1;";
 
-int main()
+void test_resyn()
+{
+  using namespace experiments;
+  using namespace mockturtle;
+
+  experiment<std::string, double, double, double, double, uint32_t, uint32_t, float, bool> exp(
+      "emap", "benchmark", "area_before", "area_after", "delay_before", "delay_after", "success", "fail", "runtime", "cec" );
+
+  fmt::print( "[i] processing technology library\n" );
+
+  tech_library_params tps;
+  tps.verbose = true;
+
+  std::vector<gate> gates;
+  std::stringstream in( mcnc_library );
+
+  if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
+  {
+    return;
+  }
+
+  tech_library_params tps;
+  tps.verbose = true;
+  tech_library tech_lib( gates, tps );
+
+  for ( auto const& benchmark : iscas_benchmarks( experiments::c432 ) )
+  {
+    fmt::print( "[i] processing {}\n", benchmark );
+
+    aig_network aig;
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    {
+      continue;
+    }
+
+    const uint32_t size_before = aig.num_gates();
+    const uint32_t depth_before = depth_view( aig ).depth();
+
+    /* remap */
+    remap_params rps;
+    remap_stats rst;
+    remap( aig, tech_lib, rps, &rst );
+
+    const double area_after = res.compute_area();
+    const double delay_after = res.compute_worst_delay();
+
+    /* decompose multi-output cells for verification purposes */
+    // klut_network klut = decompose_multioutput<block_network, klut_network>( res );
+    // const auto cec = benchmark == "hyp" ? true : abc_cec( klut, benchmark );
+    const auto cec = true;
+
+    exp( benchmark, size_before, area_after, depth_before, delay_after, rst.num_success, rst.num_fail, to_seconds( rst.time_total ), cec );
+  }
+
+  exp.save();
+  exp.table();
+}
+
+void test_remap()
 {
   using namespace experiments;
   using namespace mockturtle;
@@ -85,7 +143,7 @@ int main()
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
-    return 1;
+    return;
   }
 
   tech_library_params tps;
@@ -129,6 +187,11 @@ int main()
 
   exp.save();
   exp.table();
+}
 
+int main()
+{
+  test_resyn();
+  test_remap();
   return 0;
 }
