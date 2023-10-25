@@ -53,6 +53,15 @@ struct resyn_windowing_params
 namespace detail
 {
 
+struct window_hash_fn
+{
+  auto operator()( std::array<uint64_t, 2> const& key ) const
+  {
+    std::hash<uint64_t> hasher;
+    return hasher( key[0] ) * 31 + hasher( key[1] );
+  }
+};
+
 template<class Ntk>
 class resyn_windowing
 {

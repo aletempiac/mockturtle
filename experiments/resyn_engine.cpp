@@ -45,7 +45,7 @@ int main()
 
   fmt::print( "[i] processing technology library\n" );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -60,6 +60,7 @@ int main()
 
     /* remap */
     resyn_engine_params rps;
+    rps.verbose = true;
     resyn_engine_stats rst;
     resyn_engine( aig, rps, &rst );
 
@@ -68,7 +69,8 @@ int main()
 
     /* decompose multi-output cells for verification purposes */
     // klut_network klut = decompose_multioutput<block_network, klut_network>( res );
-    const auto cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
+    // const auto cec = benchmark == "hyp" ? true : abc_cec( aig, benchmark );
+    const bool cec = true;
 
     exp( benchmark, size_before, size_after, depth_before, depth_after, rst.num_success, rst.num_fail, to_seconds( rst.time_total ), cec );
   }

@@ -25,7 +25,7 @@
 
 /*!
   \file remapping.hpp
-  \brief A rremapping engine
+  \brief Remapping engine
 
   \author Alessandro Tempia Calvino
 */
@@ -41,8 +41,10 @@
 #include <vector>
 
 #include <fmt/format.h>
+#include <parallel_hashmap/phmap.h>
 
-#include "detail/rw_windowing.hpp"
+#include "detail/resyn_opt.hpp"
+#include "detail/resyn_windowing.hpp"
 #include "../../networks/block.hpp"
 #include "../../networks/klut.hpp"
 #include "../../traits.hpp"
@@ -131,6 +133,9 @@ struct remap_stats
   uint32_t multioutput_gates{ 0 };
 
   /*! \brief Total runtime. */
+  /*! \brief Total runtime. */
+  stopwatch<>::duration time_windowing{ 0 };
+  stopwatch<>::duration time_opt{ 0 };
   stopwatch<>::duration time_total{ 0 };
 
   /*! \brief Rempping error. */
@@ -138,23 +143,15 @@ struct remap_stats
 
   void report() const
   {
-    std::cout << fmt::format( "[i] Area = {:>5.2f}; Delay = {:>5.2f};", area, delay );
-    if ( power != 0 )
-      std::cout << fmt::format( " Power = {:>5.2f};\n", power );
-    else
-      std::cout << "\n";
-    if ( multioutput_gates )
-    {
-      std::cout << fmt::format( "[i] Multi-output gates   = {:>5}\n", multioutput_gates );
-    }
-    std::cout << fmt::format( "[i] Total runtime        = {:>5.2f} secs\n", to_seconds( time_total ) );
+    std::cout << fmt::format( "[i] Save = {:>5.2f}; Area = {:>5.2f}; Delay = {:>5.2f};", area_save, area, delay );
+    std::cout << fmt::format( "[i] Time W = {:>5.2f}s; Time O = {:>5.2f}s; Total = {:>5.2f}s\n", to_seconds( time_windowing ), to_seconds( time_opt ), to_seconds( time_total ) );
   }
 };
 
 namespace detail
 {
 
-template<class Ntk, typename WindowEngine, typename MapperFn, unsigned NInputs, classification_type Configuration>
+template<class Ntk, typename WindowEngine, typename DecompFn, typename OptScript, typename MapperFn, unsigned NInputs, classification_type Configuration>
 class remap_impl
 {
 private:
@@ -170,33 +167,141 @@ public:
   {
     stopwatch t( st.time_total );
 
-    remap_windowing_params win_ps;
-    remap_windowing<Ntk> win( ntk, win_ps );
+    resyn_windowing_params win_ps = ps.win_ps;
+    WindowEngine win( ntk, win_ps );
+    node_map<signal<Ntk>, Ntk> ntk_to_win( ntk );
+    OptScript opt;
 
     ntk.foreach_gate( [&]( auto const& n ) {
       /* extract window */
-      win.compute_window( n );
-      win.report_info();
-      ++st.num_success;
+      call_with_stopwatch( st.time_windowing, [&]() { win.compute_window( n ); } );
+      if ( visited_window( win.get_hash() ) )
+        return;
+      // win.report_info();
 
-      window_view<Ntk> win_v{ ntk, win.get_leaves(), win.get_roots(), win.get_gates() };
+      /* create new network instance */
+      // Ntk win_ntk;
+      // win_copy( win_ntk, win, ntk_to_win );
+
+      /* decompose */
+
 
       /* optimize */
+      uint32_t size_before = win_ntk.num_gates();
+      call_with_stopwatch( st.time_opt, [&]() { opt( win_ntk ); } );
 
-      /* remap */
+      /* map */
+      // auto res = MapperFn( ).run();
 
       /* evaluate */
-      // st.num_fail++;
+      if ( !evaluate( win_ntk, win ) )
+      {
+        st.num_fail++;
+        return;
+      }
+
+      /* replace */
+      replace( win_ntk, win, ntk_to_win );
+      ++st.num_success;
+      return;
     } );
   }
 
 private:
+  void win_copy( Ntk& win_ntk, WindowEngine const& win, node_map<signal<Ntk>, Ntk>& ntk_to_win )
+  {
+    std::vector<signal<Ntk>> children;
+    children.reserve( Ntk::max_fanin_size );
+
+    if ( ntk_to_win.size() != ntk.size() )
+      ntk_to_win.resize();
+
+    /* create PIs */
+    for ( auto const& n : win.get_leaves() )
+    {
+      ntk_to_win[n] = win_ntk.create_pi();
+    }
+
+    /* create gates */
+    for ( auto const& n : win.get_gates() )
+    {
+      children.clear();
+      ntk.foreach_fanin( n, [&]( auto const& f ) {
+        signal<Ntk> s = ntk.is_complemented( f ) ? ntk.create_not( ntk_to_win[f] ) : ntk_to_win[f];
+        children.push_back( s );
+      } );
+      ntk_to_win[n] = win_ntk.clone_node( ntk, n, children );
+    }
+
+    /* create POs */
+    for ( auto const& f : win.get_roots() )
+    {
+      if ( ntk.is_complemented( f ) )
+      {
+        win_ntk.create_po( ntk.create_not( ntk_to_win[f] ) );
+      }
+      else
+      {
+        win_ntk.create_po( ntk_to_win[f] );
+      }
+    }
+  }
+
+  bool evaluate( Ntk const& win_ntk, WindowEngine const& win )
+  {
+    if ( win_ntk.num_gates() < win.num_gates() )
+    {
+      st.size_save += win.num_gates() - win_ntk.num_gates();
+      return true;
+    }
+
+    return false;
+  }
+
+  void replace( Ntk& win_ntk, WindowEngine const& win, node_map<signal<Ntk>, Ntk>& ntk_to_win )
+  {
+    topo_view topo{ win_ntk };
+
+    std::vector<signal<Ntk>> children;
+    children.reserve( Ntk::max_fanin_size );
+
+    /* Get PIs */
+    uint32_t i = 0;
+    for ( auto const& n : win.get_leaves() )
+    {
+      ntk_to_win[win_ntk.pi_at( i++ )] = ntk.make_signal( n );
+    }
+
+    /* add the new gates */
+    topo.foreach_gate( [&]( auto const& n ) {
+      children.clear();
+      win_ntk.foreach_fanin( n, [&]( auto const& f ) {
+        signal<Ntk> s = win_ntk.is_complemented( f ) ? ntk.create_not( ntk_to_win[f] ) : ntk_to_win[f];
+        children.push_back( s );
+      } );
+      ntk_to_win[n] = ntk.clone_node( win_ntk, n, children );
+    } );
+
+    /* substitute POs */
+    auto const& roots = win.get_roots();
+    win_ntk.foreach_po( [&]( auto const& f, uint32_t index ) {
+      signal<Ntk> s = ntk.is_complemented( f ) ? ntk.create_not( ntk_to_win[f] ) : ntk_to_win[f];
+      ntk.substitute_node( ntk.get_node( roots.at( index ) ), s );
+    } );
+  }
+
+  bool visited_window( std::array<uint64_t, 2> const& hash )
+  {
+    return !window_cache.insert( hash ).second;
+  }
+
+private:
   Ntk& ntk;
-  // WindowsEngine engine;
-  // ResynFn resyn;
   tech_library<NInputs, Configuration> const& library; /* TODO: replace with &&Lib? */
   remap_params const& ps;
   remap_stats& st;
+
+  phmap::flat_hash_set<std::array<uint64_t, 2>, window_hash_fn> window_cache;
 };
 
 } /* namespace detail */
@@ -224,7 +329,7 @@ private:
  *
  */
 /* TODO: add resynFn */
-template<class Ntk, unsigned CutSize = 6u, unsigned NInputs, classification_type Configuration>
+template<class Ntk, typename OptScript = detail::resyn_aig_size<Ntk>, unsigned NInputs, classification_type Configuration>
 void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap_params const& ps = {}, remap_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -243,10 +348,10 @@ void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap
   remap_view_t remap_ntk{ d_ntk };
 
   using WindowEngine = detail::remap_windowing<remap_view_t>;
-  using MapperFn = detail::emap_impl<remap_view_t, CutSize, NInputs, Configuration>;
+  using MapperFn = detail::emap_impl<remap_view_t, 6, NInputs, Configuration>;
 
   remap_stats st;
-  detail::remap_impl<remap_view_t, WindowEngine, MapperFn, NInputs, Configuration> p( remap_ntk, library, ps, st );
+  detail::remap_impl<remap_view_t, WindowEngine, OptScript, MapperFn, NInputs, Configuration> p( remap_ntk, library, ps, st );
   p.run();
 
   if ( ps.verbose && !st.remapping_error )

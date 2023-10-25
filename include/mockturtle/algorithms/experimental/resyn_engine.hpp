@@ -104,26 +104,19 @@ struct resyn_engine_stats
   double depth{ 0 };
 
   /*! \brief Total runtime. */
+  stopwatch<>::duration time_windowing{ 0 };
+  stopwatch<>::duration time_opt{ 0 };
   stopwatch<>::duration time_total{ 0 };
 
   void report() const
   {
-    std::cout << fmt::format( "[i] Save = {:>5}; Size = {:>5}; Depth = {:>5};", size_save, size, depth );
-    std::cout << fmt::format( "[i] Total runtime        = {:>5.2f} secs\n", to_seconds( time_total ) );
+    std::cout << fmt::format( "[i] Save = {:>5}; Size = {:>5}; Depth = {:>5};\n", size_save, size, depth );
+    std::cout << fmt::format( "[i] Time W = {:>5.2f}s; Time O = {:>5.2f}s; Total = {:>5.2f}s\n", to_seconds( time_windowing ), to_seconds( time_opt ), to_seconds( time_total ) );
   }
 };
 
 namespace detail
 {
-
-struct window_hash_fn
-{
-  auto operator()( std::array<uint64_t, 2> const& key ) const
-  {
-    std::hash<uint64_t> hasher;
-    return hasher( key[0] ) * 31 + hasher( key[1] );
-  }
-};
 
 template<class Ntk, typename WindowEngine, typename OptScript>
 class resyn_engine_impl
@@ -147,7 +140,7 @@ public:
 
     ntk.foreach_gate( [&]( auto const& n ) {
       /* extract window */
-      win.compute_window( n );
+      call_with_stopwatch( st.time_windowing, [&]() { win.compute_window( n ); } );
       if ( visited_window( win.get_hash() ) )
         return;
       // win.report_info();
@@ -158,7 +151,7 @@ public:
 
       /* optimize */
       uint32_t size_before = win_ntk.num_gates();
-      opt( win_ntk );
+      call_with_stopwatch( st.time_opt, [&]() { opt( win_ntk ); } );
 
       /* evaluate */
       if ( !evaluate( win_ntk, win ) )
@@ -272,7 +265,7 @@ private:
 
 } /* namespace detail */
 
-/*! \brief Remapping.
+/*! \brief Resynthesis engine.
  *
  * This function implements a simple technology mapping algorithm.
  * The algorithm maps each node to the first implementation in the technology library.

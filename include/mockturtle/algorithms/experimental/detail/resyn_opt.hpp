@@ -38,8 +38,8 @@
 
 #include "../../../utils/algorithm.hpp"
 #include "../../../utils/tech_library.hpp"
+#include "../../aig_resub.hpp"
 #include "../../rewrite.hpp"
-#include "../../sim_resub.hpp"
 #include "../../node_resynthesis/xag_npn.hpp"
 
 namespace mockturtle
@@ -64,10 +64,9 @@ struct resyn_aig_size
     resubstitution_params ps;
     resubstitution_stats st;
 
-    ps.max_inserts = 20;
-    ps.max_pis = 12;
-    ps.max_divisors = std::numeric_limits<uint32_t>::max();
-    sim_resubstitution( ntk );
+    ps.max_inserts = 2;
+    ps.max_pis = 8;
+    aig_resubstitution( ntk );
     ntk = cleanup_dangling( ntk );
 
     /* run rewriting */
