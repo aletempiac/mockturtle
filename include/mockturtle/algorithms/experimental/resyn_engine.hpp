@@ -43,8 +43,6 @@
 #include <fmt/format.h>
 #include <parallel_hashmap/phmap.h>
 
-#include "detail/resyn_opt.hpp"
-#include "detail/resyn_windowing.hpp"
 #include "../../networks/block.hpp"
 #include "../../networks/klut.hpp"
 #include "../../traits.hpp"
@@ -60,6 +58,8 @@
 #include "../cut_enumeration.hpp"
 #include "../detail/mffc_utils.hpp"
 #include "../detail/switching_activity.hpp"
+#include "detail/resyn_opt.hpp"
+#include "detail/resyn_windowing.hpp"
 
 namespace mockturtle
 {

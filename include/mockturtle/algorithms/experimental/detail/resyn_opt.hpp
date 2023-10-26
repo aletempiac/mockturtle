@@ -39,8 +39,8 @@
 #include "../../../utils/algorithm.hpp"
 #include "../../../utils/tech_library.hpp"
 #include "../../aig_resub.hpp"
-#include "../../rewrite.hpp"
 #include "../../node_resynthesis/xag_npn.hpp"
+#include "../../rewrite.hpp"
 
 namespace mockturtle
 {
