@@ -43,8 +43,6 @@
 #include <fmt/format.h>
 #include <parallel_hashmap/phmap.h>
 
-#include "detail/resyn_opt.hpp"
-#include "detail/resyn_windowing.hpp"
 #include "../../networks/block.hpp"
 #include "../../networks/klut.hpp"
 #include "../../traits.hpp"
@@ -63,6 +61,10 @@
 #include "../cut_enumeration.hpp"
 #include "../detail/mffc_utils.hpp"
 #include "../detail/switching_activity.hpp"
+#include "../node_resynthesis.hpp"
+#include "../node_resynthesis/sop_factoring.hpp"
+#include "detail/resyn_opt.hpp"
+#include "detail/resyn_windowing.hpp"
 
 namespace mockturtle
 {
@@ -132,10 +134,10 @@ struct remap_stats
   /*! \brief Mapped multi-output gates. */
   uint32_t multioutput_gates{ 0 };
 
-  /*! \brief Total runtime. */
-  /*! \brief Total runtime. */
+  /*! \brief Runtime. */
   stopwatch<>::duration time_windowing{ 0 };
-  stopwatch<>::duration time_opt{ 0 };
+  stopwatch<>::duration time_decomposition{ 0 };
+  stopwatch<>::duration time_optimization{ 0 };
   stopwatch<>::duration time_total{ 0 };
 
   /*! \brief Rempping error. */
@@ -144,14 +146,20 @@ struct remap_stats
   void report() const
   {
     std::cout << fmt::format( "[i] Save = {:>5.2f}; Area = {:>5.2f}; Delay = {:>5.2f};", area_save, area, delay );
-    std::cout << fmt::format( "[i] Time W = {:>5.2f}s; Time O = {:>5.2f}s; Total = {:>5.2f}s\n", to_seconds( time_windowing ), to_seconds( time_opt ), to_seconds( time_total ) );
+    std::cout << fmt::format( "[i] Time W = {:>5.2f}s; Time D = {:>5.2f}s; Time O = {:>5.2f}s; Total = {:>5.2f}s\n", to_seconds( time_windowing ), to_seconds( time_decomposition ), to_seconds( time_optimization ), to_seconds( time_total ) );
   }
 };
 
 namespace detail
 {
 
-template<class Ntk, typename WindowEngine, typename DecompFn, typename OptScript, typename MapperFn, unsigned NInputs, classification_type Configuration>
+template<class Ntk,
+         typename WindowEngine,
+         typename DecompFn,
+         typename OptScript,
+         typename MapperFn,
+         unsigned NInputs,
+         classification_type Configuration>
 class remap_impl
 {
 private:
@@ -170,6 +178,7 @@ public:
     resyn_windowing_params win_ps = ps.win_ps;
     WindowEngine win( ntk, win_ps );
     node_map<signal<Ntk>, Ntk> ntk_to_win( ntk );
+    DecompFn decomp;
     OptScript opt;
 
     ntk.foreach_gate( [&]( auto const& n ) {
@@ -178,17 +187,15 @@ public:
       if ( visited_window( win.get_hash() ) )
         return;
       // win.report_info();
+      window_view ntk_win( ntk, win.get_leaves(), win.get_roots(), win.get_gates() );
 
-      /* create new network instance */
-      // Ntk win_ntk;
-      // win_copy( win_ntk, win, ntk_to_win );
+      /* estimate area and delay */
 
       /* decompose */
-
+      auto ntk_decomp = call_with_stopwatch( st.time_decomposition, [&]() { node_resynthesis( ntk_win, decomp ); } );
 
       /* optimize */
-      uint32_t size_before = win_ntk.num_gates();
-      call_with_stopwatch( st.time_opt, [&]() { opt( win_ntk ); } );
+      call_with_stopwatch( st.time_optimization, [&]() { opt( ntk_decomp ); } );
 
       /* map */
       // auto res = MapperFn( ).run();
@@ -329,7 +336,11 @@ private:
  *
  */
 /* TODO: add resynFn */
-template<class Ntk, typename OptScript = detail::resyn_aig_size<Ntk>, unsigned NInputs, classification_type Configuration>
+template<class Ntk,
+         typename OptScript = detail::resyn_aig_size<Ntk>,
+         typename DecompFn = sop_factoring<aig_network>,
+         unsigned NInputs,
+         classification_type Configuration>
 void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap_params const& ps = {}, remap_stats* pst = nullptr )
 {
   static_assert( is_network_type_v<Ntk>, "Ntk is not a network type" );
@@ -351,7 +362,7 @@ void remap( Ntk& ntk, tech_library<NInputs, Configuration> const& library, remap
   using MapperFn = detail::emap_impl<remap_view_t, 6, NInputs, Configuration>;
 
   remap_stats st;
-  detail::remap_impl<remap_view_t, WindowEngine, OptScript, MapperFn, NInputs, Configuration> p( remap_ntk, library, ps, st );
+  detail::remap_impl<remap_view_t, WindowEngine, DecompFn, OptScript, MapperFn, NInputs, Configuration> p( remap_ntk, library, ps, st );
   p.run();
 
   if ( ps.verbose && !st.remapping_error )
