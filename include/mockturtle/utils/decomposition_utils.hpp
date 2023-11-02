@@ -277,13 +277,13 @@ inline uint32_t acd_column_multiplicity( TT tt, uint32_t free_set_size )
     }
   }
 
-  multiplicity = __builtin_popcount( multiplicity_set[0] );
+  multiplicity = __builtin_popcountl( multiplicity_set[0] );
 
   if ( free_set_size == 3 )
   {
-    multiplicity += __builtin_popcount( multiplicity_set[1] );
-    multiplicity += __builtin_popcount( multiplicity_set[2] );
-    multiplicity += __builtin_popcount( multiplicity_set[3] );
+    multiplicity += __builtin_popcountl( multiplicity_set[1] );    
+    multiplicity += __builtin_popcountl( multiplicity_set[2] );
+    multiplicity += __builtin_popcountl( multiplicity_set[3] );
   }
 
   return multiplicity;
