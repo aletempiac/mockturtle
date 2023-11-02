@@ -37,6 +37,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <kitty/operations.hpp>
+#include <kitty/print.hpp>
 #include <kitty/traits.hpp>
 
 namespace mockturtle
@@ -56,7 +58,7 @@ inline void print_perm( std::array<uint32_t, 16>& perm, uint32_t n )
 }
 
 template<typename TT, typename Fn, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
-inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, uint32_t k, Fn&& fn )
+inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, uint32_t k, Fn&& fn, bool verbose = false )
 {
   uint32_t n = tt.num_vars();
 
@@ -94,6 +96,13 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
       best_perm = perm;
     }
 
+    if ( verbose )
+    {
+      kitty::print_hex( tt );
+      std::cout << " " << cost << " ";
+      print_perm( perm, n );
+    }
+
     for ( uint32_t i = 2; i <= n; ++i )
     {
       std::swap( perm[n - 1], perm[n - i] );
@@ -105,6 +114,13 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
         best_tt = tt;
         best_cost = cost;
         best_perm = perm;
+      }
+
+      if ( verbose )
+      {
+        kitty::print_hex( tt );
+        std::cout << " " << cost << " ";
+        print_perm( perm, n );
       }
     }
   }
@@ -120,6 +136,13 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
         best_perm = perm;
       }
 
+      if ( verbose )
+      {
+        kitty::print_hex( tt );
+        std::cout << " " << cost << " ";
+        print_perm( perm, n );
+      }
+
       for ( uint32_t j = 3; j <= n - i; ++j )
       {
         std::swap( perm[n - 2], perm[n - j] );
@@ -131,6 +154,13 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
           best_tt = tt;
           best_cost = cost;
           best_perm = perm;
+        }
+
+        if ( verbose )
+        {
+          kitty::print_hex( tt );
+          std::cout << " " << cost << " ";
+          print_perm( perm, n );
         }
       }
 
@@ -151,7 +181,13 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
           best_cost = cost;
           best_perm = perm;
         }
-        print_perm( perm, n );
+
+        if ( verbose )
+        {
+          kitty::print_hex( tt );
+          std::cout << " " << cost << " ";
+          print_perm( perm, n );
+        }
  
         for ( uint32_t k = 4; k <= n - j; ++k )
         {
@@ -166,7 +202,12 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
             best_perm = perm;
           }
 
-          print_perm( perm, n );
+          if ( verbose )
+          {
+            kitty::print_hex( tt );
+            std::cout << " " << cost << " ";
+            print_perm( perm, n );
+          }
         }
 
         std::swap( perm[n - 2], perm[j] );
@@ -181,7 +222,7 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
   std::vector<uint32_t> res_perm( n );
   std::copy( best_perm.begin(), best_perm.begin() + n, res_perm.begin() );
   
-  return { tt, res_perm };
+  return { best_tt, res_perm };
 }
 
 } // namespace detail
@@ -189,10 +230,11 @@ inline std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( TT tt, 
 template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
 inline uint32_t acd_column_multiplicity( TT tt, uint32_t free_set_size )
 {
-  uint32_t multiplicity_set = 0;
+  uint32_t multiplicity_set[4] = { 0u, 0u, 0u, 0u };
+  uint32_t multiplicity = 0;
 
-  /* supports up to 64 values of free set (16 for |FS| == 2)*/
-  assert( free_set_size <= 2 );
+  /* supports up to 64 values of free set (256 for |FS| == 3)*/
+  assert( free_set_size <= 3 );
 
   /* extract iset functions */
   if ( free_set_size == 1 )
@@ -202,35 +244,59 @@ inline uint32_t acd_column_multiplicity( TT tt, uint32_t free_set_size )
     {
       for ( auto j = 0; j < 32; ++j )
       {
-        multiplicity_set |= UINT32_C( 1 ) << ( *it & 0x3 );
+        multiplicity_set[0] |= UINT32_C( 1 ) << ( *it & 0x3 );
         *it >>= 2;
       }
       ++it;
     }
   }
-  else /* free set size 2 */
+  else if ( free_set_size == 2 )
   {
     auto it = std::begin( tt );
     for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
     {
       for ( auto j = 0; j < 16; ++j )
       {
-        multiplicity_set |= UINT32_C( 1 ) << ( *it & 0xF );
+        multiplicity_set[0] |= UINT32_C( 1 ) << ( *it & 0xF );
         *it >>= 4;
       }
       ++it;
     }
   }
+  else /* free set size 3 */
+  {
+    auto it = std::begin( tt );
+    for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+    {
+      for ( auto j = 0; j < 8; ++j )
+      {
+        multiplicity_set[( *it >> 6 ) & 0x3] |= UINT32_C( 1 ) << ( *it & 0x3F );
+        *it >>= 8;
+      }
+      ++it;
+    }
+  }
 
-  return __builtin_popcount( multiplicity_set );
+  multiplicity = __builtin_popcount( multiplicity_set[0] );
+
+  if ( free_set_size == 3 )
+  {
+    multiplicity += __builtin_popcount( multiplicity_set[1] );
+    multiplicity += __builtin_popcount( multiplicity_set[2] );
+    multiplicity += __builtin_popcount( multiplicity_set[3] );
+  }
+
+  return multiplicity;
 }
 
 template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
-inline void acd_enumerate_combinations( TT tt, uint32_t free_set_size )
+inline uint32_t acd_enumerate_combinations( TT tt, uint32_t free_set_size )
 {
   auto evaluate_fn = [&] ( TT const& tt ) { return acd_column_multiplicity( tt, free_set_size ); };
 
-  detail::enumerate_iset_combinations( tt, free_set_size, [&] ( TT const& tt ) { return 0; } );
+  auto [tt_p, perm] = detail::enumerate_iset_combinations( tt, free_set_size, evaluate_fn );
+
+  return acd_column_multiplicity( tt_p, free_set_size );
 }
 
 } // namespace mockturtle
