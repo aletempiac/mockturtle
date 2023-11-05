@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <type_traits>
@@ -63,52 +64,113 @@ public:
       , num_vars( num_vars )
       , ps( ps )
       , permutations( num_vars )
-  {}
+  {
+    std::iota( permutations.begin(), permutations.end(), 0 );
+  }
 
-  // /*! \brief Runs ACD using late arriving variables */
-  // void run( std::vector<uint32_t> late_arriving )
-  // {
+  /*! \brief Runs ACD using late arriving variables */
+  uint32_t run( std::vector<uint32_t> late_arriving )
+  {
+    best_tt = tt_start;
+    best_multiplicity = UINT32_MAX;
 
-  // }
+    /* return a high cost if too many late arriving variables */
+    if ( late_arriving.size() > ps.lut_size / 2 && late_arriving.size() <= 3 )
+    {
+      return UINT32_MAX;
+    }
 
-  // /*! \brief Runs ACD trying different bound sets and free sets */
-  // void run()
-  // {
+    /* permute late arriving variables to be the least significant */
+    reposition_late_arriving_variables( late_arriving );
 
-  // }
+    /* run ACD trying different bound sets and free sets */
+    uint32_t free_set_size = late_arriving.size();
+    uint32_t offset = late_arriving.size();
+    for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
+    {
+      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
+
+      /* check for feasible solution that improves the cost */
+      if ( cost <= ( 1 << i ) && cost < best_multiplicity )
+      {
+        best_tt = tt_p;
+        permutations = perm;
+        best_multiplicity = cost;
+        free_set_size = i;
+      }
+    }
+
+    return best_multiplicity;
+  }
+
+  /*! \brief Runs ACD trying different bound sets and free sets */
+  uint32_t run()
+  {
+    assert( ps.lut_size > 3 && ps.lut_size < 13 );
+    best_tt = tt_start;
+    best_multiplicity = UINT32_MAX;
+
+    uint32_t free_set_size = 1;
+    for ( uint32_t i = 1; i <= ps.lut_size / 2 && i <= 3; ++i )
+    {
+      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto [tt_p, perm, cost] = enumerate_iset_combinations( i, evaluate_fn, false );
+
+      /* check for feasible solution that improves the cost */
+      if ( cost <= ( 1 << i ) && cost < best_multiplicity )
+      {
+        best_tt = tt_p;
+        permutations = perm;
+        best_multiplicity = cost;
+        free_set_size = i;
+      }
+    }
+
+    return best_multiplicity;
+  }
 
   /*! \brief Runs ACD trying different bound sets */
   uint32_t run_offset( uint32_t free_set_size, uint32_t offset )
   {
+    best_tt = tt_start;
     auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
 
-    auto [tt_p, perm] = enumerate_iset_combinations_offset( free_set_size, offset, evaluate_fn, true );
+    auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( free_set_size, offset, evaluate_fn, false );
+    best_tt = tt_p;
+    permutations = perm;
+    best_multiplicity = cost;
 
-    return column_multiplicity( tt_p, free_set_size );
+    return best_multiplicity;
   }
 
   /*! \brief Runs ACD trying different bound sets */
   uint32_t run( uint32_t free_set_size )
   {
+    best_tt = tt_start;
     auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
 
-    auto [tt_p, perm] = enumerate_iset_combinations( free_set_size, evaluate_fn, false );
+    auto [tt_p, perm, cost] = enumerate_iset_combinations( free_set_size, evaluate_fn, false );
+    best_tt = tt_p;
+    permutations = perm;
+    best_multiplicity = cost;
 
-    return column_multiplicity( tt_p, free_set_size );
+    return best_multiplicity;
   }
 
   /*! \brief Runs ACD without trying different bound sets */
   uint32_t run_no_permutations( uint32_t free_set_size )
   {
-    uint32_t multiplicity = column_multiplicity( tt_start, free_set_size );
+    best_tt = tt_start;
+    best_multiplicity = column_multiplicity( tt_start, free_set_size );
 
-    return multiplicity;
+    return best_multiplicity;
   }
   
 private:
   uint32_t column_multiplicity( TT tt, uint32_t free_set_size )
   {
-    uint32_t multiplicity_set[4] = { 0u, 0u, 0u, 0u };
+    uint64_t multiplicity_set[4] = { 0u, 0u, 0u, 0u };
     uint32_t multiplicity = 0;
 
     /* supports up to 64 values of free set (256 for |FS| == 3)*/
@@ -122,7 +184,7 @@ private:
       {
         for ( auto j = 0; j < 32; ++j )
         {
-          multiplicity_set[0] |= UINT32_C( 1 ) << ( *it & 0x3 );
+          multiplicity_set[0] |= UINT64_C( 1 ) << ( *it & 0x3 );
           *it >>= 2;
         }
         ++it;
@@ -135,7 +197,7 @@ private:
       {
         for ( auto j = 0; j < 16; ++j )
         {
-          multiplicity_set[0] |= UINT32_C( 1 ) << ( *it & 0xF );
+          multiplicity_set[0] |= UINT64_C( 1 ) << ( *it & 0xF );
           *it >>= 4;
         }
         ++it;
@@ -148,7 +210,7 @@ private:
       {
         for ( auto j = 0; j < 8; ++j )
         {
-          multiplicity_set[( *it >> 6 ) & 0x3] |= UINT32_C( 1 ) << ( *it & 0x3F );
+          multiplicity_set[( *it >> 6 ) & 0x3] |= UINT64_C( 1 ) << ( *it & 0x3F );
           *it >>= 8;
         }
         ++it;
@@ -168,27 +230,25 @@ private:
   }
 
   template<typename Fn>
-  std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations( uint32_t k, Fn&& fn, bool verbose = false )
+  std::tuple<TT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations( uint32_t free_set_size, Fn&& fn, bool verbose = false )
   {
-    TT tt = tt_start;
+    TT tt = best_tt;
 
     /* works up to 16 input truth tables */
     assert( num_vars <= 16 );
 
     /* special case */
-    if ( num_vars <= k || k == 0 )
+    if ( num_vars <= free_set_size || free_set_size == 0 )
     {
-      std::vector<uint32_t> res_perm( num_vars );
-      std::iota( res_perm.begin(), res_perm.end(), 0u );
-      return { tt, res_perm };
+      return { tt, permutations, UINT32_MAX };
     }
 
     /* select k */
-    k = std::min( k, num_vars - k );
+    free_set_size = std::min( free_set_size, num_vars - free_set_size );
 
     /* init permutation array */
     std::array<uint32_t, 16> perm, best_perm;
-    std::iota( perm.begin(), perm.begin() + num_vars, 0u );
+    std::copy( permutations.begin(), permutations.begin() + num_vars, perm.begin() );
     best_perm = perm;
 
     /* TT with best cost */
@@ -196,7 +256,7 @@ private:
     uint32_t best_cost = UINT32_MAX;
 
     /* enumerate combinations */
-    if ( k == 1 )
+    if ( free_set_size == 1 )
     {
       uint32_t cost = fn( tt );
       if ( cost < best_cost )
@@ -210,7 +270,7 @@ private:
       {
         kitty::print_hex( tt );
         std::cout << " " << cost << " ";
-        print_perm( perm );
+        print_perm( perm.begin(), free_set_size );
       }
 
       for ( uint32_t i = 1; i < num_vars; ++i )
@@ -230,11 +290,11 @@ private:
         {
           kitty::print_hex( tt );
           std::cout << " " << cost << " ";
-          print_perm( perm );
+          print_perm( perm.begin(), free_set_size );
         }
       }
     }
-    else if ( k == 2 )
+    else if ( free_set_size == 2 )
     {
       for ( uint32_t i = 0; i < num_vars - 1; ++i)
       {
@@ -250,7 +310,7 @@ private:
         {
           kitty::print_hex( tt );
           std::cout << " " << cost << " ";
-          print_perm( perm );
+          print_perm( perm.begin(), free_set_size );
         }
 
         for ( uint32_t j = 2; j < num_vars - i; ++j )
@@ -270,7 +330,7 @@ private:
           {
             kitty::print_hex( tt );
             std::cout << " " << cost << " ";
-            print_perm( perm );
+            print_perm( perm.begin(), free_set_size );
           }
         }
 
@@ -278,7 +338,7 @@ private:
         kitty::swap_inplace( tt, 0, num_vars - i - 1 );
       }
     }
-    else if ( k == 3 )
+    else if ( free_set_size == 3 )
     {
       for ( uint32_t i = 0; i < num_vars - 2; ++i )
       {
@@ -296,7 +356,7 @@ private:
           {
             kitty::print_hex( tt );
             std::cout << " " << cost << " ";
-            print_perm( perm );
+            print_perm( perm.begin(), free_set_size );
           }
   
           for ( uint32_t k = 3; k < num_vars - j; ++k )
@@ -316,7 +376,7 @@ private:
             {
               kitty::print_hex( tt );
               std::cout << " " << cost << " ";
-              print_perm( perm );
+              print_perm( perm.begin(), free_set_size );
             }
           }
 
@@ -332,40 +392,56 @@ private:
     std::vector<uint32_t> res_perm( num_vars );
     std::copy( best_perm.begin(), best_perm.begin() + num_vars, res_perm.begin() );
 
-    return { best_tt, res_perm };
+    return std::make_tuple( best_tt, res_perm, best_cost );
   }
 
   template<typename Fn>
-  std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations_offset( uint32_t k, uint32_t offset, Fn&& fn, bool verbose = false )
+  std::tuple<TT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations_offset( uint32_t free_set_size, uint32_t offset, Fn&& fn, bool verbose = false )
   {
-    TT tt = tt_start;
-
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
-
-    /* select k */
-    k = std::min( k, num_vars - k );
-    k -= offset;
-
-    /* special case */
-    if ( num_vars <= k || k == 0 )
-    {
-      std::vector<uint32_t> res_perm( num_vars );
-      std::iota( res_perm.begin(), res_perm.end(), 0u );
-      return { tt, res_perm };
-    }
-
-    /* init permutation array */
-    std::array<uint32_t, 16> perm, best_perm;
-    std::iota( perm.begin(), perm.begin() + num_vars, 0u );
-    best_perm = perm;
+    TT tt = best_tt;
 
     /* TT with best cost */
     TT best_tt = tt;
     uint32_t best_cost = UINT32_MAX;
 
+    /* works up to 16 input truth tables */
+    assert( num_vars <= 16 );
+
+    /* select k */
+    free_set_size = std::min( free_set_size, num_vars - free_set_size );
+    
+
+    /* special case */
+    if ( num_vars <= free_set_size || free_set_size <= offset )
+    {
+      if ( offset == free_set_size )
+      {
+        best_cost = fn( tt );
+        if ( verbose )
+        {
+          kitty::print_hex( tt );
+          std::cout << " " << best_cost << " ";
+          print_perm( permutations.begin(), free_set_size );
+        }
+
+        return { tt, permutations, best_cost };
+      }
+      else
+      {
+        return { tt, permutations, UINT32_MAX };
+      }
+    }
+
+    /* decrease combinations */
+    free_set_size -= offset;
+
+    /* init permutation array */
+    std::array<uint32_t, 16> perm, best_perm;
+    std::copy( permutations.begin(), permutations.begin() + num_vars, perm.begin() );
+    best_perm = perm;
+
     /* enumerate combinations */
-    if ( k == 1 )
+    if ( free_set_size == 1 )
     {
       uint32_t cost = fn( tt );
       if ( cost < best_cost )
@@ -379,7 +455,7 @@ private:
       {
         kitty::print_hex( tt );
         std::cout << " " << cost << " ";
-        print_perm( perm );
+        print_perm( perm.begin(), free_set_size + offset );
       }
 
       for ( uint32_t i = offset + 1; i < num_vars; ++i )
@@ -399,11 +475,11 @@ private:
         {
           kitty::print_hex( tt );
           std::cout << " " << cost << " ";
-          print_perm( perm );
+          print_perm( perm.begin(), free_set_size + offset );
         }
       }
     }
-    else if ( k == 2 )
+    else if ( free_set_size == 2 )
     {
       for ( uint32_t i = 0; i < num_vars - 1 - offset; ++i)
       {
@@ -419,7 +495,7 @@ private:
         {
           kitty::print_hex( tt );
           std::cout << " " << cost << " ";
-          print_perm( perm );
+          print_perm( perm.begin(), free_set_size + offset );
         }
 
         for ( uint32_t j = offset + 2; j < num_vars - i; ++j )
@@ -439,7 +515,7 @@ private:
           {
             kitty::print_hex( tt );
             std::cout << " " << cost << " ";
-            print_perm( perm );
+            print_perm( perm.begin(), free_set_size + offset );
           }
         }
 
@@ -447,7 +523,7 @@ private:
         kitty::swap_inplace( tt, offset, num_vars - i - 1 );
       }
     }
-    else if ( k == 3 )
+    else if ( free_set_size == 3 )
     {
       for ( uint32_t i = 0; i < num_vars - 2 - offset; ++i )
       {
@@ -465,7 +541,7 @@ private:
           {
             kitty::print_hex( tt );
             std::cout << " " << cost << " ";
-            print_perm( perm );
+            print_perm( perm.begin(), free_set_size + offset );
           }
   
           for ( uint32_t k = offset + 3; k < num_vars - j; ++k )
@@ -485,7 +561,7 @@ private:
             {
               kitty::print_hex( tt );
               std::cout << " " << cost << " ";
-              print_perm( perm );
+              print_perm( perm.begin(), free_set_size + offset );
             }
           }
 
@@ -501,20 +577,47 @@ private:
     std::vector<uint32_t> res_perm( num_vars );
     std::copy( best_perm.begin(), best_perm.begin() + num_vars, res_perm.begin() );
 
-    return { best_tt, res_perm };
+    return std::make_tuple( best_tt, res_perm, best_cost );
   }
 
-  void print_perm( std::array<uint32_t, 16>& perm )
+  inline void reposition_late_arriving_variables( std::vector<uint32_t> const& late_arriving )
+  {
+    for ( uint32_t i = 0; i < late_arriving.size(); ++i )
+    {
+      if ( permutations[i] == late_arriving[i] )
+        continue;
+
+      uint32_t j = i + 1;
+      while ( permutations[j] != late_arriving[i] )
+      {
+        ++j;
+      }
+
+      std::swap( permutations[i], permutations[j] );
+      kitty::swap_inplace( best_tt, i, j );
+    }
+  }
+
+  template<class Iterator>
+  void print_perm( Iterator begin, uint32_t free_set )
   {
     std::cout << "[";
     for ( uint32_t i = 0; i < num_vars; ++i )
     {
-      std::cout << perm.at( i ) << " ";
+      if ( i == free_set )
+      {
+        std::cout << ", ";
+      }
+      std::cout << *begin << " ";
+      ++begin;
     }
     std::cout << "]\n";
   }
 
 private:
+  uint32_t best_multiplicity{ UINT32_MAX };
+  TT best_tt;
+
   TT const& tt_start;
   uint32_t num_vars;
   ac_decomposition_params const& ps;
