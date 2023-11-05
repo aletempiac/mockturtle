@@ -78,11 +78,21 @@ public:
   // }
 
   /*! \brief Runs ACD trying different bound sets */
+  uint32_t run_offset( uint32_t free_set_size, uint32_t offset )
+  {
+    auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
+
+    auto [tt_p, perm] = enumerate_iset_combinations_offset( free_set_size, offset, evaluate_fn, true );
+
+    return column_multiplicity( tt_p, free_set_size );
+  }
+
+  /*! \brief Runs ACD trying different bound sets */
   uint32_t run( uint32_t free_set_size )
   {
     auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
 
-    auto [tt_p, perm] = enumerate_iset_combinations( free_set_size, evaluate_fn, true );
+    auto [tt_p, perm] = enumerate_iset_combinations( free_set_size, evaluate_fn, false );
 
     return column_multiplicity( tt_p, free_set_size );
   }
@@ -166,7 +176,7 @@ private:
     assert( num_vars <= 16 );
 
     /* special case */
-    if ( num_vars <= k )
+    if ( num_vars <= k || k == 0 )
     {
       std::vector<uint32_t> res_perm( num_vars );
       std::iota( res_perm.begin(), res_perm.end(), 0u );
@@ -316,6 +326,175 @@ private:
 
         std::swap( perm[0], perm[num_vars - i - 1] );
         kitty::swap_inplace( tt, 0, num_vars - i - 1 );
+      }
+    }
+
+    std::vector<uint32_t> res_perm( num_vars );
+    std::copy( best_perm.begin(), best_perm.begin() + num_vars, res_perm.begin() );
+
+    return { best_tt, res_perm };
+  }
+
+  template<typename Fn>
+  std::pair<TT, std::vector<uint32_t>> enumerate_iset_combinations_offset( uint32_t k, uint32_t offset, Fn&& fn, bool verbose = false )
+  {
+    TT tt = tt_start;
+
+    /* works up to 16 input truth tables */
+    assert( num_vars <= 16 );
+
+    /* select k */
+    k = std::min( k, num_vars - k );
+    k -= offset;
+
+    /* special case */
+    if ( num_vars <= k || k == 0 )
+    {
+      std::vector<uint32_t> res_perm( num_vars );
+      std::iota( res_perm.begin(), res_perm.end(), 0u );
+      return { tt, res_perm };
+    }
+
+    /* init permutation array */
+    std::array<uint32_t, 16> perm, best_perm;
+    std::iota( perm.begin(), perm.begin() + num_vars, 0u );
+    best_perm = perm;
+
+    /* TT with best cost */
+    TT best_tt = tt;
+    uint32_t best_cost = UINT32_MAX;
+
+    /* enumerate combinations */
+    if ( k == 1 )
+    {
+      uint32_t cost = fn( tt );
+      if ( cost < best_cost )
+      {
+        best_tt = tt;
+        best_cost = cost;
+        best_perm = perm;
+      }
+
+      if ( verbose )
+      {
+        kitty::print_hex( tt );
+        std::cout << " " << cost << " ";
+        print_perm( perm );
+      }
+
+      for ( uint32_t i = offset + 1; i < num_vars; ++i )
+      {
+        std::swap( perm[offset], perm[i] );
+        kitty::swap_inplace( tt, offset, i );
+
+        uint32_t cost = fn( tt );
+        if ( cost < best_cost )
+        {
+          best_tt = tt;
+          best_cost = cost;
+          best_perm = perm;
+        }
+
+        if ( verbose )
+        {
+          kitty::print_hex( tt );
+          std::cout << " " << cost << " ";
+          print_perm( perm );
+        }
+      }
+    }
+    else if ( k == 2 )
+    {
+      for ( uint32_t i = 0; i < num_vars - 1 - offset; ++i)
+      {
+        uint32_t cost = fn( tt );
+        if ( cost < best_cost )
+        {
+          best_tt = tt;
+          best_cost = cost;
+          best_perm = perm;
+        }
+
+        if ( verbose )
+        {
+          kitty::print_hex( tt );
+          std::cout << " " << cost << " ";
+          print_perm( perm );
+        }
+
+        for ( uint32_t j = offset + 2; j < num_vars - i; ++j )
+        {
+          std::swap( perm[offset + 1], perm[j] );
+          kitty::swap_inplace( tt, offset + 1, j );
+
+          uint32_t cost = fn( tt );
+          if ( cost < best_cost )
+          {
+            best_tt = tt;
+            best_cost = cost;
+            best_perm = perm;
+          }
+
+          if ( verbose )
+          {
+            kitty::print_hex( tt );
+            std::cout << " " << cost << " ";
+            print_perm( perm );
+          }
+        }
+
+        std::swap( perm[offset], perm[num_vars - i - 1] );
+        kitty::swap_inplace( tt, offset, num_vars - i - 1 );
+      }
+    }
+    else if ( k == 3 )
+    {
+      for ( uint32_t i = 0; i < num_vars - 2 - offset; ++i )
+      {
+        for ( uint32_t j = i; j < num_vars - 2 - offset; ++j )
+        {
+          uint32_t cost = fn( tt );
+          if ( cost < best_cost )
+          {
+            best_tt = tt;
+            best_cost = cost;
+            best_perm = perm;
+          }
+
+          if ( verbose )
+          {
+            kitty::print_hex( tt );
+            std::cout << " " << cost << " ";
+            print_perm( perm );
+          }
+  
+          for ( uint32_t k = offset + 3; k < num_vars - j; ++k )
+          {
+            std::swap( perm[offset + 2], perm[k] );
+            kitty::swap_inplace( tt, offset + 2, k );
+
+            uint32_t cost = fn( tt );
+            if ( cost < best_cost )
+            {
+              best_tt = tt;
+              best_cost = cost;
+              best_perm = perm;
+            }
+
+            if ( verbose )
+            {
+              kitty::print_hex( tt );
+              std::cout << " " << cost << " ";
+              print_perm( perm );
+            }
+          }
+
+          std::swap( perm[offset + 1], perm[num_vars - j - 1] );
+          kitty::swap_inplace( tt, offset + 1, num_vars - j - 1 );
+        }
+
+        std::swap( perm[offset], perm[num_vars - i - 1] );
+        kitty::swap_inplace( tt, offset, num_vars - i - 1 );
       }
     }
 

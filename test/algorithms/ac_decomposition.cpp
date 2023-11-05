@@ -19,6 +19,7 @@ TEST_CASE( "ACD function 6 vars FS 2", "[ac_decomposition]" )
 
   CHECK( acd.run_no_permutations( 2 ) == 4 );
   CHECK( acd.run( 2 ) == 4 );
+  CHECK( acd.run_offset( 2, 1 ) == 4 );
 }
 
 TEST_CASE( "ACD function 6 vars FS 1", "[ac_decomposition]" )
@@ -45,6 +46,7 @@ TEST_CASE( "ACD function 6 vars FS 3", "[ac_decomposition]" )
 
   CHECK( acd.run_no_permutations( 3 ) == 8 );
   CHECK( acd.run( 3 ) == 4 );
+  CHECK( acd.run_offset( 3, 2 ) == 5 );
 }
 
 TEST_CASE( "ACD function 8 vars FS 2", "[ac_decomposition]" )
@@ -58,4 +60,5 @@ TEST_CASE( "ACD function 8 vars FS 2", "[ac_decomposition]" )
 
   CHECK( acd.run_no_permutations( 2 ) == 9 );
   CHECK( acd.run( 2 ) == 4 );
+  CHECK( acd.run_offset( 2, 1 ) == 7 );
 }
