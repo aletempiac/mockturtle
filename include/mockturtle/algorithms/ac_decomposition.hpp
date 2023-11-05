@@ -75,7 +75,7 @@ public:
     best_multiplicity = UINT32_MAX;
 
     /* return a high cost if too many late arriving variables */
-    if ( late_arriving.size() > ps.lut_size / 2 && late_arriving.size() <= 3 )
+    if ( late_arriving.size() > ps.lut_size / 2 || late_arriving.size() > 3 )
     {
       return UINT32_MAX;
     }
@@ -87,6 +87,45 @@ public:
     uint32_t free_set_size = late_arriving.size();
     uint32_t offset = late_arriving.size();
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
+    {
+      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
+
+      /* check for feasible solution that improves the cost */
+      if ( cost <= ( 1 << i ) && cost < best_multiplicity )
+      {
+        best_tt = tt_p;
+        permutations = perm;
+        best_multiplicity = cost;
+        free_set_size = i;
+      }
+    }
+
+    return best_multiplicity;
+  }
+
+  /*! \brief Runs ACD using late arriving variables and guaranteeing support minimization */
+  uint32_t run_dsd( std::vector<uint32_t> late_arriving )
+  {
+    best_tt = tt_start;
+    best_multiplicity = UINT32_MAX;
+
+    /* compute minimum number of variables in the free set */
+    uint32_t dsd_vars = num_vars - ps.lut_size;
+
+    /* return a high cost if too many late arriving variables */
+    if ( late_arriving.size() > ps.lut_size / 2 || late_arriving.size() > 3 || dsd_vars > 3 )
+    {
+      return UINT32_MAX;
+    }
+
+    /* permute late arriving variables to be the least significant */
+    reposition_late_arriving_variables( late_arriving );
+
+    /* run ACD trying different bound sets and free sets */
+    uint32_t free_set_size = late_arriving.size();
+    uint32_t offset = late_arriving.size();
+    for ( uint32_t i = std::max( dsd_vars, offset ); i <= ps.lut_size / 2 && i <= 3; ++i )
     {
       auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );

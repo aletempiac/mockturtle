@@ -157,3 +157,43 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
     CHECK( acd.run( late_arriving ) == 6 );
   }
 }
+
+TEST_CASE( "ACD function 8 vars DSD late arriving", "[ac_decomposition]" )
+{
+  kitty::static_truth_table<8> tt;
+  kitty::create_from_hex_string( tt, "000000001000200000000000000000020000100100001000C009800BC00D800F" );
+
+  ac_decomposition_params ps;
+  ps.lut_size = 6;
+
+  std::vector<uint32_t> late_arriving = { 2 };
+
+  {
+    detail::ac_decomposition_impl acd( tt, 8, ps );
+
+    CHECK( acd.run_dsd( late_arriving ) == 4 );
+  }
+
+  {
+    detail::ac_decomposition_impl acd( tt, 8, ps );
+
+    late_arriving.push_back( 3 );
+    CHECK( acd.run_dsd( late_arriving ) == 4 );
+  }
+
+  {
+    detail::ac_decomposition_impl acd( tt, 8, ps );
+
+    late_arriving.push_back( 6 );
+    CHECK( acd.run_dsd( late_arriving ) == 7 );
+  }
+
+  {
+    detail::ac_decomposition_impl acd( tt, 8, ps );
+
+    late_arriving.pop_back();
+    late_arriving.pop_back();
+    late_arriving.push_back( 7 );
+    CHECK( acd.run_dsd( late_arriving ) == 6 );
+  }
+}
