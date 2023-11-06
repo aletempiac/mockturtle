@@ -37,7 +37,10 @@
 #include <cstdint>
 #include <type_traits>
 #include <vector>
+#include <unordered_map>
 
+#include <fmt/format.h>
+#include <kitty/constructors.hpp>
 #include <kitty/operations.hpp>
 #include <kitty/print.hpp>
 #include <kitty/traits.hpp>
@@ -101,6 +104,19 @@ public:
       }
     }
 
+    if ( best_multiplicity == UINT32_MAX )
+      return UINT32_MAX;
+
+    /* compute isets */
+    std::vector<kitty::dynamic_truth_table> isets = compute_isets( free_set_size, true );
+
+    /* test for column multiplicity 4*/
+    if ( best_multiplicity == 4 )
+    {
+      std::vector<kitty::dynamic_truth_table> bound_sets = test_support_minimization_isets( isets, true );
+    }
+
+    /* TODO: change return value */
     return best_multiplicity;
   }
 
@@ -140,6 +156,8 @@ public:
       }
     }
 
+    /* TODO: change return value */
+    // return ps.lut_size - free_set_size + 1;
     return best_multiplicity;
   }
 
@@ -619,6 +637,172 @@ private:
     return std::make_tuple( best_tt, res_perm, best_cost );
   }
 
+  std::vector<kitty::dynamic_truth_table> compute_isets( uint32_t free_set_size, bool verbose = false )
+  {
+    /* construct isets involved in multiplicity */
+    std::vector<kitty::dynamic_truth_table> isets;
+    isets.reserve( best_multiplicity );
+    
+    for ( uint32_t i = 0; i < best_multiplicity; ++i )
+    {
+      isets.push_back( kitty::create<kitty::dynamic_truth_table>( num_vars - free_set_size ) );
+    }
+
+    /* construct isets */
+    std::unordered_map<uint64_t, uint32_t> column_to_iset;
+    TT tt = best_tt;
+    uint32_t offset = 0, block = 0;
+
+    if ( free_set_size == 1 )
+    {
+      auto it = std::begin( tt );
+      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      {
+        for ( auto j = 0; j < 32; ++j )
+        {
+          uint64_t val = *it & 0x3;
+
+          if ( auto el = column_to_iset.find( val ); el != column_to_iset.end() )
+          {
+            isets[el->second]._bits[i / 2] |= UINT64_C( 1 ) << ( j + offset );
+          }
+          else
+          {
+            isets[column_to_iset.size()]._bits[i / 2] |= UINT64_C( 1 ) << ( j + offset );
+            column_to_iset[val] = column_to_iset.size();
+          }
+
+          *it >>= 2;
+        }
+
+        offset ^= 32;
+        ++it;
+      }
+    }
+    else if ( free_set_size == 2 )
+    {
+      auto it = std::begin( tt );
+      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      {
+        for ( auto j = 0; j < 16; ++j )
+        {
+          uint64_t val = *it & 0xF;
+
+          if ( auto el = column_to_iset.find( val ); el != column_to_iset.end() )
+          {
+            isets[el->second]._bits[i / 4] |= UINT64_C( 1 ) << ( j + offset );
+          }
+          else
+          {
+            isets[column_to_iset.size()]._bits[i / 4] |= UINT64_C( 1 ) << ( j + offset );
+            column_to_iset[val] = column_to_iset.size();
+          }
+
+          *it >>= 4;
+        }
+
+        offset = ( offset + 16 ) % 64;
+        ++it;
+      }
+    }
+    else /* free set size 3 */
+    {
+      auto it = std::begin( tt );
+      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      {
+        for ( auto j = 0; j < 8; ++j )
+        {
+          uint64_t val = *it & 0xFF;
+
+          if ( auto el = column_to_iset.find( val ); el != column_to_iset.end() )
+          {
+            isets[el->second]._bits[i / 8] |= UINT64_C( 1 ) << ( j + offset );
+          }
+          else
+          {
+            isets[column_to_iset.size()]._bits[i / 8] |= UINT64_C( 1 ) << ( j + offset );
+            column_to_iset[val] = column_to_iset.size();
+          }
+
+          *it >>= 8;
+        }
+
+        offset = ( offset + 8 ) % 64;
+        ++it;
+      }
+    }
+
+    /* print isets */
+    if ( verbose )
+    {
+      std::cout << "iSets\n";
+      for ( auto iset : isets )
+      {
+        kitty::print_hex( iset );
+        std::cout << "\n";
+      }
+    }
+
+    return isets;
+  }
+
+  std::vector<kitty::dynamic_truth_table> test_support_minimization_isets( std::vector<kitty::dynamic_truth_table> const& isets, bool verbose = false )
+  {
+    assert( best_multiplicity == 4 );
+
+    std::vector<kitty::dynamic_truth_table> bound_sets( 2 );
+    std::vector<kitty::dynamic_truth_table> best_bound_sets;
+    uint32_t best_cost_luts = UINT32_MAX;
+    uint32_t best_cost_edges = UINT32_MAX;
+
+    /* enumerate combinations */
+    for ( int32_t i = 0; i < 6; ++i )
+    {
+      /* compute bound set */
+      bound_sets[0] = isets[iset4_combinations[i][0][0]] | isets[iset4_combinations[i][0][1]];
+      bound_sets[1] = isets[iset4_combinations[i][1][0]] | isets[iset4_combinations[i][1][1]];
+
+      /* check support minimization */
+      uint32_t vars0 = 0;
+      uint32_t vars1 = 0;
+      for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
+      {
+        vars0 += kitty::has_var( bound_sets[0], j ) ? 1 : 0;
+        vars1 += kitty::has_var( bound_sets[1], j ) ? 1 : 0;
+      }
+
+      /* check cost */
+      if ( vars0 > ps.lut_size || vars1 > ps.lut_size )
+      {
+        /* not feasible */
+        continue;
+      }
+
+      uint32_t cost_luts = vars0 == 1 ? 0 : 1;
+      cost_luts += vars1 == 1 ? 0 : 1;
+      uint32_t cost_edges = vars0 == 1 ? 0 : vars0;
+      cost_edges += vars1 == 1 ? 0 : vars1;
+
+      if ( cost_luts < best_cost_luts || cost_luts == best_cost_luts && cost_edges < best_cost_edges )
+      {
+        best_bound_sets = bound_sets;
+        best_cost_luts = cost_luts;
+        best_cost_edges = cost_edges;
+      }
+    }
+
+    if ( verbose && best_bound_sets.size() )
+    {
+      std::cout << "Best bound sets: ";
+      kitty::print_hex( best_bound_sets[0] );
+      std::cout << " ";
+      kitty::print_hex( best_bound_sets[1] );
+      std::cout << fmt::format( " using {} LUTs and {} leaves\n", best_cost_luts, best_cost_edges );
+    }
+
+    return best_bound_sets;
+  }
+
   inline void reposition_late_arriving_variables( std::vector<uint32_t> const& late_arriving )
   {
     for ( uint32_t i = 0; i < late_arriving.size(); ++i )
@@ -661,6 +845,14 @@ private:
   uint32_t num_vars;
   ac_decomposition_params const& ps;
   std::vector<uint32_t> permutations;
+
+  static constexpr uint32_t iset4_combinations[][2][2] =
+    { { { 1, 3 }, { 2, 3 } },
+      { { 1, 2 }, { 2, 3 } },
+      { { 0, 2 }, { 2, 3 } },
+      { { 0, 3 }, { 0, 1 } },
+      { { 0, 3 }, { 0, 2 } },
+      { { 0, 3 }, { 2, 3 } } };
 };
 
 } // namespace detail
