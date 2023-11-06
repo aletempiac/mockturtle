@@ -41,6 +41,7 @@
 
 #include <fmt/format.h>
 #include <kitty/constructors.hpp>
+#include <kitty/dynamic_truth_table.hpp>
 #include <kitty/operations.hpp>
 #include <kitty/print.hpp>
 #include <kitty/traits.hpp>
@@ -53,6 +54,12 @@ struct ac_decomposition_params
 {
   /*! \brief LUT size for decomposition. */
   uint32_t lut_size{ 6 };
+};
+
+struct ac_decomposition_result
+{
+  kitty::dynamic_truth_table tt;
+  std::vector<uint32_t> support;
 };
 
 namespace detail
@@ -111,10 +118,20 @@ public:
     std::vector<kitty::dynamic_truth_table> isets = compute_isets( free_set_size, true );
 
     /* test for column multiplicity 4*/
+    std::vector<kitty::dynamic_truth_table> bound_sets;
     if ( best_multiplicity == 4 )
     {
-      std::vector<kitty::dynamic_truth_table> bound_sets = test_support_minimization_isets( isets, true );
+      bound_sets = test_support_minimization_isets( isets, true );
     }
+
+    /* if feasible decomposition */
+    if ( bound_sets.empty() )
+    {
+      /* TODO: change in return empty */
+      return best_multiplicity;
+    }
+
+    auto decomposition = generate_decomposition( bound_sets, free_set_size );
 
     /* TODO: change return value */
     return best_multiplicity;
@@ -801,6 +818,48 @@ private:
     }
 
     return best_bound_sets;
+  }
+
+  std::vector<ac_decomposition_result> generate_decomposition( std::vector<kitty::dynamic_truth_table> const& bound_sets, uint32_t free_set_size )
+  {
+    std::vector<ac_decomposition_result> res;
+
+    for ( uint32_t i = 0; i < bound_sets.size(); ++i )
+    {
+      ac_decomposition_result dec;
+      auto tt = bound_sets[i];
+
+      /* compute and minimize support for bound set variables */
+      uint32_t k = 0;
+      for ( uint32_t j = 0; j < num_vars; ++j )
+      {
+        if ( !kitty::has_var( bound_sets[i], j ) )
+          continue;
+
+        if ( k < i )
+        {
+          kitty::swap_inplace( tt, k, i );
+        }
+        dec.support.push_back( permutations[free_set_size + j] );
+        ++k;
+      }
+
+      if ( dec.support.size() < tt.num_vars() )
+      {
+        dec.tt = shrink_to( tt );
+      }
+      else
+      {
+        dec.tt = tt;
+      }
+
+      res.push_back( dec );
+    }
+
+    /* TODO: save the chosen encoding to compute the top-level functionality */
+    // compute_top_lut( res, )
+
+    return dec;
   }
 
   inline void reposition_late_arriving_variables( std::vector<uint32_t> const& late_arriving )
