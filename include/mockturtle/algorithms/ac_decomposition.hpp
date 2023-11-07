@@ -33,6 +33,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <cassert>
 #include <cstdint>
 #include <type_traits>
@@ -45,6 +46,8 @@
 #include <kitty/operations.hpp>
 #include <kitty/print.hpp>
 #include <kitty/traits.hpp>
+
+#include "../networks/klut.hpp"
 
 namespace mockturtle
 {
@@ -121,17 +124,19 @@ public:
     std::vector<kitty::dynamic_truth_table> bound_sets;
     if ( best_multiplicity == 4 )
     {
-      bound_sets = test_support_minimization_isets( isets, true );
+      test_support_minimization_isets( isets, true );
     }
 
     /* if feasible decomposition */
-    if ( bound_sets.empty() )
+    if ( best_bound_sets.empty() )
     {
       /* TODO: change in return empty */
       return best_multiplicity;
     }
 
-    auto decomposition = generate_decomposition( bound_sets, free_set_size );
+    auto decomposition = generate_decomposition( free_set_size );
+
+    dec_result = decomposition;
 
     /* TODO: change return value */
     return best_multiplicity;
@@ -239,6 +244,19 @@ public:
     best_multiplicity = column_multiplicity( tt_start, free_set_size );
 
     return best_multiplicity;
+  }
+
+  std::vector<ac_decomposition_result> get_result()
+  {
+    return dec_result;
+  }
+
+  std::optional<klut_network> get_result_ntk()
+  {
+    if ( dec_result.empty() )
+      return std::nullopt;
+
+    return get_result_ntk_impl();
   }
   
 private:
@@ -749,13 +767,31 @@ private:
       }
     }
 
-    /* print isets */
+    /* save free_set functions */
+    std::vector<kitty::dynamic_truth_table> free_set_tts;
+    free_set_tts.reserve( best_multiplicity );
+
+    for ( uint32_t i = 0; i < best_multiplicity; ++i )
+    {
+      free_set_tts.emplace_back( free_set_size );
+    }
+    for ( auto const& pair : column_to_iset )
+    {
+      free_set_tts[pair.second]._bits[0] = pair.first;
+    }
+
+    best_free_set_tts = free_set_tts;
+
+    /* print isets  and free set*/
     if ( verbose )
     {
       std::cout << "iSets\n";
+      uint32_t i = 0;
       for ( auto iset : isets )
       {
         kitty::print_hex( iset );
+        std::cout << " of func ";
+        kitty::print_hex( free_set_tts[i++] );
         std::cout << "\n";
       }
     }
@@ -763,14 +799,16 @@ private:
     return isets;
   }
 
-  std::vector<kitty::dynamic_truth_table> test_support_minimization_isets( std::vector<kitty::dynamic_truth_table> const& isets, bool verbose = false )
+  void test_support_minimization_isets( std::vector<kitty::dynamic_truth_table> const& isets, bool verbose = false )
   {
     assert( best_multiplicity == 4 );
 
     std::vector<kitty::dynamic_truth_table> bound_sets( 2 );
-    std::vector<kitty::dynamic_truth_table> best_bound_sets;
     uint32_t best_cost_luts = UINT32_MAX;
     uint32_t best_cost_edges = UINT32_MAX;
+
+    /* reset bound set values */
+    best_bound_sets.clear();
 
     /* enumerate combinations */
     for ( int32_t i = 0; i < 6; ++i )
@@ -805,35 +843,57 @@ private:
         best_bound_sets = bound_sets;
         best_cost_luts = cost_luts;
         best_cost_edges = cost_edges;
+
+        /* load ONSET and OFFSET */
+        best_iset_onset.clear();
+        best_iset_offset.clear();
+        for ( uint32_t k = 0; k < bound_sets.size(); ++k )
+        {
+          /* TODO: fix (currently considers only 2 members) */
+          uint64_t onset = 0;
+          for ( uint32_t t = 0; t < 2; ++t )
+          {
+            onset |= UINT64_C( 1 ) << iset4_combinations[i][k][t];
+          }
+          best_iset_onset.push_back( onset );
+
+          uint64_t offset = 0;
+          for ( uint32_t t = 0; t < 2; ++t )
+          {
+            offset |= UINT64_C( 1 ) << iset4_off_set[i][k][t];
+          }
+          best_iset_offset.push_back( offset );
+        }
       }
     }
 
     if ( verbose && best_bound_sets.size() )
     {
-      std::cout << "Best bound sets: ";
+      std::cout << "Best bound sets:\n";
       kitty::print_hex( best_bound_sets[0] );
-      std::cout << " ";
+      std::cout << " with ONSET " << best_iset_onset[0];
+      std::cout << ", OFFSET " << best_iset_offset[0] << "\n";
       kitty::print_hex( best_bound_sets[1] );
-      std::cout << fmt::format( " using {} LUTs and {} leaves\n", best_cost_luts, best_cost_edges );
+      std::cout << " with ONSET " << best_iset_onset[1];
+      std::cout << ", OFFSET " << best_iset_offset[1] << "\n";
+      std::cout << fmt::format( "Using {} LUTs and {} leaves\n", best_cost_luts, best_cost_edges );
     }
-
-    return best_bound_sets;
   }
 
-  std::vector<ac_decomposition_result> generate_decomposition( std::vector<kitty::dynamic_truth_table> const& bound_sets, uint32_t free_set_size )
+  std::vector<ac_decomposition_result> generate_decomposition( uint32_t free_set_size )
   {
     std::vector<ac_decomposition_result> res;
 
-    for ( uint32_t i = 0; i < bound_sets.size(); ++i )
+    for ( uint32_t i = 0; i < best_bound_sets.size(); ++i )
     {
       ac_decomposition_result dec;
-      auto tt = bound_sets[i];
+      auto tt = best_bound_sets[i];
 
       /* compute and minimize support for bound set variables */
       uint32_t k = 0;
-      for ( uint32_t j = 0; j < num_vars; ++j )
+      for ( uint32_t j = 0; j < num_vars - free_set_size; ++j )
       {
-        if ( !kitty::has_var( bound_sets[i], j ) )
+        if ( !kitty::has_var( best_bound_sets[i], j ) )
           continue;
 
         if ( k < i )
@@ -846,7 +906,7 @@ private:
 
       if ( dec.support.size() < tt.num_vars() )
       {
-        dec.tt = shrink_to( tt );
+        dec.tt = kitty::shrink_to( tt, dec.support.size() );
       }
       else
       {
@@ -856,10 +916,64 @@ private:
       res.push_back( dec );
     }
 
-    /* TODO: save the chosen encoding to compute the top-level functionality */
-    // compute_top_lut( res, )
+    /* compute the decomposition for the top-level LUT */
+    compute_top_lut_decomposition( res, free_set_size );
 
-    return dec;
+    return res;
+  }
+
+  void compute_top_lut_decomposition( std::vector<ac_decomposition_result>& res, uint32_t free_set_size )
+  {
+    uint32_t top_vars = best_bound_sets.size() + free_set_size;
+    assert( top_vars <= ps.lut_size );
+
+    /* extend bound set functions with free_set_size LSB vars */
+    kitty::dynamic_truth_table tt( top_vars );
+
+    /* compute support */
+    res.emplace_back();
+    for ( uint32_t i = 0; i < free_set_size; ++i )
+    {
+      res.back().support.push_back( permutations[i] );
+    }
+
+    /* create functions for bound set */
+    std::vector<kitty::dynamic_truth_table> bound_set_vars;
+    for ( uint32_t i = 0; i < best_bound_sets.size(); ++i )
+    {
+      bound_set_vars.emplace_back( top_vars );
+      kitty::create_nth_var( bound_set_vars[i], free_set_size + i );
+
+      /* add bound-set variables to the support */
+      res.back().support.push_back( num_vars + i );
+    }
+
+    /* create final function */
+    for ( uint32_t i = 0; i < best_free_set_tts.size(); ++i )
+    {
+      auto free_set_tt = kitty::extend_to( best_free_set_tts[i], top_vars );
+
+      /* find MUX assignments */
+      for ( uint32_t j = 0; j < bound_set_vars.size(); ++j )
+      {
+        /* AND with ONSET */
+        if ( ( ( best_iset_onset[j] >> i ) & 1 ) )
+        {
+          free_set_tt &= bound_set_vars[j];
+        }
+
+        /* AND with OFFSET */
+        if ( ( ( best_iset_offset[j] >> i ) & 1 ) )
+        {
+          free_set_tt &= ~bound_set_vars[j];
+        }
+      }
+
+      tt |= free_set_tt;
+    }
+
+    /* add top-level LUT to result */
+    res.back().tt = tt;
   }
 
   inline void reposition_late_arriving_variables( std::vector<uint32_t> const& late_arriving )
@@ -878,6 +992,35 @@ private:
       std::swap( permutations[i], permutations[j] );
       kitty::swap_inplace( best_tt, i, j );
     }
+  }
+
+  inline klut_network get_result_ntk_impl()
+  {
+    klut_network ntk;
+
+    /* starting from index 2 */
+    for ( uint32_t i = 0; i < num_vars; ++i )
+    {
+      ntk.create_pi();
+    }
+
+    /* starting from index 2 + num_vars */
+    klut_network::signal f;
+    for ( auto const& lut : dec_result )
+    {
+      std::vector<klut_network::signal> children;
+
+      for ( auto index : lut.support )
+      {
+        children.push_back( index + 2 );
+      }
+
+      f = ntk.create_node( children, lut.tt );
+    }
+
+    ntk.create_po( f );
+
+    return ntk;
   }
 
   template<class Iterator>
@@ -899,6 +1042,11 @@ private:
 private:
   uint32_t best_multiplicity{ UINT32_MAX };
   TT best_tt;
+  std::vector<kitty::dynamic_truth_table> best_bound_sets;
+  std::vector<kitty::dynamic_truth_table> best_free_set_tts;
+  std::vector<uint64_t> best_iset_onset;
+  std::vector<uint64_t> best_iset_offset;
+  std::vector<ac_decomposition_result> dec_result;
 
   TT const& tt_start;
   uint32_t num_vars;
@@ -912,6 +1060,14 @@ private:
       { { 0, 3 }, { 0, 1 } },
       { { 0, 3 }, { 0, 2 } },
       { { 0, 3 }, { 2, 3 } } };
+
+  static constexpr uint32_t iset4_off_set[][2][2] =
+    { { { 0, 2 }, { 0, 1 } },
+      { { 0, 3 }, { 0, 1 } },
+      { { 1, 3 }, { 0, 1 } },
+      { { 1, 2 }, { 2, 3 } },
+      { { 1, 2 }, { 1, 3 } },
+      { { 1, 2 }, { 0, 1 } } };
 };
 
 } // namespace detail

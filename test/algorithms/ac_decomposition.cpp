@@ -3,8 +3,11 @@
 #include <vector>
 
 #include <kitty/constructors.hpp>
+#include <kitty/dynamic_truth_table.hpp>
 #include <kitty/static_truth_table.hpp>
 #include <mockturtle/algorithms/ac_decomposition.hpp>
+#include <mockturtle/algorithms/simulation.hpp>
+#include <mockturtle/networks/klut.hpp>
 
 using namespace mockturtle;
 
@@ -74,6 +77,15 @@ TEST_CASE( "ACD function 6 vars late arriving", "[ac_decomposition]" )
   {
     detail::ac_decomposition_impl acd( tt, 6, ps );
     CHECK( acd.run( late_arriving ) == 4 );
+
+    auto res = acd.get_result_ntk();
+    CHECK( res.has_value() );
+
+    klut_network klut = *res;
+
+    const auto tt_res = simulate<kitty::static_truth_table<6>>( klut )[0];
+
+    CHECK( tt_res == tt );
   }
 
   {
