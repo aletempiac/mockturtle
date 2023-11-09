@@ -102,7 +102,7 @@ public:
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
       auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
-      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
+      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, true );
 
       /* check for feasible solution that improves the cost */
       if ( cost <= ( 1 << i ) && cost < best_multiplicity )
@@ -118,7 +118,7 @@ public:
       return UINT32_MAX;
 
     /* compute isets */
-    std::vector<kitty::dynamic_truth_table> isets = compute_isets( free_set_size, true );
+    std::vector<kitty::dynamic_truth_table> isets = compute_isets( free_set_size );
 
     /* test for column multiplicity 4*/
     std::vector<kitty::dynamic_truth_table> bound_sets;
@@ -896,9 +896,9 @@ private:
         if ( !kitty::has_var( best_bound_sets[i], j ) )
           continue;
 
-        if ( k < i )
+        if ( k < j )
         {
-          kitty::swap_inplace( tt, k, i );
+          kitty::swap_inplace( tt, k, j );
         }
         dec.support.push_back( permutations[free_set_size + j] );
         ++k;
@@ -956,14 +956,12 @@ private:
       /* find MUX assignments */
       for ( uint32_t j = 0; j < bound_set_vars.size(); ++j )
       {
-        /* AND with ONSET */
+        /* AND with ONSET or OFFSET */
         if ( ( ( best_iset_onset[j] >> i ) & 1 ) )
         {
           free_set_tt &= bound_set_vars[j];
         }
-
-        /* AND with OFFSET */
-        if ( ( ( best_iset_offset[j] >> i ) & 1 ) )
+        else if ( ( ( best_iset_offset[j] >> i ) & 1 ) )
         {
           free_set_tt &= ~bound_set_vars[j];
         }
