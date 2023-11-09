@@ -122,10 +122,13 @@ public:
 
     /* test for column multiplicity 4*/
     std::vector<kitty::dynamic_truth_table> bound_sets;
-    if ( best_multiplicity == 4 )
-    {
-      test_support_minimization_isets( isets, true );
-    }
+    // if ( best_multiplicity == 4 )
+    // {
+    //   test_support_minimization_isets( isets, true );
+    // }
+    // else
+    generate_support_minimization_encodings();
+    solve_min_support_exact( isets );
 
     /* if feasible decomposition */
     if ( best_bound_sets.empty() )
@@ -1037,6 +1040,375 @@ private:
     std::cout << "]\n";
   }
 
+  void generate_support_minimization_encodings()
+  {
+    uint32_t count = 0;
+
+    /* enable don't cares only if not a power of 2 */
+    uint32_t num_combs = 3;
+    if ( __builtin_popcount( best_multiplicity ) == 1 )
+    {
+      num_combs = 1 << best_multiplicity;
+      support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
+      generate_support_minimization_encodings_rec<false>( 0, 0, 0, count );
+    }
+    else
+    {
+      for ( uint32_t i = 1; i < best_multiplicity; ++i )
+      {
+        num_combs = ( num_combs << 1 ) + num_combs;
+      }
+      support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
+      generate_support_minimization_encodings_rec<true>( 0, 0, 0, count );
+    }
+
+    assert( count = num_combs );
+
+    /* print combinations */
+    // std::cout << "{ ";
+    // for ( auto const& entry : support_minimization_encodings )
+    // {
+    //   std::cout << "{ " << entry[0] << ", " << entry[1] << " }, ";
+    // }
+    // std::cout << "}\n";
+  }
+
+  template<bool enable_dcset>
+  bool generate_support_minimization_encodings_rec( uint64_t onset, uint64_t offset, uint32_t var, uint32_t &count )
+  {
+    if ( var == best_multiplicity )
+    {
+      support_minimization_encodings[count][0] = onset;
+      support_minimization_encodings[count][1] = offset;
+      ++count;
+      return;
+    }
+
+    /* move var in DCSET */
+    if constexpr ( enable_dcset )
+    {
+      generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+    }
+
+    /* move var in ONSET */
+    onset |= 1 << var;
+    generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+    onset &= ~( 1 << var );
+
+    /* move var in OFFSET */
+    offset |= 1 << var;
+    generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+    offset &= ~( 1 << var );
+  }
+
+  void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets )
+  {
+    std::vector<uint64_t> columns;
+    std::vector<uint32_t> costs;
+    std::vector<uint32_t> indexes;
+
+    /* create vovering matrix */
+    create_covering_matrix( isets, columns, costs, indexes );
+
+    /* solve the covering problem */
+    std::array<uint32_t, 5> solution = covering_solve_exact<true>( columns, costs, 100 );
+
+    /* check for failed decomposition */
+    best_bound_sets.clear();
+    if ( solution[0] == UINT32_MAX )
+    {
+      return; 
+    }
+
+    /* print */
+    std::cout << "Solution: ";
+    for ( uint32_t i = 0; i < solution[4]; ++i )
+    {
+      std::cout << solution[i] << " ";
+    }
+    std::cout << "\n";
+
+    /* compute best bound sets */
+    best_iset_onset.clear();
+    best_iset_offset.clear();
+    for ( uint32_t i = 0; i < solution[4]; ++i )
+    {
+      kitty::dynamic_truth_table tt( isets[0].num_vars() );
+
+      const uint32_t onset = support_minimization_encodings[indexes[solution[i]]][0];
+      for ( uint32_t j = 0; j < best_multiplicity; ++j )
+      {
+        if ( ( ( onset >> j ) & 1 ) )
+        {
+          tt |= isets[j];
+        }
+      }
+
+      best_bound_sets.push_back( tt );
+      best_iset_onset.push_back( onset );
+      best_iset_offset.push_back( support_minimization_encodings[indexes[solution[i]]][1] );
+    }
+  }
+
+  void create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<uint64_t>& columns, std::vector<uint32_t>& costs, std::vector<uint32_t>& indexes )
+  {
+    assert( best_multiplicity < 12 );
+
+    /* insert dichotomies */
+    for ( uint32_t i = 0; i < support_minimization_encodings.size(); ++i )
+    {
+      uint32_t const onset = support_minimization_encodings[i][0];
+      uint32_t const offset = support_minimization_encodings[i][1];
+
+      uint32_t ones_onset = __builtin_popcount( onset );
+      uint32_t ones_offset = __builtin_popcount( offset );
+
+      /* filter columns that do not distinguish pairs */
+      if ( ones_onset == 0 || ones_offset == 0 || ones_onset == best_multiplicity || ones_offset == best_multiplicity )
+      {
+        continue;
+      }
+
+      /* compute function and distinguishable seed dichotomies */
+      uint64_t column = 0;
+      kitty::dynamic_truth_table tt( isets[0].num_vars() );
+      uint32_t pair_pointer = 0;
+      for ( uint32_t j = 0; j < best_multiplicity; ++j )
+      {
+        if ( ( ( onset >> j ) & 1 ) )
+        {
+          tt |= isets[j];
+        }
+
+        /* compute included seed dichotomies */
+        for ( uint32_t k = j + 1; k < best_multiplicity; ++k )
+        {
+          /* if is not in ONSET and is in OFFSET */
+          uint32_t test_pair = ( onset >> j ) & ( ( ~onset & offset ) >> k );
+
+          if ( ( test_pair & 1 ) )
+          {
+            column |= UINT64_C( 1 ) << ( pair_pointer );
+          }
+
+          ++pair_pointer;
+        }
+      }
+
+      /* compute cost */
+      uint32_t cost = 0;
+      for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
+      {
+        /* TODO: consider don't cares in the cost */
+        cost += kitty::has_var( tt, j ) ? 1 : 0;
+      }
+
+      /* discard solutions with support over LUT size */
+      if ( cost > ps.lut_size )
+        continue;
+
+      if ( cost > 1 )
+      {
+        cost |= 1 << isets[0].num_vars();
+      }
+
+      /* insert */
+      columns.push_back( column );
+      costs.push_back( cost );
+      indexes.push_back( i );
+    }
+
+    /* print */
+    if ( best_multiplicity < 6 )
+    {
+      for ( uint32_t i = 0; i < columns.size(); ++i )
+      {
+        std::cout << indexes[i] << " " << costs[i] << " \t" << columns[i] << "\n";
+      }
+    }
+  }
+
+  template<bool limit_iter = false>
+  std::array<uint32_t, 5> covering_solve_exact( std::vector<uint64_t> const& columns, std::vector<uint32_t> const& costs, uint32_t max_iter = 100 )
+  {
+    /* last value of res contains the size of the bound set */
+    std::array<uint32_t, 5> res = { UINT32_MAX };
+    uint32_t best_cost = UINT32_MAX;
+    uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
+    bool looping = true;
+
+    assert( best_multiplicity <= 16 );
+
+    /* determine the number of needed loops*/
+    if ( best_multiplicity <= 4 )
+    {
+      res[4] = 2;
+      for ( uint32_t i = 0; i < columns.size() - 1; ++i )
+      {
+        for ( uint32_t j = 1; j < columns.size(); ++j )
+        {
+          /* filter by cost */
+          if ( costs[i] + costs[j] >= best_cost )
+            continue;
+
+          /* check validity */
+          if ( __builtin_popcountl( columns[i] | columns[j] ) == combinations )
+          {
+            res[0] = i;
+            res[1] = j;
+            best_cost = costs[i] + costs[j];
+          }
+        }
+      }
+    }
+    else if ( best_multiplicity <= 8 )
+    {
+      res[4] = 3;
+      for ( uint32_t i = 0; i < columns.size() - 2 && looping; ++i )
+      {
+        /* limit */
+        if constexpr ( limit_iter )
+        {
+          if ( best_cost < UINT32_MAX && --max_iter == 0 )
+          {
+            looping = false;
+          }
+        }
+
+        for ( uint32_t j = 1; j < columns.size() - 1 && looping; ++j )
+        {
+          uint64_t current_columns = columns[i] | columns[j];
+          uint32_t current_cost = costs[i] + costs[j];
+
+          /* limit */
+          if constexpr ( limit_iter )
+          {
+            if ( best_cost < UINT32_MAX && --max_iter == 0 )
+            {
+              looping = false;
+            }
+          }
+
+          /* bound */
+          if ( current_cost >= best_cost )
+          {
+            continue;
+          }
+
+          for ( uint32_t k = 2; k < columns.size() && looping; ++k )
+          {
+            /* limit */
+            if constexpr ( limit_iter )
+            {
+              if ( best_cost < UINT32_MAX && --max_iter == 0 )
+              {
+                looping = false;
+              }
+            }
+
+            /* filter by cost */
+            if ( current_cost + costs[k] >= best_cost )
+              continue;
+
+            /* check validity */
+            if ( __builtin_popcountl( current_columns | columns[k] ) == combinations )
+            {
+              res[0] = i;
+              res[1] = j;
+              res[2] = k;
+              best_cost = current_cost + costs[k];
+            }
+          }
+        }
+      }
+    }
+    else
+    {
+      res[4] = 4;
+      for ( uint32_t i = 0; i < columns.size() - 3 && looping; ++i )
+      {
+        /* limit */
+        if constexpr ( limit_iter )
+        {
+          if ( best_cost < UINT32_MAX && --max_iter == 0 )
+          {
+            looping = false;
+          }
+        }
+
+        for ( uint32_t j = 1; j < columns.size() - 2 && looping; ++j )
+        {
+          uint64_t current_columns0 = columns[i] | columns[j];
+          uint32_t current_cost0 = costs[i] + costs[j];
+
+          /* limit */
+          if constexpr ( limit_iter )
+          {
+            if ( best_cost < UINT32_MAX && --max_iter == 0 )
+            {
+              looping = false;
+            }
+          }
+
+          /* bound */
+          if ( current_cost0 >= best_cost )
+          {
+            continue;
+          }
+
+          for ( uint32_t k = 2; k < columns.size() - 1 && looping; ++k )
+          {
+            uint64_t current_columns1 = current_columns0 | columns[k];
+            uint32_t current_cost1 = current_cost0 + costs[k];
+
+            /* limit */
+            if constexpr ( limit_iter )
+            {
+              if ( best_cost < UINT32_MAX && --max_iter == 0 )
+              {
+                looping = false;
+              }
+            }
+
+            /* bound */
+            if ( current_cost1 >= best_cost )
+            {
+              continue;
+            }
+
+            for ( uint32_t t = 3; t < columns.size() && looping; ++t )
+            {
+              /* limit */
+              if constexpr ( limit_iter )
+              {
+                if ( best_cost < UINT32_MAX && --max_iter == 0 )
+                {
+                  looping = false;
+                }
+              }
+
+              /* filter by cost */
+              if ( current_cost1 + costs[t] >= best_cost )
+                continue;
+
+              /* check validity */
+              if ( __builtin_popcountl( current_columns1 | columns[t] ) == combinations )
+              {
+                res[0] = i;
+                res[1] = j;
+                res[2] = k;
+                res[3] = t;
+                best_cost = current_cost1 + costs[t];
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return res;
+  }
+
 private:
   uint32_t best_multiplicity{ UINT32_MAX };
   TT best_tt;
@@ -1046,10 +1418,22 @@ private:
   std::vector<uint64_t> best_iset_offset;
   std::vector<ac_decomposition_result> dec_result;
 
+  std::vector<std::array<uint32_t, 2>> support_minimization_encodings;
+
   TT const& tt_start;
   uint32_t num_vars;
   ac_decomposition_params const& ps;
   std::vector<uint32_t> permutations;
+
+  static constexpr uint32_t iset3_combinations[][2][2] =
+    { { { 0 }, { 1 } },
+      { { 1 }, { 0 } },
+      { { 2 }, { 0 } } };
+  
+  static constexpr uint32_t iset3_off_set[][2][2] =
+    { { { 1, 2 }, { 2 } },
+      { { 0, 2 }, { 2 } },
+      { { 0, 1 }, { 1 } } };
 
   static constexpr uint32_t iset4_combinations[][2][2] =
     { { { 1, 3 }, { 2, 3 } },

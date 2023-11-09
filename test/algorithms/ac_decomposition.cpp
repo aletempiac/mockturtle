@@ -11,6 +11,29 @@
 
 using namespace mockturtle;
 
+TEST_CASE( "ACD function 5 vars FS 2", "[ac_decomposition]" )
+{
+  kitty::static_truth_table<5> tt;
+  tt._bits = 0x01221002;
+
+  ac_decomposition_params ps;
+  ps.lut_size = 4;
+  detail::ac_decomposition_impl acd( tt, 5, ps );
+
+  std::vector<uint32_t> late_arriving = { 0, 1 };
+
+  CHECK( acd.run( late_arriving ) == 3 );
+
+  auto res = acd.get_result_ntk();
+  CHECK( res.has_value() );
+
+  klut_network klut = *res;
+
+  const auto tt_res = simulate<kitty::static_truth_table<5>>( klut )[0];
+
+  CHECK( tt_res == tt );
+}
+
 TEST_CASE( "ACD function 6 vars FS 2", "[ac_decomposition]" )
 {
   kitty::static_truth_table<6> tt;
@@ -142,8 +165,16 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
 
   {
     detail::ac_decomposition_impl acd( tt, 8, ps );
-
     CHECK( acd.run( late_arriving ) == 4 );
+
+    auto res = acd.get_result_ntk();
+    CHECK( res.has_value() );
+
+    klut_network klut = *res;
+
+    const auto tt_res = simulate<kitty::static_truth_table<8>>( klut )[0];
+
+    CHECK( tt_res == tt );
   }
 
   {
@@ -151,6 +182,15 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
 
     late_arriving.push_back( 3 );
     CHECK( acd.run( late_arriving ) == 4 );
+
+    auto res = acd.get_result_ntk();
+    CHECK( res.has_value() );
+
+    klut_network klut = *res;
+
+    const auto tt_res = simulate<kitty::static_truth_table<8>>( klut )[0];
+
+    CHECK( tt_res == tt );
   }
 
   {
@@ -158,6 +198,15 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
 
     late_arriving.push_back( 6 );
     CHECK( acd.run( late_arriving ) == 7 );
+
+    auto res = acd.get_result_ntk();
+    CHECK( res.has_value() );
+
+    klut_network klut = *res;
+
+    const auto tt_res = simulate<kitty::static_truth_table<8>>( klut )[0];
+
+    CHECK( tt_res == tt );
   }
 
   {
@@ -167,6 +216,15 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
     late_arriving.pop_back();
     late_arriving.push_back( 7 );
     CHECK( acd.run( late_arriving ) == 6 );
+
+    auto res = acd.get_result_ntk();
+    CHECK( res.has_value() );
+
+    klut_network klut = *res;
+
+    const auto tt_res = simulate<kitty::static_truth_table<8>>( klut )[0];
+
+    CHECK( tt_res == tt );
   }
 }
 
