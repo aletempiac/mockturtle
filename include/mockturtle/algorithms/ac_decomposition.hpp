@@ -71,6 +71,15 @@ namespace detail
 template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
 class ac_decomposition_impl
 {
+private:
+  struct encoding_matrix
+  {
+    uint64_t column{ 0 };
+    uint32_t cost{ 0 };
+    uint32_t index{ 0 };
+    uint32_t sort_cost{ 0 };
+  };
+
 public:
   ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps )
       : tt_start( tt )
@@ -1103,15 +1112,13 @@ private:
 
   void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets )
   {
-    std::vector<uint64_t> columns;
-    std::vector<uint32_t> costs;
-    std::vector<uint32_t> indexes;
+    std::vector<encoding_matrix> matrix;
 
     /* create vovering matrix */
-    create_covering_matrix( isets, columns, costs, indexes );
+    create_covering_matrix( isets, matrix, best_multiplicity > 4 );
 
     /* solve the covering problem */
-    std::array<uint32_t, 5> solution = covering_solve_exact<true>( columns, costs, 100 );
+    std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100 );
 
     /* check for failed decomposition */
     best_bound_sets.clear();
@@ -1135,7 +1142,7 @@ private:
     {
       kitty::dynamic_truth_table tt( isets[0].num_vars() );
 
-      const uint32_t onset = support_minimization_encodings[indexes[solution[i]]][0];
+      const uint32_t onset = support_minimization_encodings[matrix[solution[i]].index][0];
       for ( uint32_t j = 0; j < best_multiplicity; ++j )
       {
         if ( ( ( onset >> j ) & 1 ) )
@@ -1146,13 +1153,14 @@ private:
 
       best_bound_sets.push_back( tt );
       best_iset_onset.push_back( onset );
-      best_iset_offset.push_back( support_minimization_encodings[indexes[solution[i]]][1] );
+      best_iset_offset.push_back( support_minimization_encodings[matrix[solution[i]].index][1] );
     }
   }
 
-  void create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<uint64_t>& columns, std::vector<uint32_t>& costs, std::vector<uint32_t>& indexes )
+  void create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<encoding_matrix>& matrix, bool sort )
   {
     assert( best_multiplicity < 12 );
+    uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
 
     /* insert dichotomies */
     for ( uint32_t i = 0; i < support_minimization_encodings.size(); ++i )
@@ -1212,24 +1220,33 @@ private:
         cost |= 1 << isets[0].num_vars();
       }
 
+      uint32_t sort_cost = cost + ( ( combinations -  __builtin_popcountl( column ) ) << num_vars );
+
       /* insert */
-      columns.push_back( column );
-      costs.push_back( cost );
-      indexes.push_back( i );
+      matrix.emplace_back( encoding_matrix{ column, cost, i, sort_cost  } );
     }
 
-    /* print */
-    if ( best_multiplicity < 6 )
+    if ( !sort )
     {
-      for ( uint32_t i = 0; i < columns.size(); ++i )
-      {
-        std::cout << indexes[i] << " " << costs[i] << " \t" << columns[i] << "\n";
-      }
+      return;
     }
+
+    std::sort( matrix.begin(), matrix.end(), [&]( auto const& a, auto const& b ) {
+      return a.sort_cost < b.sort_cost;
+    } );
+
+    /* print */
+    // if ( best_multiplicity < 6 )
+    // {
+    //   for ( uint32_t i = 0; i < columns.size(); ++i )
+    //   {
+    //     std::cout << indexes[i] << " " << costs[i] << " \t" << columns[i] << "\n";
+    //   }
+    // }
   }
 
   template<bool limit_iter = false>
-  std::array<uint32_t, 5> covering_solve_exact( std::vector<uint64_t> const& columns, std::vector<uint32_t> const& costs, uint32_t max_iter = 100 )
+  std::array<uint32_t, 5> covering_solve_exact( std::vector<encoding_matrix>& matrix, uint32_t max_iter = 100 )
   {
     /* last value of res contains the size of the bound set */
     std::array<uint32_t, 5> res = { UINT32_MAX };
@@ -1243,20 +1260,20 @@ private:
     if ( best_multiplicity <= 4 )
     {
       res[4] = 2;
-      for ( uint32_t i = 0; i < columns.size() - 1; ++i )
+      for ( uint32_t i = 0; i < matrix.size() - 1; ++i )
       {
-        for ( uint32_t j = 1; j < columns.size(); ++j )
+        for ( uint32_t j = 1; j < matrix.size(); ++j )
         {
           /* filter by cost */
-          if ( costs[i] + costs[j] >= best_cost )
+          if ( matrix[i].cost + matrix[j].cost >= best_cost )
             continue;
 
           /* check validity */
-          if ( __builtin_popcountl( columns[i] | columns[j] ) == combinations )
+          if ( __builtin_popcountl( matrix[i].column | matrix[j].column ) == combinations )
           {
             res[0] = i;
             res[1] = j;
-            best_cost = costs[i] + costs[j];
+            best_cost = matrix[i].cost + matrix[j].cost;
           }
         }
       }
@@ -1264,7 +1281,7 @@ private:
     else if ( best_multiplicity <= 8 )
     {
       res[4] = 3;
-      for ( uint32_t i = 0; i < columns.size() - 2 && looping; ++i )
+      for ( uint32_t i = 0; i < matrix.size() - 2 && looping; ++i )
       {
         /* limit */
         if constexpr ( limit_iter )
@@ -1275,10 +1292,10 @@ private:
           }
         }
 
-        for ( uint32_t j = 1; j < columns.size() - 1 && looping; ++j )
+        for ( uint32_t j = 1; j < matrix.size() - 1 && looping; ++j )
         {
-          uint64_t current_columns = columns[i] | columns[j];
-          uint32_t current_cost = costs[i] + costs[j];
+          uint64_t current_columns = matrix[i].column | matrix[j].column;
+          uint32_t current_cost = matrix[i].cost + matrix[j].cost;
 
           /* limit */
           if constexpr ( limit_iter )
@@ -1295,7 +1312,7 @@ private:
             continue;
           }
 
-          for ( uint32_t k = 2; k < columns.size() && looping; ++k )
+          for ( uint32_t k = 2; k < matrix.size() && looping; ++k )
           {
             /* limit */
             if constexpr ( limit_iter )
@@ -1307,16 +1324,16 @@ private:
             }
 
             /* filter by cost */
-            if ( current_cost + costs[k] >= best_cost )
+            if ( current_cost + matrix[k].cost >= best_cost )
               continue;
 
             /* check validity */
-            if ( __builtin_popcountl( current_columns | columns[k] ) == combinations )
+            if ( __builtin_popcountl( current_columns | matrix[k].column ) == combinations )
             {
               res[0] = i;
               res[1] = j;
               res[2] = k;
-              best_cost = current_cost + costs[k];
+              best_cost = current_cost + matrix[k].cost;
             }
           }
         }
@@ -1325,7 +1342,7 @@ private:
     else
     {
       res[4] = 4;
-      for ( uint32_t i = 0; i < columns.size() - 3 && looping; ++i )
+      for ( uint32_t i = 0; i < matrix.size() - 3 && looping; ++i )
       {
         /* limit */
         if constexpr ( limit_iter )
@@ -1336,10 +1353,10 @@ private:
           }
         }
 
-        for ( uint32_t j = 1; j < columns.size() - 2 && looping; ++j )
+        for ( uint32_t j = 1; j < matrix.size() - 2 && looping; ++j )
         {
-          uint64_t current_columns0 = columns[i] | columns[j];
-          uint32_t current_cost0 = costs[i] + costs[j];
+          uint64_t current_columns0 = matrix[i].column | matrix[j].column;
+          uint32_t current_cost0 = matrix[i].cost + matrix[j].cost;
 
           /* limit */
           if constexpr ( limit_iter )
@@ -1356,10 +1373,10 @@ private:
             continue;
           }
 
-          for ( uint32_t k = 2; k < columns.size() - 1 && looping; ++k )
+          for ( uint32_t k = 2; k < matrix.size() - 1 && looping; ++k )
           {
-            uint64_t current_columns1 = current_columns0 | columns[k];
-            uint32_t current_cost1 = current_cost0 + costs[k];
+            uint64_t current_columns1 = current_columns0 | matrix[k].column;
+            uint32_t current_cost1 = current_cost0 + matrix[k].cost;
 
             /* limit */
             if constexpr ( limit_iter )
@@ -1376,7 +1393,7 @@ private:
               continue;
             }
 
-            for ( uint32_t t = 3; t < columns.size() && looping; ++t )
+            for ( uint32_t t = 3; t < matrix.size() && looping; ++t )
             {
               /* limit */
               if constexpr ( limit_iter )
@@ -1388,17 +1405,17 @@ private:
               }
 
               /* filter by cost */
-              if ( current_cost1 + costs[t] >= best_cost )
+              if ( current_cost1 + matrix[t].cost >= best_cost )
                 continue;
 
               /* check validity */
-              if ( __builtin_popcountl( current_columns1 | columns[t] ) == combinations )
+              if ( __builtin_popcountl( current_columns1 | matrix[t].column ) == combinations )
               {
                 res[0] = i;
                 res[1] = j;
                 res[2] = k;
                 res[3] = t;
-                best_cost = current_cost1 + costs[t];
+                best_cost = current_cost1 + matrix[t].cost;
               }
             }
           }
@@ -1424,6 +1441,8 @@ private:
   uint32_t num_vars;
   ac_decomposition_params const& ps;
   std::vector<uint32_t> permutations;
+
+  // static constexpr uint32_t iset3_combinations[][2] = { { 1, 6 }, { 2, 5 }, { 4, 3 } };
 
   static constexpr uint32_t iset3_combinations[][2][2] =
     { { { 0 }, { 1 } },
