@@ -122,7 +122,7 @@ public:
 
     /* run ACD trying different bound sets and free sets */
     uint32_t free_set_size = late_arriving.size();
-    uint32_t offset = late_arriving.size();
+    uint32_t offset = std::max( static_cast<uint32_t>( late_arriving.size() ), 1u );
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
       auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
