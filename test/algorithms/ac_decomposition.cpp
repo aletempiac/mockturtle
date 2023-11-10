@@ -282,3 +282,17 @@ TEST_CASE( "ACD function 10 vars", "[ac_decomposition]" )
   detail::ac_decomposition_impl acd( tt, 10, ps );
   CHECK( acd.run( late_arriving ) == UINT32_MAX );
 }
+
+TEST_CASE( "ACD function 7 vars with don't cares", "[ac_decomposition]" )
+{
+  kitty::static_truth_table<7> tt;
+  kitty::create_from_hex_string( tt, "02020202020200020202020202020202" );
+
+  ac_decomposition_params ps;
+  ps.lut_size = 6;
+
+  std::vector<uint32_t> late_arriving = { 3, 6 };
+
+  detail::ac_decomposition_impl acd( tt, 7, ps );
+  CHECK( acd.run( late_arriving ) == 3 );
+}

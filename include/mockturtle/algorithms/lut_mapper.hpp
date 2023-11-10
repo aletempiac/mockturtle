@@ -2271,6 +2271,9 @@ private:
         return;
       }
 
+      /* verify equivalence */
+      assert( acd.verify_equivalence() );
+
       /* get decomposition */
       acds.emplace_back();
       acd_lut_data_t& acd_lut = acds.back();

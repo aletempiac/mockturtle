@@ -48,6 +48,7 @@
 #include <kitty/print.hpp>
 #include <kitty/traits.hpp>
 
+#include "simulation.hpp"
 #include "../networks/klut.hpp"
 
 namespace mockturtle
@@ -282,6 +283,14 @@ public:
       return std::nullopt;
 
     return get_result_ntk_impl();
+  }
+
+  bool verify_equivalence()
+  {
+    if ( dec_result.empty() )
+      return false;
+
+    return verify_equivalence_impl();
   }
   
 private:
@@ -1265,6 +1274,7 @@ private:
       uint32_t cost = 0;
       for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
       {
+        // cost += kitty::has_var( tt, j ) ? 1 : 0;
         cost += kitty::has_var( tt, care, j ) ? 1 : 0;
       }
 
@@ -1522,6 +1532,22 @@ private:
         tt._bits[i + j + step] = tt._bits[i + j];
       }
     }
+  }
+
+  bool verify_equivalence_impl()
+  {
+    klut_network klut = get_result_ntk_impl();
+
+    default_simulator<kitty::dynamic_truth_table> sim( num_vars );
+    const auto tt_res = simulate<kitty::dynamic_truth_table>( klut, sim )[0];
+
+    if ( tt_res != tt_start )
+    {
+      kitty::print_hex( tt_start ); std::cout << "\n";
+      kitty::print_hex( tt_res ); std::cout << std::endl;
+    }
+
+    return tt_res == tt_start;
   }
 
 private:
