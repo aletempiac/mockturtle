@@ -2872,7 +2872,15 @@ private:
 
       kitty::dynamic_truth_table tt;
       std::vector<signal<klut_network>> children;
-      std::tie( tt, children ) = create_lut( n, node_to_signal, node_driver_type );
+
+      if ( ps.delay_oriented_acd && best_cut.size() > ps.cut_enumeration_ps.cut_size )
+      {
+        std::tie( tt, children ) = create_lut_acd( res, n, node_to_signal, node_driver_type );
+      }
+      else
+      {
+        std::tie( tt, children ) = create_lut( n, node_to_signal, node_driver_type );
+      }
       edges += children.size();
 
       switch ( node_driver_type[n] )
@@ -3031,6 +3039,58 @@ private:
     st.area = area;
     st.delay = delay;
     st.edges = edges;
+  }
+
+  inline lut_info create_lut_acd( klut_network& res, node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, node_map<driver_type, Ntk> const& node_driver_type )
+  {
+    auto const& best_cut = cuts[ntk.node_to_index( n )][0];
+
+    std::vector<signal<klut_network>> children;
+    for ( auto const& l : best_cut )
+    {
+      children.push_back( node_to_signal[ntk.index_to_node( l )] );
+    }
+
+    /* get AC decomposition result */
+    assert( best_cut->data.acd_index != UINT32_MAX );
+    auto const& decomp = acds[best_cut->data.acd_index].decomposition;
+
+    /* create bound-set LUTs */
+    for ( uint32_t i = 0; i < decomp.size() - 1; ++i )
+    {
+      std::vector<signal<klut_network>> support;
+      TT tt = decomp[i].tt;
+
+      uint32_t j = 0;
+      for ( auto var : decomp[i].support )
+      {
+        support.push_back( children[var] );
+
+        // if ( node_driver_type[ntk.index_to_node( children[var] )] == driver_type::neg )
+        // {
+        //   kitty::flip_inplace( tt, j++ );
+        // }
+      }
+      edges += support.size();
+
+      children.push_back( res.create_node( support, tt ) );
+    }
+
+    /* get the top LUT */
+    uint32_t j = 0;
+    TT tt = decomp.back().tt;
+    std::vector<signal<klut_network>> support;
+    for ( auto var : decomp.back().support )
+    {
+      // if ( var < best_cut.size() && node_driver_type[ntk.index_to_node( children[var] )] == driver_type::neg )
+      // {
+      //   kitty::flip_inplace( tt, j );
+      // }
+      support.push_back( children[var] );
+      ++j;
+    }
+
+    return { tt, support };
   }
 
   void minimize_support( TT& tt, std::vector<signal<klut_network>>& children )
