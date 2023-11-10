@@ -50,6 +50,7 @@
 #include "../networks/klut.hpp"
 #include "../utils/cost_functions.hpp"
 #include "../utils/cuts.hpp"
+#include "../utils/decomposition_utils.hpp"
 #include "../utils/node_map.hpp"
 #include "../utils/stopwatch.hpp"
 #include "../utils/truth_table_cache.hpp"
@@ -57,6 +58,7 @@
 #include "../views/mapping_view.hpp"
 #include "../views/mffc_view.hpp"
 #include "../views/topo_view.hpp"
+#include "ac_decomposition.hpp"
 #include "cleanup.hpp"
 #include "cut_enumeration.hpp"
 #include "exorcism.hpp"
@@ -113,6 +115,12 @@ struct lut_map_params
 
   /*! \brief Try to expand the cuts. */
   bool cut_expansion{ true };
+
+  /*! \brief Use delay-oriented Ashenhurst-Curtis decomposition. */
+  bool delay_oriented_acd{ false };
+
+  /*! \brief Cut size for delay-oriented Ashenhurst-Curtis decomposition. */
+  uint32_t acd_cut_size{ 8u };
 
   /*! \brief Remove the cuts that are contained in others */
   bool remove_dominated_cuts{ true };
@@ -179,6 +187,7 @@ struct cut_enumeration_lut_cut
   float area_flow{ 0 };
   float edge_flow{ 0 };
   bool ignore{ false };
+  uint32_t acd_index{ 0 };
 };
 
 enum class lut_cut_sort_type
@@ -603,13 +612,22 @@ private:
     mixed = 3
   };
 
+  template<uint32_t NumInputs>
+  struct acd_lut_data
+  {
+    std::vector<ac_decomposition_result> decomposition;
+    std::array<uint32_t, NumInputs> delays;
+    uint32_t edges;
+  };
+
 public:
-  static constexpr uint32_t max_cut_num = 32;
+  static constexpr uint32_t max_cut_num = 16;
   static constexpr uint32_t max_cut_size = 16;
   static constexpr uint32_t max_cubes = 64;
   static constexpr uint32_t max_sop_decomp_size = max_cut_size * ( max_cubes + 1 );
-  using cut_t = cut<max_cut_size, cut_data<StoreFunction, cut_enumeration_lut_cut>>;
+  using cut_t = cut<max_cut_size, cut_data<true, cut_enumeration_lut_cut>>;
   using cut_set_t = lut_cut_set<cut_t, max_cut_num>;
+  using acd_lut_data_t = acd_lut_data<max_cut_size>;
   using node = typename Ntk::node;
   using cut_merge_t = typename std::array<cut_set_t*, Ntk::max_fanin_size + 1>;
   using TT = kitty::dynamic_truth_table;
@@ -619,6 +637,7 @@ public:
   using isop_cache = std::vector<sop_t>;
   using cubes_queue_t = std::priority_queue<uint32_t, std::vector<uint32_t>, std::greater<uint32_t>>;
   using lut_info = std::pair<kitty::dynamic_truth_table, std::vector<signal<klut_network>>>;
+  using acd_info = std::vector<acd_lut_data_t>;
 
 public:
   explicit lut_map_impl( Ntk& ntk, lut_map_params const& ps, lut_map_stats& st )
@@ -630,8 +649,9 @@ public:
   {
     assert( ps.cut_enumeration_ps.cut_limit < max_cut_num && "cut_limit exceeds the compile-time limit for the maximum number of cuts" );
 
-    if constexpr ( StoreFunction )
-    {
+    /* TODO: correct */
+    // if constexpr ( StoreFunction )
+    // {
       TT zero( 0u ), proj( 1u );
       kitty::create_nth_var( proj, 0u );
 
@@ -654,7 +674,7 @@ public:
         isops.emplace_back();                       /* empty ISOP for constant */
         isops.push_back( { kitty::cube{ 1, 1 } } ); /* ISOP for variable */
       }
-    }
+    // }
   }
 
   klut_network run()
@@ -710,13 +730,27 @@ private:
       {
         compute_mapping<false, false>( lut_cut_sort_type::DELAY, true, true );
         compute_required_time();
-        compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
-        compute_required_time();
-        compute_mapping<true, false>( area_sort, true, true );
+
+        if ( ps.delay_oriented_acd )
+        {
+          /* do ACD */
+          compute_mapping_acd<false, false>( lut_cut_sort_type::DELAY, true );
+          compute_required_time();
+        }
+
+        // compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
+        // compute_required_time();
+        // compute_mapping<true, false>( area_sort, true, true );
       }
       else
       {
         compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
+
+        // if ( ps.delay_oriented_acd )
+        // {
+        //   /* do ACD */
+        //   compute_mapping_acd<false, false>( lut_cut_sort_type::DELAY, true );
+        // }
       }
     }
     else
@@ -869,6 +903,55 @@ private:
         stats << fmt::format( "[i] Delay    : Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
       }
       st.round_stats.push_back( stats.str() );
+    }
+  }
+
+  template<bool DO_AREA, bool ELA>
+  void compute_mapping_acd( lut_cut_sort_type const sort, bool preprocess )
+  {
+    cuts_total = 0;
+    for ( auto const& n : topo_order )
+    {
+      if constexpr ( !ELA )
+      {
+        auto const index = ntk.node_to_index( n );
+        if ( !preprocess && iteration != 0 )
+        {
+          node_match[index].est_refs = ( 2.0 * node_match[index].est_refs + 1.0 * node_match[index].map_refs ) / 3.0;
+        }
+        else
+        {
+          node_match[index].est_refs = static_cast<float>( node_match[index].map_refs );
+        }
+      }
+
+      if ( ntk.is_constant( n ) || ntk.is_ci( n ) )
+      {
+        continue;
+      }
+
+      /* always recompute cuts */
+      if constexpr ( Ntk::min_fanin_size == 2 && Ntk::max_fanin_size == 2 )
+      {
+        compute_best_cut2_acd<DO_AREA, ELA>( n, sort, preprocess );
+      }
+      else
+      {
+        compute_best_cut<DO_AREA, ELA>( n, sort, preprocess );
+      }
+    }
+
+    set_mapping_refs<ELA>();
+
+    if constexpr ( DO_AREA )
+    {
+      ++area_iteration;
+    }
+
+    /* round stats */
+    {
+      std::string stats = fmt::format( "[i] Delay ACD: Delay = {:8d}  Area = {:8d}  Edges = {:8d}  Cuts = {:8d}\n", delay, area, edges, cuts_total );
+      st.round_stats.push_back( stats );
     }
   }
 
@@ -1043,6 +1126,12 @@ private:
         }
       }
 
+      if ( ps.delay_oriented_acd && cuts[index][0].size() > ps.cut_enumeration_ps.cut_size )
+      {
+        compute_required_acd( index );
+        continue;
+      }
+
       for ( auto leaf : cuts[index][0] )
       {
         node_match[leaf].required = std::min( node_match[leaf].required, node_match[index].required - cuts[index][0]->data.lut_delay );
@@ -1202,6 +1291,119 @@ private:
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
 
+        compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
+
+        /* check required time */
+        if constexpr ( DO_AREA )
+        {
+          if ( preprocess || new_cut->data.delay <= node_data.required )
+          {
+            if ( ps.remove_dominated_cuts )
+              rcuts.insert( new_cut, false, sort );
+            else
+              rcuts.simple_insert( new_cut, sort );
+          }
+        }
+        else
+        {
+          if ( ps.remove_dominated_cuts )
+            rcuts.insert( new_cut, false, sort );
+          else
+            rcuts.simple_insert( new_cut, sort );
+        }
+      }
+    }
+
+    cuts_total += rcuts.size();
+
+    /* limit the maximum number of cuts */
+    rcuts.limit( ps.cut_enumeration_ps.cut_limit );
+
+    /* replace the new best cut with previous one */
+    if ( preprocess && rcuts[0]->data.delay > node_data.required )
+      rcuts.replace( 0, best_cut );
+
+    /* add trivial cut */
+    if ( rcuts.size() > 1 || ( *rcuts.begin() )->size() > 1 )
+    {
+      add_unit_cut( index );
+    }
+
+    if constexpr ( DO_AREA )
+    {
+      if ( iteration != 0 && node_data.map_refs > 0 )
+      {
+        cut_ref( rcuts[0] );
+      }
+    }
+  }
+
+  template<bool DO_AREA, bool ELA>
+  void compute_best_cut2_acd( node const& n, lut_cut_sort_type const sort, bool preprocess )
+  {
+    auto index = ntk.node_to_index( n );
+    auto& node_data = node_match[index];
+    cut_t best_cut;
+
+    /* compute cuts */
+    const auto fanin = 2;
+    uint32_t pairs{ 1 };
+    ntk.foreach_fanin( ntk.index_to_node( index ), [this, &pairs]( auto child, auto i ) {
+      lcuts[i] = &cuts[ntk.node_to_index( ntk.get_node( child ) )];
+      pairs *= static_cast<uint32_t>( lcuts[i]->size() );
+    } );
+    lcuts[2] = &cuts[index];
+    auto& rcuts = *lcuts[fanin];
+
+    if constexpr ( DO_AREA )
+    {
+      if ( iteration != 0 && node_data.map_refs > 0 )
+      {
+        cut_deref( rcuts[0] );
+      }
+    }
+
+    /* recompute the data of the best cut */
+    if ( iteration != 0 )
+    {
+      best_cut = rcuts[0];
+      compute_cut_data<ELA>( best_cut, n, true );
+      best_node_delay = best_cut->data.delay;
+    }
+
+    /* clear cuts */
+    rcuts.clear();
+
+    /* insert the previous best cut */
+    if ( iteration != 0 && !preprocess )
+    {
+      rcuts.simple_insert( best_cut, sort );
+    }
+
+    cut_t new_cut;
+    std::vector<cut_t const*> vcuts( fanin );
+
+    for ( auto const& c1 : *lcuts[0] )
+    {
+      for ( auto const& c2 : *lcuts[1] )
+      {
+        if ( !c1->merge( *c2, new_cut, ps.acd_cut_size ) )
+        {
+          continue;
+        }
+
+        if ( ps.remove_dominated_cuts && rcuts.is_dominated( new_cut ) )
+        {
+          continue;
+        }
+
+        /* always compute truth tables for ACD */
+        vcuts[0] = c1;
+        vcuts[1] = c2;
+        new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
+
+        /* set as new cut and compute data */
+        new_cut->data.acd_index = UINT32_MAX;
         compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
 
         /* check required time */
@@ -1880,6 +2082,12 @@ private:
     uint32_t lut_area = 0;
     uint32_t lut_delay = 0;
 
+    if ( cut.size() > ps.cut_enumeration_ps.cut_size )
+    {
+      compute_cut_data_acd<ELA>( cut, n, recompute_cut_cost );
+      return;
+    }
+
     if ( recompute_cut_cost )
     {
       cut->data.ignore = false;
@@ -1999,6 +2207,164 @@ private:
     }
   }
 
+  template<bool ELA>
+  void compute_cut_data_acd( cut_t& cut, node const& n, bool recompute_cut_cost )
+  {
+    uint32_t lut_area = 0;
+    uint32_t lut_delay = 0;
+    uint32_t delay = 0;
+    uint32_t lut_edges;
+
+    /* compute the AC decomposition */
+    if ( cut->data.acd_index == UINT32_MAX )
+    {
+      cut->data.ignore = true;
+
+      assert( cut.size() > ps.cut_enumeration_ps.cut_size );
+      assert( !ps.sop_balancing && !ps.esop_balancing );
+
+      /* find worst delay */
+      for ( auto leaf : cut )
+      {
+        const auto& best_leaf_cut = cuts[leaf][0];
+        delay = std::max( delay, best_leaf_cut->data.delay );
+      }
+
+      /* count late arriving inputs */
+      std::vector<uint32_t> late_arriving_vars;
+
+      /* if ACD always improve the delay remove arrival constraints to increase the likelyhood of finding a decomposition */
+      if ( delay + 2 >= best_node_delay )
+      {
+        uint32_t i = 0;
+        for ( auto leaf : cut )
+        {
+          if ( cuts[leaf][0]->data.delay == delay )
+          {
+            late_arriving_vars.push_back( i );
+          }
+          ++i;
+        }
+      }
+
+      /* exit if too many late arriving inputs */
+      if ( late_arriving_vars.size() > ps.cut_enumeration_ps.cut_size - 2 )
+      {
+        return;
+      }
+
+      /* call ACD on cut */
+      ac_decomposition_params ac_ps;
+      ac_ps.lut_size = ps.cut_enumeration_ps.cut_size;
+      ac_decomposition_stats ac_st;
+      ac_decomposition_impl acd( truth_tables[cut->func_id], cut.size(), ac_ps, &ac_st );
+      uint32_t res = acd.run( late_arriving_vars );
+
+      /* unfeasible decomposition */
+      if ( res == UINT32_MAX )
+      {
+        return;
+      }
+
+      /* get decomposition */
+      acds.emplace_back();
+      acd_lut_data_t acd_lut = acds.back();
+      acd_lut.decomposition = acd.get_result();
+      acd_lut.edges = ac_st.num_edges;
+
+      /* set successful decomposition values and attach decomposition to cut */
+      lut_area = acd_lut.decomposition.size();
+      lut_edges = ac_st.num_edges;
+      cut->data.acd_index = acds.size();
+      cut->data.ignore = false;
+
+      /* assign delays of 2 except for variables in the free set */
+      uint32_t i = 0;
+      for ( auto leaf : cut )
+      {
+        acd_lut.delays[i] = 2;
+        ++i;
+      }
+      for ( uint32_t var : acd_lut.decomposition.back().support )
+      {
+        if ( var < cut.size() )
+        {
+          acd_lut.delays[var] = 1;
+        }
+      }
+      i = 0;
+      for ( auto leaf : cut )
+      {
+        lut_delay = std::max( lut_delay, cuts[leaf][0]->data.delay + acd_lut.delays[i] );
+        ++i;
+      }
+      lut_delay -= delay;
+    }
+    else
+    {
+      /* update values based on previous decomposition */
+      lut_delay = 0;
+      lut_area = cut->data.lut_area;
+      lut_edges = acds[cut->data.acd_index].edges;
+      auto const& pin_delays = acds[cut->data.acd_index].delays;
+
+      /* find worst delay and delay LUT */
+      uint32_t i = 0;
+      for ( auto leaf : cut )
+      {
+        const auto& best_leaf_cut = cuts[leaf][0];
+        delay = std::max( delay, best_leaf_cut->data.delay );
+        lut_delay = std::max( lut_delay, best_leaf_cut->data.delay + pin_delays[i] );
+        ++i;
+      }
+
+      lut_delay -= delay;
+    }
+
+    if constexpr ( ELA )
+    {
+      cut->data.delay = lut_delay + delay;
+      cut->data.lut_area = lut_area;
+      cut->data.lut_delay = lut_delay;
+      if ( ps.edge_optimization )
+      {
+        cut->data.area_flow = static_cast<float>( cut_ref( cut ) );
+        cut->data.edge_flow = static_cast<float>( cut_edge_deref( cut ) );
+      }
+      else
+      {
+        cut->data.area_flow = static_cast<float>( cut_measure_mffc( cut ) );
+        cut->data.edge_flow = 0;
+      }
+    }
+    else
+    {
+      float area_flow = static_cast<float>( lut_area );
+      float edge_flow = lut_edges;
+
+      for ( auto leaf : cut )
+      {
+        const auto& best_leaf_cut = cuts[leaf][0];
+        if ( node_match[leaf].map_refs > 0 && leaf != 0 )
+        {
+          area_flow += best_leaf_cut->data.area_flow / node_match[leaf].est_refs;
+          edge_flow += best_leaf_cut->data.edge_flow / node_match[leaf].est_refs;
+        }
+        else
+        {
+          area_flow += best_leaf_cut->data.area_flow;
+          edge_flow += best_leaf_cut->data.edge_flow;
+        }
+      }
+
+      cut->data.delay = lut_delay + delay;
+      cut->data.lut_area = lut_area;
+      cut->data.lut_delay = lut_delay;
+      cut->data.area_flow = area_flow;
+      cut->data.edge_flow = edge_flow;
+    }
+  }
+
   void compute_cut_data_share( cut_t& cut )
   {
     uint32_t delay{ 0 };
@@ -2026,23 +2392,25 @@ private:
   {
     auto& cut = cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
 
-    if constexpr ( StoreFunction )
-    {
+    /* TODO: test */
+    // if constexpr ( StoreFunction )
+    // {
       if ( phase )
         cut->func_id = 1;
       else
         cut->func_id = 0;
-    }
+    // }
   }
 
   void add_unit_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index + 1 );
 
-    if constexpr ( StoreFunction )
-    {
+    /* TODO: test */
+    // if constexpr ( StoreFunction )
+    // {
       cut->func_id = 2;
-    }
+    // }
   }
 
   inline bool fast_support_minimization( TT& tt, cut_t& res )
@@ -2681,6 +3049,21 @@ private:
     return terms.top();
   }
 
+  void compute_required_acd( uint32_t index )
+  {
+    cut_t const& cut = cuts[index][0];
+
+    assert( cut->data.acd_index < UINT32_MAX );
+    auto const& pin_delays = acds[cut->data.acd_index].delays;
+
+    uint32_t ctr = 0;
+    for ( auto l : cut )
+    {
+      node_match[l].required = std::min( node_match[l].required, node_match[index].required - pin_delays[ctr] );
+      ++ctr;
+    }
+  }
+
   void compute_balancing_cost_required( uint32_t index )
   {
     cut_t const& cut = cuts[index][0];
@@ -2799,6 +3182,7 @@ private:
   uint32_t edges{ 0 };           /* current edges of the mapping */
   uint32_t cuts_total{ 0 };      /* current computed cuts */
   const float epsilon{ 0.005f }; /* epsilon */
+  uint32_t best_node_delay;      /* best node delay to be used in ACD */
   LUTCostFn lut_cost{};
 
   std::vector<node> topo_order;
@@ -2810,6 +3194,7 @@ private:
   tt_cache truth_tables;        /* cut truth tables */
   cost_cache truth_tables_cost; /* truth tables cost */
   isop_cache isops;             /* cache for isops */
+  acd_info acds;                /* storage for AC decompositions */
 };
 #pragma endregion
 

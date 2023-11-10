@@ -95,12 +95,13 @@ private:
   };
 
 public:
-  ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps )
-      : tt_start( tt )
-      , num_vars( num_vars )
+  ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps, ac_decomposition_stats *pst = nullptr )
+      : num_vars( num_vars )
       , ps( ps )
+      , pst( pst )
       , permutations( num_vars )
   {
+    tt_start = tt;
     std::iota( permutations.begin(), permutations.end(), 0 );
   }
 
@@ -151,7 +152,7 @@ public:
     // }
     // else
     generate_support_minimization_encodings();
-    solve_min_support_exact( isets );
+    solve_min_support_exact( isets, free_set_size );
 
     /* unfeasible decomposition */
     if ( best_bound_sets.empty() )
@@ -159,6 +160,7 @@ public:
       return UINT32_MAX;
     }
 
+    /* TODO generate decomposition only when returning the result */
     dec_result = generate_decomposition( free_set_size );
 
     /* TODO: change return value */
@@ -1134,7 +1136,7 @@ private:
     offset &= ~( 1 << var );
   }
 
-  void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets )
+  void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets, uint32_t free_set_size )
   {
     std::vector<encoding_matrix> matrix;
     best_bound_sets.clear();
@@ -1155,14 +1157,17 @@ private:
     }
 
     /* print */
-    std::cout << "Solution: ";
-    for ( uint32_t i = 0; i < solution[4]; ++i )
-    {
-      std::cout << solution[i] << " ";
-    }
-    std::cout << "\n";
+    // std::cout << "Solution: ";
+    // for ( uint32_t i = 0; i < solution[4]; ++i )
+    // {
+    //   std::cout << solution[i] << " ";
+    // }
+    // std::cout << "\n";
 
     /* compute best bound sets */
+    uint32_t num_luts = 1 + solution[4];
+    uint32_t num_levels = 2;
+    uint32_t num_edges = free_set_size + solution[4];
     best_care_sets.clear();
     best_iset_onset.clear();
     best_iset_offset.clear();
@@ -1186,10 +1191,19 @@ private:
         }
       }
 
+      num_edges += matrix[solution[i]].cost & ( ( 1 << isets[0].num_vars() ) - 1 );
+
       best_bound_sets.push_back( tt );
       best_care_sets.push_back( care );
       best_iset_onset.push_back( onset );
       best_iset_offset.push_back( offset );
+    }
+
+    if ( pst != nullptr )
+    {
+      pst->num_luts = num_luts;
+      pst->num_levels = num_levels;
+      pst->num_edges = num_edges;
     }
   }
 
@@ -1522,9 +1536,10 @@ private:
 
   std::vector<std::array<uint32_t, 2>> support_minimization_encodings;
 
-  TT const& tt_start;
+  TT tt_start;
   uint32_t num_vars;
   ac_decomposition_params const& ps;
+  ac_decomposition_stats *pst;
   std::vector<uint32_t> permutations;
 
   // static constexpr uint32_t iset3_combinations[][2] = { { 1, 6 }, { 2, 5 }, { 4, 3 } };
