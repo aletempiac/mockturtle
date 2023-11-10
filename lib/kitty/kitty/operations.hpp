@@ -751,6 +751,50 @@ bool has_var( const TT& tt, uint8_t var_index )
   return false;
 }
 
+/*! \brief Checks whether truth table depends on given variable index
+
+  \param tt Truth table
+  \param care Care set
+  \param var_index Variable index
+*/
+template<typename TT, typename = std::enable_if_t<is_complete_truth_table<TT>::value>>
+bool has_var( const TT& tt, const TT& care, uint8_t var_index )
+{
+  assert( var_index < tt.num_vars() );
+  assert( tt.num_vars() == care.num_vars() );
+
+  if ( tt.num_vars() <= 6 || var_index < 6 )
+  {
+    auto it_tt = std::begin( tt._bits );
+    auto it_care = std::begin( care._bits );
+    while ( it_tt != std::end( tt._bits ) )
+    {
+      if ( ( ( ( *it_tt >> ( uint64_t( 1 ) << var_index ) ) ^ *it_tt ) & detail::projections_neg[var_index]
+           & ( *it_care >> ( uint64_t( 1 ) << var_index ) ) & *it_care ) != 0 )
+      {
+        return true;
+      }
+      ++it_tt;
+      ++it_care;
+    }
+
+    return false;
+  }
+
+  const auto step = 1 << ( var_index - 6 );
+  for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); i += 2 * step )
+  {
+    for ( auto j = 0; j < step; ++j )
+    {
+      if ( ( ( tt._bits[i + j] ^ tt._bits[i + j + step] ) & care._bits[i + j] & care._bits[i + j + step] ) != 0 )
+      {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /*! \cond PRIVATE */
 template<uint32_t NumVars>
 bool has_var( const static_truth_table<NumVars, true>& tt, uint8_t var_index )

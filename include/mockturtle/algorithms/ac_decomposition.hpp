@@ -41,6 +41,7 @@
 #include <unordered_map>
 
 #include <fmt/format.h>
+#include <kitty/detail/constants.hpp>
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
 #include <kitty/operations.hpp>
@@ -57,6 +58,19 @@ struct ac_decomposition_params
 {
   /*! \brief LUT size for decomposition. */
   uint32_t lut_size{ 6 };
+};
+
+/*! \brief Statistics for ac_decomposition */
+struct ac_decomposition_stats
+{
+  uint32_t num_luts{ 0 };
+  uint32_t num_edges{ 0 };
+  uint32_t num_levels{ 0 };
+
+  // void report()
+  // {
+  //   std::cout << "";
+  // }
 };
 
 struct ac_decomposition_result
@@ -854,6 +868,7 @@ private:
         best_cost_edges = cost_edges;
 
         /* load ONSET and OFFSET */
+        best_care_sets.clear();
         best_iset_onset.clear();
         best_iset_offset.clear();
         for ( uint32_t k = 0; k < bound_sets.size(); ++k )
@@ -872,6 +887,7 @@ private:
             offset |= UINT64_C( 1 ) << iset4_off_set[i][k][t];
           }
           best_iset_offset.push_back( offset );
+          best_care_sets.push_back( ~( kitty::dynamic_truth_table( isets[0].num_vars() ) ) );
         }
       }
     }
@@ -897,13 +913,21 @@ private:
     {
       ac_decomposition_result dec;
       auto tt = best_bound_sets[i];
+      auto care = best_care_sets[i];
 
       /* compute and minimize support for bound set variables */
       uint32_t k = 0;
       for ( uint32_t j = 0; j < num_vars - free_set_size; ++j )
       {
-        if ( !kitty::has_var( best_bound_sets[i], j ) )
+        if ( !kitty::has_var( tt, j ) )
           continue;
+
+        if ( !kitty::has_var( tt, care, j ) )
+        {
+          /* fix truth table */
+          adjust_truth_table_on_dc( tt, care, j );
+          continue;
+        }
 
         if ( k < j )
         {
@@ -1139,24 +1163,33 @@ private:
     std::cout << "\n";
 
     /* compute best bound sets */
+    best_care_sets.clear();
     best_iset_onset.clear();
     best_iset_offset.clear();
     for ( uint32_t i = 0; i < solution[4]; ++i )
     {
       kitty::dynamic_truth_table tt( isets[0].num_vars() );
+      kitty::dynamic_truth_table care( isets[0].num_vars() );
 
       const uint32_t onset = support_minimization_encodings[matrix[solution[i]].index][0];
+      const uint32_t offset = support_minimization_encodings[matrix[solution[i]].index][1];
       for ( uint32_t j = 0; j < best_multiplicity; ++j )
       {
         if ( ( ( onset >> j ) & 1 ) )
         {
           tt |= isets[j];
+          care |= isets[j];
+        }
+        if ( ( ( offset >> j ) & 1 ) )
+        {
+          care |= isets[j];
         }
       }
 
       best_bound_sets.push_back( tt );
+      best_care_sets.push_back( care );
       best_iset_onset.push_back( onset );
-      best_iset_offset.push_back( support_minimization_encodings[matrix[solution[i]].index][1] );
+      best_iset_offset.push_back( offset );
     }
   }
 
@@ -1184,12 +1217,19 @@ private:
       /* compute function and distinguishable seed dichotomies */
       uint64_t column = 0;
       kitty::dynamic_truth_table tt( isets[0].num_vars() );
+      kitty::dynamic_truth_table care( isets[0].num_vars() );
       uint32_t pair_pointer = 0;
       for ( uint32_t j = 0; j < best_multiplicity; ++j )
       {
         if ( ( ( onset >> j ) & 1 ) )
         {
           tt |= isets[j];
+          care |= isets[j];
+        }
+
+        if ( ( ( offset >> j ) & 1 ) )
+        {
+          care |= isets[j];
         }
 
         /* compute included seed dichotomies */
@@ -1211,8 +1251,7 @@ private:
       uint32_t cost = 0;
       for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
       {
-        /* TODO: consider don't cares in the cost */
-        cost += kitty::has_var( tt, j ) ? 1 : 0;
+        cost += kitty::has_var( tt, care, j ) ? 1 : 0;
       }
 
       /* discard solutions with support over LUT size */
@@ -1233,7 +1272,7 @@ private:
     }
 
     /* necessary condition for the existance of a solution */
-    if ( __builtin_popcountl( sol_existance != combinations ) )
+    if ( __builtin_popcountl( sol_existance ) != combinations )
     {
       return false;
     }
@@ -1440,10 +1479,42 @@ private:
     return res;
   }
 
+  void adjust_truth_table_on_dc( kitty::dynamic_truth_table& tt, kitty::dynamic_truth_table const& care, uint32_t var_index )
+  {
+    assert( var_index < tt.num_vars() );
+    assert( tt.num_vars() == care.num_vars() );
+
+    if ( tt.num_vars() <= 6 || var_index < 6 )
+    {
+      auto it_tt = std::begin( tt._bits );
+      auto it_care = std::begin( care._bits );
+      while ( it_tt != std::end( tt._bits ) )
+      {
+        uint64_t new_bits = *it_tt & *it_care;
+        new_bits = ( new_bits | ( new_bits >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index];
+        *it_tt = new_bits | ( ( new_bits | ( new_bits << ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections[var_index] ); 
+        ++it_tt;
+        ++it_care;
+      }
+      return;
+    }
+
+    const auto step = 1 << ( var_index - 6 );
+    for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); i += 2 * step )
+    {
+      for ( auto j = 0; j < step; ++j )
+      {
+        tt._bits[i + j]  = ( tt._bits[i + j] & care._bits[i + j] ) | ( tt._bits[i + j + step] & care._bits[i + j + step] );
+        tt._bits[i + j + step] = tt._bits[i + j];
+      }
+    }
+  }
+
 private:
   uint32_t best_multiplicity{ UINT32_MAX };
   TT best_tt;
   std::vector<kitty::dynamic_truth_table> best_bound_sets;
+  std::vector<kitty::dynamic_truth_table> best_care_sets;
   std::vector<kitty::dynamic_truth_table> best_free_set_tts;
   std::vector<uint64_t> best_iset_onset;
   std::vector<uint64_t> best_iset_offset;
