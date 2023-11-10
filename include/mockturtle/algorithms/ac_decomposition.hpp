@@ -111,7 +111,7 @@ public:
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
       auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
-      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, true );
+      auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
       if ( cost <= ( 1 << i ) && cost < best_multiplicity )
@@ -139,16 +139,13 @@ public:
     generate_support_minimization_encodings();
     solve_min_support_exact( isets );
 
-    /* if feasible decomposition */
+    /* unfeasible decomposition */
     if ( best_bound_sets.empty() )
     {
-      /* TODO: change in return empty */
-      return best_multiplicity;
+      return UINT32_MAX;
     }
 
-    auto decomposition = generate_decomposition( free_set_size );
-
-    dec_result = decomposition;
+    dec_result = generate_decomposition( free_set_size );
 
     /* TODO: change return value */
     return best_multiplicity;
@@ -988,6 +985,9 @@ private:
 
   inline void reposition_late_arriving_variables( std::vector<uint32_t> const& late_arriving )
   {
+    if ( late_arriving.empty() )
+      return;
+
     for ( uint32_t i = 0; i < late_arriving.size(); ++i )
     {
       if ( permutations[i] == late_arriving[i] )
@@ -1113,15 +1113,18 @@ private:
   void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets )
   {
     std::vector<encoding_matrix> matrix;
+    best_bound_sets.clear();
 
-    /* create vovering matrix */
-    create_covering_matrix( isets, matrix, best_multiplicity > 4 );
+    /* create covering matrix */
+    if ( !create_covering_matrix( isets, matrix, best_multiplicity > 4 ) )
+    {
+      return;
+    }
 
     /* solve the covering problem */
     std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100 );
 
     /* check for failed decomposition */
-    best_bound_sets.clear();
     if ( solution[0] == UINT32_MAX )
     {
       return; 
@@ -1157,10 +1160,11 @@ private:
     }
   }
 
-  void create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<encoding_matrix>& matrix, bool sort )
+  bool create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<encoding_matrix>& matrix, bool sort )
   {
     assert( best_multiplicity < 12 );
     uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
+    uint64_t sol_existance = 0;
 
     /* insert dichotomies */
     for ( uint32_t i = 0; i < support_minimization_encodings.size(); ++i )
@@ -1224,11 +1228,19 @@ private:
 
       /* insert */
       matrix.emplace_back( encoding_matrix{ column, cost, i, sort_cost  } );
+
+      sol_existance |= column;
+    }
+
+    /* necessary condition for the existance of a solution */
+    if ( __builtin_popcountl( sol_existance != combinations ) )
+    {
+      return false;
     }
 
     if ( !sort )
     {
-      return;
+      return true;
     }
 
     std::sort( matrix.begin(), matrix.end(), [&]( auto const& a, auto const& b ) {
@@ -1243,6 +1255,8 @@ private:
     //     std::cout << indexes[i] << " " << costs[i] << " \t" << columns[i] << "\n";
     //   }
     // }
+
+    return true;
   }
 
   template<bool limit_iter = false>
