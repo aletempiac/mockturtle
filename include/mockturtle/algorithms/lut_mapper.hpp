@@ -688,7 +688,7 @@ public:
     } );
 
     perform_mapping();
-    return create_lut_network();
+    return create_lut_network_simple();
   }
 
   void run_inplace()
@@ -738,19 +738,19 @@ private:
           compute_required_time();
         }
 
-        // compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
-        // compute_required_time();
+        compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
+        compute_required_time();
         // compute_mapping<true, false>( area_sort, true, true );
       }
       else
       {
         compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
 
-        // if ( ps.delay_oriented_acd )
-        // {
-        //   /* do ACD */
-        //   compute_mapping_acd<false, false>( lut_cut_sort_type::DELAY, true );
-        // }
+        if ( ps.delay_oriented_acd )
+        {
+          /* do ACD */
+          compute_mapping_acd<false, false>( lut_cut_sort_type::DELAY, true );
+        }
       }
     }
     else
@@ -765,7 +765,7 @@ private:
       expand_cuts<false>();
     }
 
-    /* try backward area iterations */
+    // /* try backward area iterations */
     uint32_t i = 0;
     while ( i < ps.area_share_rounds )
     {
@@ -1405,6 +1405,10 @@ private:
         /* set as new cut and compute data */
         new_cut->data.acd_index = UINT32_MAX;
         compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
+
+        /* skip non-decomposable large cuts */
+        if ( new_cut->data.ignore )
+          continue;
 
         /* check required time */
         if constexpr ( DO_AREA )
@@ -2222,6 +2226,7 @@ private:
 
       assert( cut.size() > ps.cut_enumeration_ps.cut_size );
       assert( !ps.sop_balancing && !ps.esop_balancing );
+      assert( iteration == 1 );
 
       /* find worst delay */
       for ( auto leaf : cut )
@@ -2268,14 +2273,14 @@ private:
 
       /* get decomposition */
       acds.emplace_back();
-      acd_lut_data_t acd_lut = acds.back();
+      acd_lut_data_t& acd_lut = acds.back();
       acd_lut.decomposition = acd.get_result();
       acd_lut.edges = ac_st.num_edges;
 
       /* set successful decomposition values and attach decomposition to cut */
       lut_area = acd_lut.decomposition.size();
       lut_edges = ac_st.num_edges;
-      cut->data.acd_index = acds.size();
+      cut->data.acd_index = acds.size() - 1;
       cut->data.ignore = false;
 
       /* assign delays of 2 except for variables in the free set */
@@ -2303,6 +2308,7 @@ private:
     else
     {
       /* update values based on previous decomposition */
+      assert( iteration > 1 );
       lut_delay = 0;
       lut_area = cut->data.lut_area;
       lut_edges = acds[cut->data.acd_index].edges;
@@ -2329,7 +2335,7 @@ private:
       if ( ps.edge_optimization )
       {
         cut->data.area_flow = static_cast<float>( cut_ref( cut ) );
-        cut->data.edge_flow = static_cast<float>( cut_edge_deref( cut ) );
+        cut->data.edge_flow = static_cast<float>( cut_edge_deref( cut ) ) - cut.size() + lut_edges;
       }
       else
       {
@@ -2750,6 +2756,160 @@ private:
     return res;
   }
 
+  klut_network create_lut_network_simple()
+  {
+    klut_network res;
+    node_map<signal<klut_network>, Ntk> node_to_signal( ntk );
+
+    node_map<driver_type, Ntk> node_driver_type( ntk, driver_type::none );
+
+    /* opposites are filled for nodes with mixed driver types, since they have
+       two nodes in the network. */
+    std::unordered_map<node, signal<klut_network>> opposites;
+
+    /* initial driver types */
+    ntk.foreach_co( [&]( auto const& f ) {
+      switch ( node_driver_type[f] )
+      {
+      case driver_type::none:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::neg : driver_type::pos;
+        break;
+      case driver_type::pos:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::mixed : driver_type::pos;
+        break;
+      case driver_type::neg:
+        node_driver_type[f] = ntk.is_complemented( f ) ? driver_type::neg : driver_type::mixed;
+        break;
+      case driver_type::mixed:
+      default:
+        break;
+      }
+    } );
+
+    /* it could be that internal nodes also point to an output driver node */
+    for ( auto const& n : topo_order )
+    {
+      if ( ntk.is_constant( n ) || ntk.is_pi( n ) )
+        continue;
+      if ( node_match[ntk.node_to_index( n )].map_refs == 0 )
+        continue;
+
+      auto const& best_cut = cuts[ntk.node_to_index( n )][0];
+      for ( auto leaf : best_cut )
+      {
+        if ( node_driver_type[leaf] == driver_type::neg )
+        {
+          node_driver_type[leaf] = driver_type::mixed;
+        }
+      }
+    }
+
+    /* constants */
+    auto add_constant_to_map = [&]( bool value ) {
+      const auto n = ntk.get_node( ntk.get_constant( value ) );
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        node_to_signal[n] = res.get_constant( value );
+        break;
+
+      case driver_type::neg:
+        node_to_signal[n] = res.get_constant( !value );
+        break;
+
+      case driver_type::mixed:
+        node_to_signal[n] = res.get_constant( value );
+        opposites[n] = res.get_constant( !value );
+        break;
+      }
+    };
+
+    add_constant_to_map( false );
+    if ( ntk.get_node( ntk.get_constant( false ) ) != ntk.get_node( ntk.get_constant( true ) ) )
+    {
+      add_constant_to_map( true );
+    }
+
+    /* primary inputs */
+    ntk.foreach_pi( [&]( auto n ) {
+      signal<klut_network> res_signal;
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res_signal;
+        break;
+
+      case driver_type::neg:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res.create_not( res_signal );
+        break;
+
+      case driver_type::mixed:
+        res_signal = res.create_pi();
+        node_to_signal[n] = res_signal;
+        opposites[n] = res.create_not( node_to_signal[n] );
+        break;
+      }
+    } );
+
+    /* TODO: add sequential compatibility */
+    edges = 0;
+    for ( auto const& n : topo_order )
+    {
+      if ( ntk.is_ci( n ) || ntk.is_constant( n ) )
+        continue;
+
+      const auto index = ntk.node_to_index( n );
+      if ( node_match[index].map_refs == 0 )
+        continue;
+
+      auto const& best_cut = cuts[index][0];
+
+      kitty::dynamic_truth_table tt;
+      std::vector<signal<klut_network>> children;
+      std::tie( tt, children ) = create_lut( n, node_to_signal, node_driver_type );
+      edges += children.size();
+
+      switch ( node_driver_type[n] )
+      {
+      default:
+      case driver_type::none:
+      case driver_type::pos:
+        node_to_signal[n] = res.create_node( children, tt );
+        break;
+
+      case driver_type::neg:
+        node_to_signal[n] = res.create_node( children, ~tt );
+        break;
+
+      case driver_type::mixed:
+        node_to_signal[n] = res.create_node( children, tt );
+        opposites[n] = res.create_node( children, ~tt );
+        edges += children.size();
+        break;
+      }
+    }
+
+    /* outputs */
+    ntk.foreach_po( [&]( auto const& f ) {
+      if ( ntk.is_complemented( f ) && node_driver_type[f] == driver_type::mixed )
+        res.create_po( opposites[ntk.get_node( f )] );
+      else
+        res.create_po( node_to_signal[f] );
+    } );
+
+    st.area = area;
+    st.delay = delay;
+    st.edges = edges;
+
+    return res;
+  }
+
   inline lut_info create_lut( node const& n, node_map<signal<klut_network>, Ntk>& node_to_signal, node_map<driver_type, Ntk> const& node_driver_type )
   {
     auto const& best_cut = cuts[ntk.node_to_index( n )][0];
@@ -2765,6 +2925,14 @@ private:
     if constexpr ( StoreFunction )
     {
       tt = truth_tables[best_cut->func_id];
+      uint32_t i = 0;
+      for ( uint32_t leaf : best_cut )
+      {
+        if ( node_driver_type[ntk.index_to_node( leaf )] == driver_type::neg )
+        {
+          kitty::flip_inplace( tt, i++ );
+        }
+      }
     }
     else
     {
