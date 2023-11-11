@@ -767,15 +767,19 @@ private:
 
     // /* try backward area iterations */
     uint32_t i = 0;
-    while ( i < ps.area_share_rounds )
-    {
-      compute_share_mapping( area_sort, i == 0 );
 
-      if ( ps.cut_expansion )
+    if ( !ps.delay_oriented_acd )
+    {
+      while ( i < ps.area_share_rounds )
       {
-        expand_cuts<false>();
+        compute_share_mapping( area_sort, i == 0 );
+
+        if ( ps.cut_expansion )
+        {
+          expand_cuts<false>();
+        }
+        ++i;
       }
-      ++i;
     }
 
     /* compute mapping using global area flow */

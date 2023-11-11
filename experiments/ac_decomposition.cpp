@@ -29,6 +29,7 @@
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
 #include <mockturtle/algorithms/ac_decomposition.hpp>
+#include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/io/write_blif.hpp>
@@ -96,6 +97,8 @@ void run_mapper()
 
     if ( aig.num_gates() > 100000 )
       continue;
+    
+    aig_balance( aig, { false } );
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
@@ -108,9 +111,10 @@ void run_mapper()
     ps.verbose = false;
     lut_map_stats st;
 
-    const auto klut = lut_map<aig_network>( aig, ps, &st );
+    const klut_network klut;/* = lut_map<aig_network>( aig, ps, &st ); */
 
     ps.delay_oriented_acd = true;
+    ps.verbose = true;
     lut_map_stats st_acd;
     const auto klut_acd = lut_map<aig_network, true>( aig, ps, &st_acd );
 
@@ -124,7 +128,7 @@ void run_mapper()
 
     exp( benchmark, luts, luts_acd, lut_depth, lut_depth_acd, edges, edges_acd, to_seconds( st.time_total ), to_seconds( st_acd.time_total ), cec );
 
-    write_blif( klut, benchmark + ".blif" );
+    // write_blif( klut_acd, benchmark + ".blif" );
   }
 
   exp.save();
