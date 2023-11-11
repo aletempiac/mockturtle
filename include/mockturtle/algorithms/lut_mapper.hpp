@@ -650,8 +650,8 @@ public:
     assert( ps.cut_enumeration_ps.cut_limit < max_cut_num && "cut_limit exceeds the compile-time limit for the maximum number of cuts" );
 
     /* TODO: correct */
-    // if constexpr ( StoreFunction )
-    // {
+    if ( StoreFunction || ps.delay_oriented_acd )
+    {
       TT zero( 0u ), proj( 1u );
       kitty::create_nth_var( proj, 0u );
 
@@ -674,7 +674,7 @@ public:
         isops.emplace_back();                       /* empty ISOP for constant */
         isops.push_back( { kitty::cube{ 1, 1 } } ); /* ISOP for variable */
       }
-    // }
+    }
   }
 
   klut_network run()
@@ -989,7 +989,8 @@ private:
   void expand_cuts()
   {
     /* cut expansion is not yet compatible with truth table computation */
-    if constexpr ( StoreFunction )
+    /* TODO: implement compatibility with ACD */
+    if ( StoreFunction )
       return;
 
     /* don't expand if cut recomputed cuts is off */
@@ -1294,6 +1295,10 @@ private:
           vcuts[1] = c2;
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
+        else
+        {
+          new_cut->func_id = UINT32_MAX;
+        }
 
         compute_cut_data<ELA>( new_cut, ntk.index_to_node( index ), true );
 
@@ -1539,6 +1544,10 @@ private:
         {
           new_cut->func_id = compute_truth_table( index, vcuts, new_cut );
         }
+        else
+        {
+          new_cut->func_id = UINT32_MAX;
+        }
 
         compute_cut_data<ELA>( new_cut, index, true );
 
@@ -1743,12 +1752,30 @@ private:
       return;
 
     /* update delay */
-    uint32_t delay_update = 0;
-    for ( auto const leaf : best_cut )
+    if ( ps.delay_oriented_acd && best_cut.size() > ps.cut_enumeration_ps.cut_size )
     {
-      delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + best_cut->data.lut_delay );
+      uint32_t delay_update = 0;
+      auto const& pin_delays = acds[best_cut->data.acd_index].delays;
+      uint32_t ctr = 0;
+      for ( auto const leaf : best_cut )
+      {
+        delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + pin_delays[ctr++] );
+      }
+      best_cut->data.delay = delay_update;
     }
-    best_cut->data.delay = delay_update;
+    else
+    {
+      uint32_t delay_update = 0;
+      for ( auto const leaf : best_cut )
+      {
+        delay_update = std::max( delay_update, cuts[leaf][0]->data.delay + best_cut->data.lut_delay );
+      }
+      best_cut->data.delay = delay_update;
+    }
+
+    /* has a truth table attached -> not compatible, update delay and return */
+    if ( ps.delay_oriented_acd && best_cut->func_id != UINT32_MAX )
+      return;
 
     auto const area_before = cut_deref( best_cut );
 
@@ -1788,6 +1815,7 @@ private:
     cut_t new_cut;
     new_cut.set_leaves( leaves.begin(), leaves.end() );
     new_cut->data = best_cut->data;
+    new_cut->func_id = UINT32_MAX;
 
     uint32_t delay_after = 0;
     for ( auto const leaf : leaves )
@@ -2405,25 +2433,16 @@ private:
   {
     auto& cut = cuts[index].add_cut( &index, &index ); /* fake iterator for emptyness */
 
-    /* TODO: test */
-    // if constexpr ( StoreFunction )
-    // {
-      if ( phase )
-        cut->func_id = 1;
-      else
-        cut->func_id = 0;
-    // }
+    if ( phase )
+      cut->func_id = 1;
+    else
+      cut->func_id = 0;
   }
 
   void add_unit_cut( uint32_t index )
   {
     auto& cut = cuts[index].add_cut( &index, &index + 1 );
-
-    /* TODO: test */
-    // if constexpr ( StoreFunction )
-    // {
-      cut->func_id = 2;
-    // }
+    cut->func_id = 2;
   }
 
   inline bool fast_support_minimization( TT& tt, cut_t& res )
@@ -2937,7 +2956,7 @@ private:
 
     TT tt;
 
-    if constexpr ( StoreFunction )
+    if ( StoreFunction || ps.delay_oriented_acd && best_cut->func_id != UINT32_MAX )
     {
       tt = truth_tables[best_cut->func_id];
       uint32_t i = 0;

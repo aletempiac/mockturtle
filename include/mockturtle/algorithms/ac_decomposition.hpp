@@ -1313,7 +1313,7 @@ private:
       uint32_t cost = 0;
       for ( uint32_t j = 0; j < iset_support; ++j )
       {
-        cost += kitty::has_var( tt, care, j ) ? 1 : 0;
+        cost += has_var_support( tt, care, iset_support, j ) ? 1 : 0;
       }
 
       /* discard solutions with support over LUT size */
@@ -1598,6 +1598,46 @@ private:
         it = std::copy( tt.cbegin(), tt.cbegin() + num_blocks, it );
       }
     }
+  }
+
+  bool has_var_support( const STT& tt, const STT& care, uint32_t real_num_vars, uint8_t var_index )
+  {
+    assert( var_index < real_num_vars );
+    assert( real_num_vars <= tt.num_vars() );
+    assert( tt.num_vars() == care.num_vars() );
+
+    const uint32_t num_blocks = real_num_vars <= 6 ? 1 : ( 1 << ( real_num_vars - 6 ) );
+    if ( real_num_vars <= 6 || var_index < 6 )
+    {
+      auto it_tt = std::begin( tt._bits );
+      auto it_care = std::begin( care._bits );
+      while ( it_tt != std::begin( tt._bits ) + num_blocks )
+      {
+        if ( ( ( ( *it_tt >> ( uint64_t( 1 ) << var_index ) ) ^ *it_tt ) & kitty::detail::projections_neg[var_index]
+            & ( *it_care >> ( uint64_t( 1 ) << var_index ) ) & *it_care ) != 0 )
+        {
+          return true;
+        }
+        ++it_tt;
+        ++it_care;
+      }
+
+      return false;
+    }
+
+    const auto step = 1 << ( var_index - 6 );
+    for ( auto i = 0u; i < num_blocks; i += 2 * step )
+    {
+      for ( auto j = 0; j < step; ++j )
+      {
+        if ( ( ( tt._bits[i + j] ^ tt._bits[i + j + step] ) & care._bits[i + j] & care._bits[i + j + step] ) != 0 )
+        {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   bool verify_equivalence_impl()
