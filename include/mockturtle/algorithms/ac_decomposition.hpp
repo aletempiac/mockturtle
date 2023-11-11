@@ -95,6 +95,10 @@ private:
     uint32_t sort_cost{ 0 };
   };
 
+private:
+  static constexpr uint32_t max_num_vars = 8;
+  using STT = kitty::static_truth_table<max_num_vars>;
+
 public:
   ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps, ac_decomposition_stats* pst = nullptr )
       : num_vars( num_vars ), ps( ps ), pst( pst ), permutations( num_vars )
@@ -106,14 +110,21 @@ public:
   /*! \brief Runs ACD using late arriving variables */
   uint32_t run( std::vector<uint32_t> late_arriving )
   {
-    best_tt = tt_start;
-    best_multiplicity = UINT32_MAX;
+    /* truth table is too large for the settings */
+    if ( num_vars > max_num_vars )
+    {
+      return UINT32_MAX;
+    }
 
     /* return a high cost if too many late arriving variables */
     if ( late_arriving.size() > ps.lut_size / 2 || late_arriving.size() > 3 )
     {
       return UINT32_MAX;
     }
+
+    /* convert to static TT */
+    best_tt = kitty::extend_to<max_num_vars>( tt_start );
+    best_multiplicity = UINT32_MAX;
 
     /* permute late arriving variables to be the least significant */
     reposition_late_arriving_variables( late_arriving );
@@ -123,7 +134,7 @@ public:
     uint32_t offset = std::max( static_cast<uint32_t>( late_arriving.size() ), 1u );
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( STT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -140,15 +151,15 @@ public:
       return UINT32_MAX;
 
     /* compute isets */
-    std::vector<kitty::dynamic_truth_table> isets = compute_isets( free_set_size );
+    std::vector<STT> isets = compute_isets( free_set_size );
 
-    /* test for column multiplicity 4*/
-    std::vector<kitty::dynamic_truth_table> bound_sets;
+    /* test for column multiplicity 4 */
     // if ( best_multiplicity == 4 )
     // {
     //   test_support_minimization_isets( isets, true );
     // }
     // else
+
     generate_support_minimization_encodings();
     solve_min_support_exact( isets, free_set_size );
 
@@ -168,8 +179,11 @@ public:
   /*! \brief Runs ACD using late arriving variables and guaranteeing support minimization */
   uint32_t run_dsd( std::vector<uint32_t> late_arriving )
   {
-    best_tt = tt_start;
-    best_multiplicity = UINT32_MAX;
+    /* truth table is too large for the settings */
+    if ( num_vars > max_num_vars )
+    {
+      return UINT32_MAX;
+    }
 
     /* compute minimum number of variables in the free set */
     uint32_t dsd_vars = num_vars - ps.lut_size;
@@ -180,15 +194,19 @@ public:
       return UINT32_MAX;
     }
 
+    /* convert to static TT */
+    best_tt = kitty::extend_to<max_num_vars>( tt_start );
+    best_multiplicity = UINT32_MAX;
+
     /* permute late arriving variables to be the least significant */
     reposition_late_arriving_variables( late_arriving );
 
     /* run ACD trying different bound sets and free sets */
     uint32_t free_set_size = late_arriving.size();
-    uint32_t offset = late_arriving.size();
+    uint32_t offset = std::max( static_cast<uint32_t>( late_arriving.size() ), 1u );
     for ( uint32_t i = std::max( dsd_vars, offset ); i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( STT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -209,14 +227,21 @@ public:
   /*! \brief Runs ACD trying different bound sets and free sets */
   uint32_t run()
   {
-    assert( ps.lut_size > 3 && ps.lut_size < 13 );
-    best_tt = tt_start;
+    /* truth table is too large for the settings */
+    if ( num_vars > max_num_vars )
+    {
+      return UINT32_MAX;
+    }
+
+    /* convert to static TT */
+    best_tt = kitty::extend_to<max_num_vars>( tt_start );
     best_multiplicity = UINT32_MAX;
 
+    /* run ACD trying different bound sets and free sets */
     uint32_t free_set_size = 1;
     for ( uint32_t i = 1; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( STT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations( i, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -229,43 +254,73 @@ public:
       }
     }
 
-    return best_multiplicity;
-  }
+    if ( best_multiplicity == UINT32_MAX )
+      return UINT32_MAX;
 
-  /*! \brief Runs ACD trying different bound sets */
-  uint32_t run_offset( uint32_t free_set_size, uint32_t offset )
-  {
-    best_tt = tt_start;
-    auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
+    /* compute isets */
+    std::vector<STT> isets = compute_isets( free_set_size );
 
-    auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( free_set_size, offset, evaluate_fn, false );
-    best_tt = tt_p;
-    permutations = perm;
-    best_multiplicity = cost;
+    /* test for column multiplicity 4 */
+    // if ( best_multiplicity == 4 )
+    // {
+    //   test_support_minimization_isets( isets, true );
+    // }
+    // else
 
+    generate_support_minimization_encodings();
+    solve_min_support_exact( isets, free_set_size );
+
+    /* unfeasible decomposition */
+    if ( best_bound_sets.empty() )
+    {
+      return UINT32_MAX;
+    }
+
+    /* TODO generate decomposition only when returning the result */
+    dec_result = generate_decomposition( free_set_size );
+
+    /* TODO: change return value */
     return best_multiplicity;
   }
 
   /*! \brief Runs ACD trying different bound sets */
   uint32_t run( uint32_t free_set_size )
   {
-    best_tt = tt_start;
-    auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
+    /* truth table is too large for the settings */
+    if ( num_vars > max_num_vars || free_set_size > ps.lut_size / 2 )
+    {
+      return UINT32_MAX;
+    }
 
+    /* convert to static TT */
+    best_tt = kitty::extend_to<max_num_vars>( tt_start );
+    best_multiplicity = UINT32_MAX;
+
+    auto evaluate_fn = [&]( STT const& tt ) { return column_multiplicity( tt, free_set_size ); };
     auto [tt_p, perm, cost] = enumerate_iset_combinations( free_set_size, evaluate_fn, false );
     best_tt = tt_p;
     permutations = perm;
     best_multiplicity = cost;
 
-    return best_multiplicity;
-  }
+    if ( best_multiplicity == UINT32_MAX )
+      return UINT32_MAX;
 
-  /*! \brief Runs ACD without trying different bound sets */
-  uint32_t run_no_permutations( uint32_t free_set_size )
-  {
-    best_tt = tt_start;
-    best_multiplicity = column_multiplicity( tt_start, free_set_size );
+    /* compute isets */
+    std::vector<STT> isets = compute_isets( free_set_size );
 
+    generate_support_minimization_encodings();
+    solve_min_support_exact( isets, free_set_size );
+
+    /* unfeasible decomposition */
+    if ( best_bound_sets.empty() )
+    {
+      return UINT32_MAX;
+    }
+
+    /* TODO generate decomposition only when returning the result */
+    dec_result = generate_decomposition( free_set_size );
+
+    /* TODO: change return value */
     return best_multiplicity;
   }
 
@@ -291,10 +346,11 @@ public:
   }
 
 private:
-  uint32_t column_multiplicity( TT tt, uint32_t free_set_size )
+  uint32_t column_multiplicity( STT tt, uint32_t free_set_size )
   {
     uint64_t multiplicity_set[4] = { 0u, 0u, 0u, 0u };
     uint32_t multiplicity = 0;
+    uint32_t num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
 
     /* supports up to 64 values of free set (256 for |FS| == 3)*/
     assert( free_set_size <= 3 );
@@ -303,7 +359,7 @@ private:
     if ( free_set_size == 1 )
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 32; ++j )
         {
@@ -316,7 +372,7 @@ private:
     else if ( free_set_size == 2 )
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 16; ++j )
         {
@@ -329,7 +385,7 @@ private:
     else /* free set size 3 */
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 8; ++j )
         {
@@ -353,21 +409,20 @@ private:
   }
 
   template<typename Fn>
-  std::tuple<TT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations( uint32_t free_set_size, Fn&& fn, bool verbose = false )
+  std::tuple<STT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations( uint32_t free_set_size, Fn&& fn, bool verbose = false )
   {
-    TT tt = best_tt;
-
     /* works up to 16 input truth tables */
     assert( num_vars <= 16 );
 
     /* special case */
+    STT tt = best_tt;
     if ( num_vars <= free_set_size || free_set_size == 0 )
     {
       return { tt, permutations, UINT32_MAX };
     }
 
     /* select k */
-    free_set_size = std::min( free_set_size, num_vars - free_set_size );
+    // free_set_size = std::min( free_set_size, num_vars - free_set_size );
 
     /* init permutation array */
     std::array<uint32_t, 16> perm, best_perm;
@@ -375,7 +430,7 @@ private:
     best_perm = perm;
 
     /* TT with best cost */
-    TT best_tt = tt;
+    STT best = tt;
     uint32_t best_cost = UINT32_MAX;
 
     /* enumerate combinations */
@@ -384,7 +439,7 @@ private:
       uint32_t cost = fn( tt );
       if ( cost < best_cost )
       {
-        best_tt = tt;
+        best = tt;
         best_cost = cost;
         best_perm = perm;
       }
@@ -404,7 +459,7 @@ private:
         uint32_t cost = fn( tt );
         if ( cost < best_cost )
         {
-          best_tt = tt;
+          best = tt;
           best_cost = cost;
           best_perm = perm;
         }
@@ -424,7 +479,7 @@ private:
         uint32_t cost = fn( tt );
         if ( cost < best_cost )
         {
-          best_tt = tt;
+          best = tt;
           best_cost = cost;
           best_perm = perm;
         }
@@ -444,7 +499,7 @@ private:
           uint32_t cost = fn( tt );
           if ( cost < best_cost )
           {
-            best_tt = tt;
+            best = tt;
             best_cost = cost;
             best_perm = perm;
           }
@@ -470,7 +525,7 @@ private:
           uint32_t cost = fn( tt );
           if ( cost < best_cost )
           {
-            best_tt = tt;
+            best = tt;
             best_cost = cost;
             best_perm = perm;
           }
@@ -490,7 +545,7 @@ private:
             uint32_t cost = fn( tt );
             if ( cost < best_cost )
             {
-              best_tt = tt;
+              best = tt;
               best_cost = cost;
               best_perm = perm;
             }
@@ -515,16 +570,16 @@ private:
     std::vector<uint32_t> res_perm( num_vars );
     std::copy( best_perm.begin(), best_perm.begin() + num_vars, res_perm.begin() );
 
-    return std::make_tuple( best_tt, res_perm, best_cost );
+    return std::make_tuple( best, res_perm, best_cost );
   }
 
   template<typename Fn>
-  std::tuple<TT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations_offset( uint32_t free_set_size, uint32_t offset, Fn&& fn, bool verbose = false )
+  std::tuple<STT, std::vector<uint32_t>, uint32_t> enumerate_iset_combinations_offset( uint32_t free_set_size, uint32_t offset, Fn&& fn, bool verbose = false )
   {
-    TT tt = best_tt;
+    STT tt = best_tt;
 
     /* TT with best cost */
-    TT best_tt = tt;
+    STT best_tt = tt;
     uint32_t best_cost = UINT32_MAX;
 
     /* works up to 16 input truth tables */
@@ -702,26 +757,22 @@ private:
     return std::make_tuple( best_tt, res_perm, best_cost );
   }
 
-  std::vector<kitty::dynamic_truth_table> compute_isets( uint32_t free_set_size, bool verbose = false )
+  std::vector<STT> compute_isets( uint32_t free_set_size, bool verbose = false )
   {
     /* construct isets involved in multiplicity */
-    std::vector<kitty::dynamic_truth_table> isets;
-    isets.reserve( best_multiplicity );
-
-    for ( uint32_t i = 0; i < best_multiplicity; ++i )
-    {
-      isets.push_back( kitty::create<kitty::dynamic_truth_table>( num_vars - free_set_size ) );
-    }
+    uint32_t isets_support = num_vars - free_set_size;
+    std::vector<STT> isets( best_multiplicity );
 
     /* construct isets */
     std::unordered_map<uint64_t, uint32_t> column_to_iset;
-    TT tt = best_tt;
+    STT tt = best_tt;
     uint32_t offset = 0, block = 0;
+    uint32_t num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
 
     if ( free_set_size == 1 )
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 32; ++j )
         {
@@ -747,7 +798,7 @@ private:
     else if ( free_set_size == 2 )
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 16; ++j )
         {
@@ -773,7 +824,7 @@ private:
     else /* free set size 3 */
     {
       auto it = std::begin( tt );
-      for ( auto i = 0u; i < static_cast<uint32_t>( tt.num_blocks() ); ++i )
+      for ( auto i = 0u; i < num_blocks; ++i )
       {
         for ( auto j = 0; j < 8; ++j )
         {
@@ -797,20 +848,23 @@ private:
       }
     }
 
-    /* save free_set functions */
-    std::vector<kitty::dynamic_truth_table> free_set_tts;
-    free_set_tts.reserve( best_multiplicity );
-
-    for ( uint32_t i = 0; i < best_multiplicity; ++i )
+    /* extend isets to cover the whole truth table */
+    for ( STT& iset : isets )
     {
-      free_set_tts.emplace_back( free_set_size );
+      local_extend_to( iset, isets_support );
     }
+
+    /* save free_set functions */
+    std::vector<STT> free_set_tts( best_multiplicity );
+
+    /* TODO: possible conflict */
     for ( auto const& pair : column_to_iset )
     {
       free_set_tts[pair.second]._bits[0] = pair.first;
+      local_extend_to( free_set_tts[pair.second], free_set_size );
     }
 
-    best_free_set_tts = free_set_tts;
+    best_free_set_tts = std::move( free_set_tts );
 
     /* print isets  and free set*/
     if ( verbose )
@@ -945,15 +999,7 @@ private:
         ++k;
       }
 
-      if ( dec.support.size() < tt.num_vars() )
-      {
-        dec.tt = kitty::shrink_to( tt, dec.support.size() );
-      }
-      else
-      {
-        dec.tt = tt;
-      }
-
+      dec.tt = kitty::shrink_to( tt, dec.support.size() );
       res.push_back( dec );
     }
 
@@ -992,7 +1038,7 @@ private:
     /* create final function */
     for ( uint32_t i = 0; i < best_free_set_tts.size(); ++i )
     {
-      auto free_set_tt = kitty::extend_to( best_free_set_tts[i], top_vars );
+      kitty::dynamic_truth_table free_set_tt = kitty::shrink_to( best_free_set_tts[i], top_vars );
 
       /* find MUX assignments */
       for ( uint32_t j = 0; j < bound_set_vars.size(); ++j )
@@ -1142,13 +1188,14 @@ private:
     offset &= ~( 1 << var );
   }
 
-  void solve_min_support_exact( std::vector<kitty::dynamic_truth_table> const& isets, uint32_t free_set_size )
+  void solve_min_support_exact( std::vector<STT> const& isets, uint32_t free_set_size )
   {
     std::vector<encoding_matrix> matrix;
+    matrix.reserve( support_minimization_encodings.size() );
     best_bound_sets.clear();
 
     /* create covering matrix */
-    if ( !create_covering_matrix( isets, matrix, best_multiplicity > 4 ) )
+    if ( !create_covering_matrix( isets, matrix, free_set_size, best_multiplicity > 4 ) )
     {
       return;
     }
@@ -1166,13 +1213,14 @@ private:
     uint32_t num_luts = 1 + solution[4];
     uint32_t num_levels = 2;
     uint32_t num_edges = free_set_size + solution[4];
+    uint32_t isets_support = num_vars - free_set_size;
     best_care_sets.clear();
     best_iset_onset.clear();
     best_iset_offset.clear();
     for ( uint32_t i = 0; i < solution[4]; ++i )
     {
-      kitty::dynamic_truth_table tt( isets[0].num_vars() );
-      kitty::dynamic_truth_table care( isets[0].num_vars() );
+      STT tt;
+      STT care;
 
       const uint32_t onset = support_minimization_encodings[matrix[solution[i]].index][0];
       const uint32_t offset = support_minimization_encodings[matrix[solution[i]].index][1];
@@ -1181,7 +1229,6 @@ private:
         if ( ( ( onset >> j ) & 1 ) )
         {
           tt |= isets[j];
-          care |= isets[j];
         }
         if ( ( ( offset >> j ) & 1 ) )
         {
@@ -1189,7 +1236,8 @@ private:
         }
       }
 
-      num_edges += matrix[solution[i]].cost & ( ( 1 << isets[0].num_vars() ) - 1 );
+      care |= tt;
+      num_edges += matrix[solution[i]].cost & ( ( 1 << isets_support ) - 1 );
 
       best_bound_sets.push_back( tt );
       best_care_sets.push_back( care );
@@ -1205,11 +1253,12 @@ private:
     }
   }
 
-  bool create_covering_matrix( std::vector<kitty::dynamic_truth_table> const& isets, std::vector<encoding_matrix>& matrix, bool sort )
+  bool create_covering_matrix( std::vector<STT> const& isets, std::vector<encoding_matrix>& matrix, uint32_t free_set_size, bool sort )
   {
     assert( best_multiplicity < 12 );
     uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
     uint64_t sol_existance = 0;
+    uint32_t iset_support = num_vars - free_set_size;
 
     /* insert dichotomies */
     for ( uint32_t i = 0; i < support_minimization_encodings.size(); ++i )
@@ -1228,15 +1277,14 @@ private:
 
       /* compute function and distinguishable seed dichotomies */
       uint64_t column = 0;
-      kitty::dynamic_truth_table tt( isets[0].num_vars() );
-      kitty::dynamic_truth_table care( isets[0].num_vars() );
+      STT tt;
+      STT care;
       uint32_t pair_pointer = 0;
       for ( uint32_t j = 0; j < best_multiplicity; ++j )
       {
         if ( ( ( onset >> j ) & 1 ) )
         {
           tt |= isets[j];
-          care |= isets[j];
         }
 
         if ( ( ( offset >> j ) & 1 ) )
@@ -1259,9 +1307,11 @@ private:
         }
       }
 
+      care |= tt;
+
       /* compute cost */
       uint32_t cost = 0;
-      for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
+      for ( uint32_t j = 0; j < iset_support; ++j )
       {
         cost += kitty::has_var( tt, care, j ) ? 1 : 0;
       }
@@ -1272,7 +1322,7 @@ private:
 
       if ( cost > 1 )
       {
-        cost |= 1 << isets[0].num_vars();
+        cost |= 1 << iset_support;
       }
 
       uint32_t sort_cost = cost + ( ( combinations - __builtin_popcountl( column ) ) << num_vars );
@@ -1491,7 +1541,7 @@ private:
     return res;
   }
 
-  void adjust_truth_table_on_dc( kitty::dynamic_truth_table& tt, kitty::dynamic_truth_table& care, uint32_t var_index )
+  void adjust_truth_table_on_dc( STT& tt, STT& care, uint32_t var_index )
   {
     assert( var_index < tt.num_vars() );
     assert( tt.num_vars() == care.num_vars() );
@@ -1526,6 +1576,30 @@ private:
     }
   }
 
+  void local_extend_to( STT& tt, uint32_t real_num_vars )
+  {
+    if ( real_num_vars < 6 )
+    {
+      auto mask = *tt.begin();
+
+      for ( auto i = real_num_vars; i < num_vars; ++i )
+      {
+        mask |= ( mask << ( 1 << i ) );
+      }
+
+      std::fill( tt.begin(), tt.end(), mask );
+    }
+    else
+    {
+      uint32_t num_blocks = ( 1u << ( real_num_vars - 6 ) );
+      auto it = tt.begin();
+      while ( it != tt.end() )
+      {
+        it = std::copy( tt.cbegin(), tt.cbegin() + num_blocks, it );
+      }
+    }
+  }
+
   bool verify_equivalence_impl()
   {
     klut_network klut = get_result_ntk_impl();
@@ -1539,10 +1613,10 @@ private:
 
 private:
   uint32_t best_multiplicity{ UINT32_MAX };
-  TT best_tt;
-  std::vector<kitty::dynamic_truth_table> best_bound_sets;
-  std::vector<kitty::dynamic_truth_table> best_care_sets;
-  std::vector<kitty::dynamic_truth_table> best_free_set_tts;
+  STT best_tt;
+  std::vector<STT> best_bound_sets;
+  std::vector<STT> best_care_sets;
+  std::vector<STT> best_free_set_tts;
   std::vector<uint64_t> best_iset_onset;
   std::vector<uint64_t> best_iset_offset;
   std::vector<ac_decomposition_result> dec_result;

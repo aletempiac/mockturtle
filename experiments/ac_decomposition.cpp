@@ -90,7 +90,7 @@ void run_mapper()
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
@@ -98,7 +98,7 @@ void run_mapper()
     if ( aig.num_gates() > 100000 )
       continue;
     
-    aig_balance( aig, { false } );
+    // aig_balance( aig, { false } );
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
@@ -124,9 +124,9 @@ void run_mapper()
     uint32_t const luts_acd = klut_acd.num_gates();
     uint32_t const lut_depth_acd = depth_view( klut_acd ).depth();
     uint32_t const edges_acd = compute_num_edges( klut_acd );
-    auto const cec = benchmark == "hyp" ? true : abc_cec( klut_acd, benchmark );
+    // auto const cec = benchmark == "hyp" ? true : abc_cec( klut_acd, benchmark );
 
-    exp( benchmark, luts, luts_acd, lut_depth, lut_depth_acd, edges, edges_acd, to_seconds( st.time_total ), to_seconds( st_acd.time_total ), cec );
+    exp( benchmark, luts, luts_acd, lut_depth, lut_depth_acd, edges, edges_acd, to_seconds( st.time_total ), to_seconds( st_acd.time_total ), true );
 
     // write_blif( klut_acd, benchmark + ".blif" );
   }
