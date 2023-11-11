@@ -943,6 +943,7 @@ private:
         if ( k < j )
         {
           kitty::swap_inplace( tt, k, j );
+          kitty::swap_inplace( care, k, j );
         }
         dec.support.push_back( permutations[free_set_size + j] );
         ++k;
@@ -1274,7 +1275,6 @@ private:
       uint32_t cost = 0;
       for ( uint32_t j = 0; j < isets[0].num_vars(); ++j )
       {
-        // cost += kitty::has_var( tt, j ) ? 1 : 0;
         cost += kitty::has_var( tt, care, j ) ? 1 : 0;
       }
 
@@ -1503,7 +1503,7 @@ private:
     return res;
   }
 
-  void adjust_truth_table_on_dc( kitty::dynamic_truth_table& tt, kitty::dynamic_truth_table const& care, uint32_t var_index )
+  void adjust_truth_table_on_dc( kitty::dynamic_truth_table& tt, kitty::dynamic_truth_table& care, uint32_t var_index )
   {
     assert( var_index < tt.num_vars() );
     assert( tt.num_vars() == care.num_vars() );
@@ -1515,8 +1515,10 @@ private:
       while ( it_tt != std::end( tt._bits ) )
       {
         uint64_t new_bits = *it_tt & *it_care;
-        new_bits = ( new_bits | ( new_bits >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index];
-        *it_tt = new_bits | ( ( new_bits | ( new_bits << ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections[var_index] ); 
+        *it_tt = ( ( new_bits | ( new_bits >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index] ) |
+                 ( ( new_bits | ( new_bits << ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections[var_index] );
+        *it_care = *it_care | ( *it_care >> ( uint64_t( 1 ) << var_index ) );
+
         ++it_tt;
         ++it_care;
       }
@@ -1530,6 +1532,8 @@ private:
       {
         tt._bits[i + j]  = ( tt._bits[i + j] & care._bits[i + j] ) | ( tt._bits[i + j + step] & care._bits[i + j + step] );
         tt._bits[i + j + step] = tt._bits[i + j];
+        care._bits[i + j] = care._bits[i + j] | care._bits[i + j + step];
+        care._bits[i + j + step] = care._bits[i + j];
       }
     }
   }
@@ -1540,14 +1544,9 @@ private:
 
     default_simulator<kitty::dynamic_truth_table> sim( num_vars );
     const auto tt_res = simulate<kitty::dynamic_truth_table>( klut, sim )[0];
+    kitty::dynamic_truth_table cec = kitty::shrink_to( tt_start, tt_start.num_vars() );
 
-    if ( tt_res != tt_start )
-    {
-      kitty::print_hex( tt_start ); std::cout << "\n";
-      kitty::print_hex( tt_res ); std::cout << std::endl;
-    }
-
-    return tt_res == tt_start;
+    return tt_res == cec;
   }
 
 private:

@@ -295,4 +295,5 @@ TEST_CASE( "ACD function 7 vars with don't cares", "[ac_decomposition]" )
 
   detail::ac_decomposition_impl acd( tt, 7, ps );
   CHECK( acd.run( late_arriving ) == 3 );
+  CHECK( acd.verify_equivalence() );
 }
