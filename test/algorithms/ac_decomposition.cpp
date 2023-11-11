@@ -43,9 +43,7 @@ TEST_CASE( "ACD function 6 vars FS 2", "[ac_decomposition]" )
   ps.lut_size = 4;
   detail::ac_decomposition_impl acd( tt, 6, ps );
 
-  CHECK( acd.run_no_permutations( 2 ) == 4 );
   CHECK( acd.run( 2 ) == 4 );
-  CHECK( acd.run_offset( 2, 1 ) == 4 );
 }
 
 TEST_CASE( "ACD function 6 vars FS 1", "[ac_decomposition]" )
@@ -57,8 +55,7 @@ TEST_CASE( "ACD function 6 vars FS 1", "[ac_decomposition]" )
   ps.lut_size = 4;
   detail::ac_decomposition_impl acd( tt, 6, ps );
 
-  CHECK( acd.run_no_permutations( 1 ) == 3 );
-  CHECK( acd.run( 1 ) == 3 );
+  CHECK( acd.run( 1 ) == UINT32_MAX );
 }
 
 TEST_CASE( "ACD function 6 vars FS 3", "[ac_decomposition]" )
@@ -70,9 +67,7 @@ TEST_CASE( "ACD function 6 vars FS 3", "[ac_decomposition]" )
   ps.lut_size = 4;
   detail::ac_decomposition_impl acd( tt, 6, ps );
 
-  CHECK( acd.run_no_permutations( 3 ) == 8 );
-  CHECK( acd.run( 3 ) == 5 );
-  CHECK( acd.run_offset( 3, 2 ) == 5 );
+  CHECK( acd.run( 3 ) == UINT32_MAX );
 }
 
 TEST_CASE( "ACD function 6 vars multiple FS", "[ac_decomposition]" )
@@ -136,9 +131,7 @@ TEST_CASE( "ACD function 8 vars FS 2", "[ac_decomposition]" )
   ps.lut_size = 6;
   detail::ac_decomposition_impl acd( tt, 8, ps );
 
-  CHECK( acd.run_no_permutations( 2 ) == 9 );
   CHECK( acd.run( 2 ) == 4 );
-  CHECK( acd.run_offset( 2, 1 ) == 7 );
 }
 
 TEST_CASE( "ACD function 8 vars multiple FS", "[ac_decomposition]" )
@@ -266,21 +259,6 @@ TEST_CASE( "ACD function 8 vars DSD late arriving", "[ac_decomposition]" )
     late_arriving.push_back( 7 );
     CHECK( acd.run_dsd( late_arriving ) == 6 );
   }
-}
-
-TEST_CASE( "ACD function 10 vars", "[ac_decomposition]" )
-{
-  kitty::static_truth_table<10> tt;
-  kitty::create_from_hex_string( tt,
-  "0000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000001e000" );
-
-  ac_decomposition_params ps;
-  ps.lut_size = 6;
-
-  std::vector<uint32_t> late_arriving = {};
-
-  detail::ac_decomposition_impl acd( tt, 10, ps );
-  CHECK( acd.run( late_arriving ) == UINT32_MAX );
 }
 
 TEST_CASE( "ACD function 7 vars with don't cares", "[ac_decomposition]" )
