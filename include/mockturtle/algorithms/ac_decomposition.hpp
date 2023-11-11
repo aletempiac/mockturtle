@@ -33,23 +33,23 @@
 #pragma once
 
 #include <algorithm>
-#include <optional>
 #include <cassert>
 #include <cstdint>
+#include <optional>
 #include <type_traits>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 #include <fmt/format.h>
-#include <kitty/detail/constants.hpp>
 #include <kitty/constructors.hpp>
+#include <kitty/detail/constants.hpp>
 #include <kitty/dynamic_truth_table.hpp>
 #include <kitty/operations.hpp>
 #include <kitty/print.hpp>
 #include <kitty/traits.hpp>
 
-#include "simulation.hpp"
 #include "../networks/klut.hpp"
+#include "simulation.hpp"
 
 namespace mockturtle
 {
@@ -96,11 +96,8 @@ private:
   };
 
 public:
-  ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps, ac_decomposition_stats *pst = nullptr )
-      : num_vars( num_vars )
-      , ps( ps )
-      , pst( pst )
-      , permutations( num_vars )
+  ac_decomposition_impl( TT const& tt, uint32_t num_vars, ac_decomposition_params const& ps, ac_decomposition_stats* pst = nullptr )
+      : num_vars( num_vars ), ps( ps ), pst( pst ), permutations( num_vars )
   {
     tt_start = tt;
     std::iota( permutations.begin(), permutations.end(), 0 );
@@ -126,7 +123,7 @@ public:
     uint32_t offset = std::max( static_cast<uint32_t>( late_arriving.size() ), 1u );
     for ( uint32_t i = offset; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -191,7 +188,7 @@ public:
     uint32_t offset = late_arriving.size();
     for ( uint32_t i = std::max( dsd_vars, offset ); i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -219,7 +216,7 @@ public:
     uint32_t free_set_size = 1;
     for ( uint32_t i = 1; i <= ps.lut_size / 2 && i <= 3; ++i )
     {
-      auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, i ); };
+      auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations( i, evaluate_fn, false );
 
       /* check for feasible solution that improves the cost */
@@ -239,7 +236,7 @@ public:
   uint32_t run_offset( uint32_t free_set_size, uint32_t offset )
   {
     best_tt = tt_start;
-    auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
+    auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
 
     auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( free_set_size, offset, evaluate_fn, false );
     best_tt = tt_p;
@@ -253,7 +250,7 @@ public:
   uint32_t run( uint32_t free_set_size )
   {
     best_tt = tt_start;
-    auto evaluate_fn = [&] ( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
+    auto evaluate_fn = [&]( TT const& tt ) { return column_multiplicity( tt, free_set_size ); };
 
     auto [tt_p, perm, cost] = enumerate_iset_combinations( free_set_size, evaluate_fn, false );
     best_tt = tt_p;
@@ -292,7 +289,7 @@ public:
 
     return verify_equivalence_impl();
   }
-  
+
 private:
   uint32_t column_multiplicity( TT tt, uint32_t free_set_size )
   {
@@ -347,7 +344,7 @@ private:
 
     if ( free_set_size == 3 )
     {
-      multiplicity += __builtin_popcountl( multiplicity_set[1] );    
+      multiplicity += __builtin_popcountl( multiplicity_set[1] );
       multiplicity += __builtin_popcountl( multiplicity_set[2] );
       multiplicity += __builtin_popcountl( multiplicity_set[3] );
     }
@@ -422,7 +419,7 @@ private:
     }
     else if ( free_set_size == 2 )
     {
-      for ( uint32_t i = 0; i < num_vars - 1; ++i)
+      for ( uint32_t i = 0; i < num_vars - 1; ++i )
       {
         uint32_t cost = fn( tt );
         if ( cost < best_cost )
@@ -484,7 +481,7 @@ private:
             std::cout << " " << cost << " ";
             print_perm( perm.begin(), free_set_size );
           }
-  
+
           for ( uint32_t k = 3; k < num_vars - j; ++k )
           {
             std::swap( perm[2], perm[k] );
@@ -535,7 +532,6 @@ private:
 
     /* select k */
     free_set_size = std::min( free_set_size, num_vars - free_set_size );
-    
 
     /* special case */
     if ( num_vars <= free_set_size || free_set_size <= offset )
@@ -607,7 +603,7 @@ private:
     }
     else if ( free_set_size == 2 )
     {
-      for ( uint32_t i = 0; i < num_vars - 1 - offset; ++i)
+      for ( uint32_t i = 0; i < num_vars - 1 - offset; ++i )
       {
         uint32_t cost = fn( tt );
         if ( cost < best_cost )
@@ -669,7 +665,7 @@ private:
             std::cout << " " << cost << " ";
             print_perm( perm.begin(), free_set_size + offset );
           }
-  
+
           for ( uint32_t k = offset + 3; k < num_vars - j; ++k )
           {
             std::swap( perm[offset + 2], perm[k] );
@@ -711,7 +707,7 @@ private:
     /* construct isets involved in multiplicity */
     std::vector<kitty::dynamic_truth_table> isets;
     isets.reserve( best_multiplicity );
-    
+
     for ( uint32_t i = 0; i < best_multiplicity; ++i )
     {
       isets.push_back( kitty::create<kitty::dynamic_truth_table>( num_vars - free_set_size ) );
@@ -1119,7 +1115,7 @@ private:
   }
 
   template<bool enable_dcset>
-  bool generate_support_minimization_encodings_rec( uint64_t onset, uint64_t offset, uint32_t var, uint32_t &count )
+  bool generate_support_minimization_encodings_rec( uint64_t onset, uint64_t offset, uint32_t var, uint32_t& count )
   {
     if ( var == best_multiplicity )
     {
@@ -1163,16 +1159,8 @@ private:
     /* check for failed decomposition */
     if ( solution[0] == UINT32_MAX )
     {
-      return; 
+      return;
     }
-
-    /* print */
-    // std::cout << "Solution: ";
-    // for ( uint32_t i = 0; i < solution[4]; ++i )
-    // {
-    //   std::cout << solution[i] << " ";
-    // }
-    // std::cout << "\n";
 
     /* compute best bound sets */
     uint32_t num_luts = 1 + solution[4];
@@ -1287,10 +1275,10 @@ private:
         cost |= 1 << isets[0].num_vars();
       }
 
-      uint32_t sort_cost = cost + ( ( combinations -  __builtin_popcountl( column ) ) << num_vars );
+      uint32_t sort_cost = cost + ( ( combinations - __builtin_popcountl( column ) ) << num_vars );
 
       /* insert */
-      matrix.emplace_back( encoding_matrix{ column, cost, i, sort_cost  } );
+      matrix.emplace_back( encoding_matrix{ column, cost, i, sort_cost } );
 
       sol_existance |= column;
     }
@@ -1530,7 +1518,7 @@ private:
     {
       for ( auto j = 0; j < step; ++j )
       {
-        tt._bits[i + j]  = ( tt._bits[i + j] & care._bits[i + j] ) | ( tt._bits[i + j + step] & care._bits[i + j + step] );
+        tt._bits[i + j] = ( tt._bits[i + j] & care._bits[i + j] ) | ( tt._bits[i + j + step] & care._bits[i + j + step] );
         tt._bits[i + j + step] = tt._bits[i + j];
         care._bits[i + j] = care._bits[i + j] | care._bits[i + j + step];
         care._bits[i + j + step] = care._bits[i + j];
@@ -1564,36 +1552,36 @@ private:
   TT tt_start;
   uint32_t num_vars;
   ac_decomposition_params const& ps;
-  ac_decomposition_stats *pst;
+  ac_decomposition_stats* pst;
   std::vector<uint32_t> permutations;
 
   // static constexpr uint32_t iset3_combinations[][2] = { { 1, 6 }, { 2, 5 }, { 4, 3 } };
 
   static constexpr uint32_t iset3_combinations[][2][2] =
-    { { { 0 }, { 1 } },
-      { { 1 }, { 0 } },
-      { { 2 }, { 0 } } };
-  
+      { { { 0 }, { 1 } },
+        { { 1 }, { 0 } },
+        { { 2 }, { 0 } } };
+
   static constexpr uint32_t iset3_off_set[][2][2] =
-    { { { 1, 2 }, { 2 } },
-      { { 0, 2 }, { 2 } },
-      { { 0, 1 }, { 1 } } };
+      { { { 1, 2 }, { 2 } },
+        { { 0, 2 }, { 2 } },
+        { { 0, 1 }, { 1 } } };
 
   static constexpr uint32_t iset4_combinations[][2][2] =
-    { { { 1, 3 }, { 2, 3 } },
-      { { 1, 2 }, { 2, 3 } },
-      { { 0, 2 }, { 2, 3 } },
-      { { 0, 3 }, { 0, 1 } },
-      { { 0, 3 }, { 0, 2 } },
-      { { 0, 3 }, { 2, 3 } } };
+      { { { 1, 3 }, { 2, 3 } },
+        { { 1, 2 }, { 2, 3 } },
+        { { 0, 2 }, { 2, 3 } },
+        { { 0, 3 }, { 0, 1 } },
+        { { 0, 3 }, { 0, 2 } },
+        { { 0, 3 }, { 2, 3 } } };
 
   static constexpr uint32_t iset4_off_set[][2][2] =
-    { { { 0, 2 }, { 0, 1 } },
-      { { 0, 3 }, { 0, 1 } },
-      { { 1, 3 }, { 0, 1 } },
-      { { 1, 2 }, { 2, 3 } },
-      { { 1, 2 }, { 1, 3 } },
-      { { 1, 2 }, { 0, 1 } } };
+      { { { 0, 2 }, { 0, 1 } },
+        { { 0, 3 }, { 0, 1 } },
+        { { 1, 3 }, { 0, 1 } },
+        { { 1, 2 }, { 2, 3 } },
+        { { 1, 2 }, { 1, 3 } },
+        { { 1, 2 }, { 0, 1 } } };
 };
 
 } // namespace detail
