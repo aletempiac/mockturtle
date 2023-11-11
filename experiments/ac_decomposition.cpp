@@ -81,9 +81,11 @@ void run_mapper()
   using namespace experiments;
   using namespace mockturtle;
 
-  experiment<std::string, uint32_t, uint32_t, uint32_t, double, bool> exp( "lut_mapper", "benchmark", "luts", "lut_depth", "edges", "runtime", "equivalent" );
+  experiment<std::string, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, double, double, bool> exp( 
+    "ACD", "benchmark", "luts", "luts_acd", "lut_depth", "lut_depth_acd", "edges", "edges_acd", "runtime", "runtime_acd", "equivalent"
+  );
 
-  for ( auto const& benchmark : iscas_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
@@ -92,8 +94,8 @@ void run_mapper()
       continue;
     }
 
-    // if ( aig.num_gates() > 2000 )
-    //   continue;
+    if ( aig.num_gates() > 100000 )
+      continue;
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 6u;
@@ -103,20 +105,24 @@ void run_mapper()
     ps.area_share_rounds = 0;
     ps.edge_optimization = true;
     ps.cut_expansion = true;
-    ps.delay_oriented_acd = true;
-    ps.verbose = true;
+    ps.verbose = false;
     lut_map_stats st;
-    const auto klut = lut_map<aig_network, true>( aig, ps, &st );
 
-    depth_view<klut_network> klut_d{ klut };
+    const auto klut = lut_map<aig_network>( aig, ps, &st );
 
-    auto const cec = benchmark == "hyp" ? true : abc_cec( klut, benchmark );
+    ps.delay_oriented_acd = true;
+    lut_map_stats st_acd;
+    const auto klut_acd = lut_map<aig_network, true>( aig, ps, &st_acd );
 
     uint32_t const luts = klut.num_gates();
     uint32_t const lut_depth = depth_view( klut ).depth();
     uint32_t const edges = compute_num_edges( klut );
+    uint32_t const luts_acd = klut_acd.num_gates();
+    uint32_t const lut_depth_acd = depth_view( klut_acd ).depth();
+    uint32_t const edges_acd = compute_num_edges( klut_acd );
+    auto const cec = benchmark == "hyp" ? true : abc_cec( klut_acd, benchmark );
 
-    exp( benchmark, luts, lut_depth, edges, to_seconds( st.time_total ), cec );
+    exp( benchmark, luts, luts_acd, lut_depth, lut_depth_acd, edges, edges_acd, to_seconds( st.time_total ), to_seconds( st_acd.time_total ), cec );
 
     write_blif( klut, benchmark + ".blif" );
   }
