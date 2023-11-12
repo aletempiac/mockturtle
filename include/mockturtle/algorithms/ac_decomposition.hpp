@@ -125,6 +125,7 @@ public:
     /* convert to static TT */
     best_tt = kitty::extend_to<max_num_vars>( tt_start );
     best_multiplicity = UINT32_MAX;
+    uint32_t best_cost = UINT32_MAX;
 
     /* permute late arriving variables to be the least significant */
     reposition_late_arriving_variables( late_arriving );
@@ -137,12 +138,15 @@ public:
       auto evaluate_fn = [&]( STT const& tt ) { return column_multiplicity( tt, i ); };
       auto [tt_p, perm, cost] = enumerate_iset_combinations_offset( i, offset, evaluate_fn, false );
 
+      /* add cost if not support reducing */
+      uint32_t additional_cost = ( num_vars - i > ps.lut_size ) ? 128 : 0;
       /* check for feasible solution that improves the cost */
-      if ( cost <= ( 1 << i ) && cost < best_multiplicity )
+      if ( cost <= ( 1 << ( ps.lut_size - i ) ) && cost + additional_cost < best_cost )
       {
         best_tt = tt_p;
         permutations = perm;
         best_multiplicity = cost;
+        best_cost = cost + additional_cost;
         free_set_size = i;
       }
     }
@@ -1201,7 +1205,7 @@ private:
     }
 
     /* solve the covering problem */
-    std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100 );
+    std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100, 10000 );
 
     /* check for failed decomposition */
     if ( solution[0] == UINT32_MAX )
@@ -1361,7 +1365,7 @@ private:
   }
 
   template<bool limit_iter = false>
-  std::array<uint32_t, 5> covering_solve_exact( std::vector<encoding_matrix>& matrix, uint32_t max_iter = 100 )
+  std::array<uint32_t, 5> covering_solve_exact( std::vector<encoding_matrix>& matrix, uint32_t max_iter = 100, int32_t limit = 2000 )
   {
     /* last value of res contains the size of the bound set */
     std::array<uint32_t, 5> res = { UINT32_MAX };
@@ -1401,7 +1405,7 @@ private:
         /* limit */
         if constexpr ( limit_iter )
         {
-          if ( best_cost < UINT32_MAX && --max_iter == 0 )
+          if ( limit <= 0 || ( best_cost < UINT32_MAX && max_iter == 0 ) )
           {
             looping = false;
           }
@@ -1415,7 +1419,7 @@ private:
           /* limit */
           if constexpr ( limit_iter )
           {
-            if ( best_cost < UINT32_MAX && --max_iter == 0 )
+            if ( limit <= 0 || ( best_cost < UINT32_MAX && max_iter == 0 ) )
             {
               looping = false;
             }
@@ -1432,7 +1436,7 @@ private:
             /* limit */
             if constexpr ( limit_iter )
             {
-              if ( best_cost < UINT32_MAX && --max_iter == 0 )
+              if ( limit-- <= 0 || ( best_cost < UINT32_MAX && max_iter-- == 0 ) )
               {
                 looping = false;
               }
@@ -1462,7 +1466,7 @@ private:
         /* limit */
         if constexpr ( limit_iter )
         {
-          if ( best_cost < UINT32_MAX && --max_iter == 0 )
+          if ( limit <= 0 || ( best_cost < UINT32_MAX && max_iter == 0 ) )
           {
             looping = false;
           }
@@ -1476,7 +1480,7 @@ private:
           /* limit */
           if constexpr ( limit_iter )
           {
-            if ( best_cost < UINT32_MAX && --max_iter == 0 )
+            if ( limit <= 0 || ( best_cost < UINT32_MAX && max_iter == 0 ) )
             {
               looping = false;
             }
@@ -1496,7 +1500,7 @@ private:
             /* limit */
             if constexpr ( limit_iter )
             {
-              if ( best_cost < UINT32_MAX && --max_iter == 0 )
+              if ( limit <= 0 || ( best_cost < UINT32_MAX && max_iter == 0 ) )
               {
                 looping = false;
               }
@@ -1513,7 +1517,7 @@ private:
               /* limit */
               if constexpr ( limit_iter )
               {
-                if ( best_cost < UINT32_MAX && --max_iter == 0 )
+                if ( limit-- <= 0 || ( best_cost < UINT32_MAX && max_iter-- == 0 ) )
                 {
                   looping = false;
                 }

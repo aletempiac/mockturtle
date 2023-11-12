@@ -208,7 +208,7 @@ TEST_CASE( "ACD function 8 vars late arriving", "[ac_decomposition]" )
     late_arriving.pop_back();
     late_arriving.pop_back();
     late_arriving.push_back( 7 );
-    CHECK( acd.run( late_arriving ) == 6 );
+    CHECK( acd.run( late_arriving ) == 5 );
 
     auto res = acd.get_result_ntk();
     CHECK( res.has_value() );
@@ -273,5 +273,20 @@ TEST_CASE( "ACD function 7 vars with don't cares", "[ac_decomposition]" )
 
   detail::ac_decomposition_impl acd( tt, 7, ps );
   CHECK( acd.run( late_arriving ) == 3 );
+  CHECK( acd.verify_equivalence() );
+}
+
+TEST_CASE( "ACD for shannon", "[ac_decomposition]" )
+{
+  kitty::static_truth_table<5> tt;
+  kitty::create_from_hex_string( tt, "1241fa11" );
+
+  ac_decomposition_params ps;
+  ps.lut_size = 4;
+
+  std::vector<uint32_t> late_arriving = { 1 };
+
+  detail::ac_decomposition_impl acd( tt, 5, ps );
+  CHECK( acd.run( late_arriving ) == 4 );
   CHECK( acd.verify_equivalence() );
 }
