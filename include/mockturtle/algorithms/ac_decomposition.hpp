@@ -59,6 +59,9 @@ struct ac_decomposition_params
 {
   /*! \brief LUT size for decomposition. */
   uint32_t lut_size{ 6 };
+
+  /*! \brief Maximum number of iterations for covering. */
+  uint32_t max_iter{ 5000 };
 };
 
 /*! \brief Statistics for ac_decomposition */
@@ -310,7 +313,7 @@ public:
       return UINT32_MAX;
 
     /* compute isets */
-    std::vector<STT> isets = compute_isets( free_set_size );
+    std::vector<STT> isets = compute_isets( free_set_size, false );
 
     generate_support_minimization_encodings();
     solve_min_support_exact( isets, free_set_size );
@@ -868,8 +871,6 @@ private:
       local_extend_to( free_set_tts[pair.second], free_set_size );
     }
 
-    best_free_set_tts = std::move( free_set_tts );
-
     /* print isets  and free set*/
     if ( verbose )
     {
@@ -883,6 +884,8 @@ private:
         std::cout << "\n";
       }
     }
+
+    best_free_set_tts = std::move( free_set_tts );
 
     return isets;
   }
@@ -1039,7 +1042,7 @@ private:
       res.back().support.push_back( num_vars + i );
     }
 
-    /* create final function */
+    /* create composition function */
     for ( uint32_t i = 0; i < best_free_set_tts.size(); ++i )
     {
       kitty::dynamic_truth_table free_set_tt = kitty::shrink_to( best_free_set_tts[i], top_vars );
@@ -1134,12 +1137,19 @@ private:
   void generate_support_minimization_encodings()
   {
     uint32_t count = 0;
+    uint32_t num_combs_exact[4] = { 2, 6, 70, 12870 };
 
     /* enable don't cares only if not a power of 2 */
     uint32_t num_combs = 3;
     if ( __builtin_popcount( best_multiplicity ) == 1 )
     {
-      num_combs = 1 << best_multiplicity;
+      for ( uint32_t i = 0; i < 4; ++i )
+      {
+        if ( ( best_multiplicity >> i ) == 2u )
+        {
+          num_combs = num_combs_exact[i];
+        }
+      }
       support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
       generate_support_minimization_encodings_rec<false>( 0, 0, 0, count );
     }
@@ -1153,7 +1163,7 @@ private:
       generate_support_minimization_encodings_rec<true>( 0, 0, 0, count );
     }
 
-    assert( count = num_combs );
+    assert( count == num_combs );
 
     /* print combinations */
     // std::cout << "{ ";
@@ -1169,6 +1179,15 @@ private:
   {
     if ( var == best_multiplicity )
     {
+      if constexpr ( !enable_dcset )
+      {
+        /* sets must be equally populated */
+        if ( __builtin_popcountl( onset ) != __builtin_popcountl( offset ) )
+        {
+          return;
+        }
+      }
+
       support_minimization_encodings[count][0] = onset;
       support_minimization_encodings[count][1] = offset;
       ++count;
@@ -1205,7 +1224,7 @@ private:
     }
 
     /* solve the covering problem */
-    std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100, 10000 );
+    std::array<uint32_t, 5> solution = covering_solve_exact<true>( matrix, 100, ps.max_iter );
 
     /* check for failed decomposition */
     if ( solution[0] == UINT32_MAX )
@@ -1286,12 +1305,14 @@ private:
       uint32_t pair_pointer = 0;
       for ( uint32_t j = 0; j < best_multiplicity; ++j )
       {
-        if ( ( ( onset >> j ) & 1 ) )
+        auto onset_shift = ( onset >> j );
+        auto offset_shift = ( offset >> j );
+        if ( ( onset_shift & 1 ) )
         {
           tt |= isets[j];
         }
 
-        if ( ( ( offset >> j ) & 1 ) )
+        if ( ( offset_shift & 1 ) )
         {
           care |= isets[j];
         }
@@ -1299,10 +1320,8 @@ private:
         /* compute included seed dichotomies */
         for ( uint32_t k = j + 1; k < best_multiplicity; ++k )
         {
-          /* if is not in ONSET and is in OFFSET */
-          uint32_t test_pair = ( onset >> j ) & ( ( ~onset & offset ) >> k );
-
-          if ( ( test_pair & 1 ) )
+          /* if is are in diffent sets */
+          if ( ( ( ( onset_shift & ( offset >> k ) ) | ( ( onset >> k ) & offset_shift ) ) & 1 ) )
           {
             column |= UINT64_C( 1 ) << ( pair_pointer );
           }
