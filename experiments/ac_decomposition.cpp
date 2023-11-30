@@ -90,12 +90,12 @@ void run_mapper()
   {
     fmt::print( "[i] processing {}\n", benchmark );
     aig_network aig;
-    if ( lorina::read_aiger( "optimized/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( "lms/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
-
-    if ( aig.num_gates() > 100000 )
+    
+    if ( benchmark == "hyp" )
       continue;
     
     // aig_balance( aig, { false } );
@@ -111,9 +111,11 @@ void run_mapper()
     ps.verbose = false;
     lut_map_stats st;
 
-    const klut_network klut;/* = lut_map<aig_network>( aig, ps, &st ); */
+    const klut_network klut = lut_map<aig_network>( aig, ps, &st );
 
     ps.delay_oriented_acd = true;
+    ps.relax_required = 0;
+    ps.acd_cut_size = 8;
     ps.verbose = true;
     lut_map_stats st_acd;
     const auto klut_acd = lut_map<aig_network, true>( aig, ps, &st_acd );
@@ -201,10 +203,25 @@ void run_lut8()
   exp.table();
 }
 
+void test_new_enumeration()
+{
+  using namespace mockturtle;
+
+  kitty::dynamic_truth_table tt( 6 );
+  kitty::create_from_hex_string( tt, "1234123412341234" );
+
+  ac_decomposition_params ac_ps;
+  ac_ps.lut_size = 6;
+
+  detail::ac_decomposition_impl acd( tt, 6, ac_ps );
+  acd.test_enumeration( 3, 2 );
+}
+
 int main()
 {
-  run_mapper();
+  // run_mapper();
   // run_lut10();
   // run_lut8();
+  test_new_enumeration();
   return 0;
 }

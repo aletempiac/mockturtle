@@ -78,7 +78,7 @@ int main()
 {
   using namespace experiments;
 
-  for ( auto const& benchmark : iwls_benchmarks() )
+  for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -91,8 +91,9 @@ int main()
     if ( aig.num_gates() > 650000 )
       continue;
 
-    aig_network res = abc_opt( aig, "dfraig; resyn; resyn2; resyn2rs; resyn; resyn2" );
-    write_aiger( res, "optimized/" + benchmark + ".aig" );
+    // aig_network res = abc_opt( aig, "dfraig; resyn; resyn2; resyn2rs; resyn; resyn2;" );
+    aig_network res = abc_opt( aig, "rec_start3 rec6Lib_final_filtered3_recanon.aig; dfraig; resyn; resyn2; resyn2rs; &get; &if -y -K 6; &put; resyn2rs" );
+    write_aiger( res, "lms/" + benchmark + ".aig" );
   }
 
   return 0;

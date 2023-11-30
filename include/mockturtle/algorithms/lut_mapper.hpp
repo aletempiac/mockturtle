@@ -740,7 +740,7 @@ private:
 
         compute_mapping<false, false>( lut_cut_sort_type::DELAY2, true, true );
         compute_required_time();
-        // compute_mapping<true, false>( area_sort, true, true );
+        compute_mapping<true, false>( area_sort, true, true );
       }
       else
       {

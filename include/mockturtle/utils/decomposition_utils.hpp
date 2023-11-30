@@ -290,6 +290,18 @@ inline uint32_t acd_column_multiplicity( TT tt, uint32_t free_set_size )
 }
 
 template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
+inline uint32_t acd_column_multiplicity( TT tt, std::vector<uint32_t> free_set )
+{
+  /* free set to use is specified in the free set */
+  
+}
+
+// template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
+// inline void find_encoding( TT tt, uint32_t free_set_size, uint32_t num_isets )
+// {
+// }
+
+template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
 inline uint32_t acd_enumerate_combinations( TT tt, uint32_t free_set_size )
 {
   auto evaluate_fn = [&] ( TT const& tt ) { return acd_column_multiplicity( tt, free_set_size ); };
@@ -297,6 +309,13 @@ inline uint32_t acd_enumerate_combinations( TT tt, uint32_t free_set_size )
   auto [tt_p, perm] = detail::enumerate_iset_combinations( tt, free_set_size, evaluate_fn );
 
   return acd_column_multiplicity( tt_p, free_set_size );
+}
+
+template<typename TT, typename = std::enable_if_t<kitty::is_complete_truth_table<TT>::value>>
+inline void acd_enumerate_encodings( TT tt, uint32_t column_multiplicity, uint32_t free_set_size )
+{
+  /* permutations are more effective up to column multiplicity 4 --> n! */
+  /* afterwards, do ternary encoding 3^n and filter invalid solutions */
 }
 
 } // namespace mockturtle

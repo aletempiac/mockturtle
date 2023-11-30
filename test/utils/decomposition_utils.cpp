@@ -14,7 +14,7 @@ TEST_CASE( "Function 6 vars FS 2", "[decomposition_utils]" )
   tt._bits = 0x8804800184148111;
 
   CHECK( acd_column_multiplicity( tt, 2 ) == 4 );
-  acd_enumerate_combinations( tt, 2 );
+  CHECK( acd_enumerate_combinations( tt, 2 ) == 4 );
 }
 
 TEST_CASE( "Function 6 vars FS 1", "[decomposition_utils]" )
@@ -24,7 +24,7 @@ TEST_CASE( "Function 6 vars FS 1", "[decomposition_utils]" )
 
   CHECK( acd_column_multiplicity( tt, 1 ) == 3 );
 
-  acd_enumerate_combinations( tt, 1 );
+  CHECK( acd_enumerate_combinations( tt, 1 ) == 3 );
 }
 
 TEST_CASE( "Function 6 vars FS 3", "[decomposition_utils]" )
