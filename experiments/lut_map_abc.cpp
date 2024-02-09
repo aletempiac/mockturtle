@@ -44,7 +44,7 @@ using namespace mockturtle;
 std::tuple<uint32_t, uint32_t, uint32_t> abc_map( aig_network const& aig )
 {
   write_aiger( aig, "/tmp/tmp.aig" );
-  std::string command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -z -K 9; ps\"" );
+  std::string command = fmt::format( "abc -q \"read /tmp/tmp.aig; if -z -Z 6 -K 10; ps\"" );
 
   std::array<char, 128> buffer;
   std::string result;
@@ -106,14 +106,14 @@ int main()
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( "lms/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     {
       continue;
     }
 
     /* skip very large designs */
-    if ( benchmark == "hyp" )
-      continue;
+    // if ( benchmark == "hyp" )
+    //   continue;
 
     /* balancing */
     // aig_balance( aig, { false } );

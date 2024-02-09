@@ -30,8 +30,6 @@
   \author Alessandro Tempia Calvino
 */
 
-#ifndef _ACD_H_
-#define _ACD_H_
 #pragma once
 
 #include <algorithm>
@@ -42,12 +40,13 @@
 #include <unordered_set>
 #include <vector>
 
-#include "kitty_constants.hpp"
-#include "kitty_constructors.hpp"
-#include "kitty_dynamic_tt.hpp"
-#include "kitty_operations.hpp"
-#include "kitty_operators.hpp"
-#include "kitty_static_tt.hpp"
+#include "kitty/detail/constants.hpp"
+#include "kitty/constructors.hpp"
+#include "kitty/dynamic_truth_table.hpp"
+#include "kitty/operations.hpp"
+#include "kitty/operators.hpp"
+#include "kitty/print.hpp"
+#include "kitty/static_truth_table.hpp"
 
 namespace mockturtle
 {
@@ -99,6 +98,7 @@ private:
 private:
   static constexpr uint32_t max_num_vars = 10;
   using STT = kitty::static_truth_table<max_num_vars>;
+  using word = uint64_t;
 
 public:
   explicit ac_decomposition_impl( uint32_t num_vars, ac_decomposition_params const& ps, ac_decomposition_stats* pst = nullptr )
@@ -183,7 +183,7 @@ public:
       return;
 
     generate_decomposition();
-    return get_decomposition_abc( decompArray );
+    get_decomposition_abc( decompArray );
   }
 
 private:
@@ -198,7 +198,7 @@ private:
     /* perform only support reducing decomposition */
     if ( ps.support_reducing_only )
     {
-      start = std::max( start, num_vars - ps.lut_size );
+      start = std::max( 4u, num_vars - ps.lut_size );
     }
 
     /* array of functions to compute the column multiplicity */
@@ -273,9 +273,12 @@ private:
       return false;
 
     /* estimation on number of LUTs */
-    pst->num_luts = best_multiplicity <= 2 ? 2 : best_multiplicity <= 4 ? 3
-                                             : best_multiplicity <= 8   ? 4
-                                                                        : 5;
+    if ( pst )
+    {
+      pst->num_luts = best_multiplicity <= 2 ? 2 : best_multiplicity <= 4 ? 3
+                                                 : best_multiplicity <= 8 ? 4
+                                                 : 5;
+    }
 
     return true;
   }
@@ -808,7 +811,7 @@ private:
       best_iset_offset.push_back( offset );
     }
 
-    if ( pst != nullptr )
+    if ( pst )
     {
       pst->num_luts = num_luts;
       pst->num_levels = num_levels;
@@ -877,7 +880,7 @@ private:
       best_iset_offset.push_back( offset );
     }
 
-    if ( pst != nullptr )
+    if ( pst )
     {
       pst->num_luts = num_luts;
       pst->num_levels = num_levels;
@@ -951,6 +954,10 @@ private:
       /* discard solutions with support over LUT size */
       if ( cost > ps.lut_size )
         continue;
+
+      /* buffers have zero cost */
+      if ( cost == 1 )
+        cost = 0;
 
       float sort_cost = 0;
       if constexpr ( UseHeuristic )
@@ -1308,5 +1315,3 @@ private:
 };
 
 } // namespace mockturtle
-
-#endif // _ACD_H_
