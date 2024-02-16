@@ -128,7 +128,19 @@ bool mockturtle_acd( std::string const& tt_string )
   acd66_stats st;
   acd66_impl acd( tt.num_vars(), ps, &st );
 
-  return acd.run( words );
+  bool res = acd.run( words );
+
+  if ( !res )
+    return false;
+
+  int correct = acd.compute_decomposition();
+
+  if ( correct == 1 )
+  {
+    std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  }
+
+  return true;
 }
 
 void compute_functions( uint32_t cut_size )
@@ -213,6 +225,8 @@ int main( int argc, char **argv )
   in.close();
   in.open( "cuts_" + std::to_string( cut_size ) + ".txt" );
 
+  std::ofstream out( "cuts_" + std::to_string( cut_size ) + "_fail.txt" );
+
   /* compute */
   uint32_t successS = 0, successJ = 0;
   uint32_t failJsuccessS = 0, failSsuccessJ = 0;
@@ -229,16 +243,20 @@ int main( int argc, char **argv )
       continue;
 
     /* run evaluation */
-    bool resS = abc_acd( tt );
+    // bool resS = abc_acd( tt );
+    bool resS = false;
     bool resJ = mockturtle_acd( tt );
 
-    if ( resS == 1 )
+    if ( resS )
       ++successS;
-    if ( resJ == 1 )
+    if ( resJ )
       ++successJ;
-    if ( resS == 1 && resJ != 1 )
+    if ( resS && !resJ )
+    {
       ++failJsuccessS;
-    if ( resS != 1 && resJ == 1 )
+      out << tt << "\n";
+    }
+    if ( !resS && resJ )
       ++failSsuccessJ;
   }
 
@@ -252,6 +270,7 @@ int main( int argc, char **argv )
   std::cout << fmt::format( "[i] Success of -J 66 when -S 66 fails = {} \t {:>5.2f}%\n", failSsuccessJ, ( ( double )failSsuccessJ ) / num_lines * 100 );
 
   in.close();
+  out.close();
 
   return 0;
 }

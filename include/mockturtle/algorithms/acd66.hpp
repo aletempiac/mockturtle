@@ -98,7 +98,7 @@ public:
     init_truth_table( ptt );
 
     /* run ACD trying different bound sets and free sets */
-    return find_decomposition();
+    return find_decomposition2();
   }
 
   int compute_decomposition()
@@ -175,6 +175,30 @@ private:
         if ( multiplicity <= 2 || check_shared_set() )
           return true;
       }
+    }
+
+    best_multiplicity = UINT32_MAX;
+    return false;
+  }
+
+  bool find_decomposition2()
+  {
+    best_multiplicity = UINT32_MAX;
+    best_free_set = UINT32_MAX;
+
+    /* array of functions to compute the column multiplicity */
+    std::function<uint32_t( STT const& tt )> column_multiplicity_fn[5] = {
+        [this]( STT const& tt ) { return column_multiplicity<1u>( tt ); },
+        [this]( STT const& tt ) { return column_multiplicity<2u>( tt ); },
+        [this]( STT const& tt ) { return column_multiplicity<3u>( tt ); },
+        [this]( STT const& tt ) { return column_multiplicity5<4u>( tt ); },
+        [this]( STT const& tt ) { return column_multiplicity5<5u>( tt ); } };
+
+    /* find AC decompositions with minimal multiplicity */
+    for ( uint32_t i = num_vars - 6; i <= 5 && i <= ps.max_free_set_vars; ++i )
+    {
+      if ( find_decomposition_bs( i, column_multiplicity_fn[i - 1] ) )
+        return true;
     }
 
     best_multiplicity = UINT32_MAX;
@@ -342,6 +366,60 @@ private:
     return std::make_tuple( best_tt, res_perm, best_cost );
   }
 
+  template<typename Fn>
+  bool find_decomposition_bs( uint32_t free_set_size, Fn&& fn )
+  {
+    STT tt = start_tt;
+
+    /* works up to 16 input truth tables */
+    assert( num_vars <= 16 );
+
+    /* init combinations */
+    uint32_t pComb[16], pInvPerm[16];
+    for ( uint32_t i = 0; i < num_vars; ++i )
+    {
+      pComb[i] = pInvPerm[i] = i;
+    }
+
+    /* enumerate combinations */
+    best_free_set = free_set_size;
+    do
+    {
+      uint32_t cost = fn( tt );
+      if ( cost == 2 )
+      {
+        best_tt = tt;
+        best_multiplicity = cost;
+        for ( uint32_t i = 0; i < num_vars; ++i )
+        {
+          permutations[i] = pComb[i];
+        }
+        return true;
+      }
+      else if ( cost <= 4 && free_set_size < 5 )
+      {
+        /* look for a shared variable */
+        best_multiplicity = cost;
+        int res = check_shared_set2( tt );
+
+        if ( res > 0 )
+        {
+          best_tt = tt;
+          for ( uint32_t i = 0; i < num_vars; ++i )
+          {
+            permutations[i] = pComb[i];
+          }
+          /* move shared variable as the most significative one */
+          swap_inplace_local( best_tt, res, num_vars - 1 );
+          std::swap( permutations[res], permutations[num_vars - 1] );
+          return true;
+        }
+      }
+    } while ( combinations_next( free_set_size, pComb, pInvPerm, tt ) );
+
+    return false;
+  }
+
   bool check_shared_var( STT tt, uint32_t free_set_size, uint32_t shared_var, uint32_t multiplicity_limit )
   {
     uint64_t multiplicity_set[2][4] = { { 0u, 0u, 0u, 0u }, { 0u, 0u, 0u, 0u } };
@@ -482,6 +560,31 @@ private:
     }
 
     return false;
+  }
+
+  int check_shared_set2( STT const& tt )
+  {
+    /* find one shared set variable */
+    for ( uint32_t i = best_free_set; i < num_vars; ++i )
+    {
+      /* check the multiplicity of cofactors */
+      if ( best_free_set < 4 )
+      {
+        if ( check_shared_var( tt, best_free_set, i, 2 ) )
+        {
+          return i;
+        }
+      }
+      else
+      {
+        if ( check_shared_var5( tt, best_free_set, i, 2 ) )
+        {
+          return i;
+        }
+      }
+    }
+
+    return -1;
   }
 
   void compute_decomposition_impl( bool verbose = false )
