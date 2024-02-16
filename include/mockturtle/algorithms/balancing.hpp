@@ -231,9 +231,6 @@ struct balancing_decomp_impl
       } );
     }
 
-    std::shared_ptr<depth_view<Ntk>> depth_ntk;
-    // stopwatch<> t( st_.time_total );
-
     topo_view<Ntk>{ ntk_ }.foreach_node( [&]( auto const& n, auto index ) {
       if ( ntk_.is_constant( n ) || ntk_.is_ci( n ) )
       {
@@ -338,7 +335,7 @@ Ntk balancing( Ntk const& ntk, rebalancing_function_t<Ntk> const& rebalancing_fn
   return dest;
 }
 
-/*! SOP balancing of a logic network
+/*! \brief SOP balancing of a logic network
  *
  * This function implements an LUT-based SOP balancing algorithm.
  * It returns a new network of the same type and performs
@@ -376,7 +373,9 @@ Ntk sop_balancing( Ntk const& ntk, lut_map_params const& ps = {}, lut_map_stats*
   /* decompose mapping */
   sop_rebalancing<Ntk> balance_fn;
   balance_fn.both_phases_ = true;
-  const auto dest = detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
+  const auto dest = call_with_stopwatch( st.time_total, [&]() {
+    return detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
+  } );
 
   if ( pst )
   {
@@ -390,7 +389,7 @@ Ntk sop_balancing( Ntk const& ntk, lut_map_params const& ps = {}, lut_map_stats*
   return dest;
 }
 
-/*! ESOP balancing of a logic network
+/*! \brief ESOP balancing of a logic network
  *
  * This function implements an LUT-based ESOP balancing algorithm.
  * It returns a new network of the same type and performs
@@ -428,7 +427,9 @@ Ntk esop_balancing( Ntk const& ntk, lut_map_params const& ps = {}, lut_map_stats
   /* decompose mapping */
   esop_rebalancing<Ntk> balance_fn;
   balance_fn.both_phases = true;
-  const auto dest = detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
+  const auto dest = call_with_stopwatch( st.time_total, [&]() {
+    return detail::balancing_decomp_impl<Ntk>{ map_ntk, balance_fn }.run();
+  } );
 
   if ( pst )
   {

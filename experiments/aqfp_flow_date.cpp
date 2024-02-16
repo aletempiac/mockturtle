@@ -166,7 +166,7 @@ struct opt_stats_t
   uint32_t jj_level_after_exact;
 };
 
-mig_network remapping_round( mig_network const& ntk, exact_library<mig_network, mig_npn_resynthesis> const& exact_lib, opt_params_t const& opt_params, opt_stats_t& stats )
+mig_network remapping_round( mig_network const& ntk, exact_library<mig_network> const& exact_lib, opt_params_t const& opt_params, opt_stats_t& stats )
 {
   map_params psm;
   psm.skip_delay_round = false;
@@ -354,7 +354,8 @@ int main( int argc, char** argv )
   /* library to map to MIGs */
   mig_npn_resynthesis resyn{ true };
   exact_library_params eps;
-  exact_library<mig_network, mig_npn_resynthesis> exact_lib( resyn, eps );
+  eps.np_classification = true;
+  exact_library<mig_network> exact_lib( resyn, eps );
 
   /* database loading for aqfp resynthesis*/
   auto db3_str = get_database( "db3" );
@@ -401,9 +402,8 @@ int main( int argc, char** argv )
     buf_ps.optimization_effort = buffer_insertion_params::until_sat;
     buf_ps.max_chunk_size = std::numeric_limits<uint32_t>::max();
     buf_ps.assume.splitter_capacity = 4u;
-    buf_ps.assume.branch_pis = false;
-    buf_ps.assume.balance_pis = false;
-    buf_ps.assume.balance_pos = true;
+    buf_ps.assume.ci_capacity = std::numeric_limits<uint32_t>::max();
+    buf_ps.assume.balance_cios = true;
     buffer_insertion buf_inst( aqfp, buf_ps );
     uint32_t num_bufs = buf_inst.dry_run();
     uint32_t num_jjs = opt_stats.maj3_after_exact * 6 + opt_stats.maj5_after_exact * 10 + num_bufs * 2;

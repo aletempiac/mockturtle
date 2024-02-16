@@ -1,5 +1,5 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2019  EPFL
+ * Copyright (C) 2018-2023  EPFL
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -47,26 +47,24 @@ int main()
   for ( auto const& benchmark : epfl_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
-    xag_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
+    xag_network xag;
+    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( xag ) ) != lorina::return_code::success )
     {
       continue;
     }
 
-    const uint32_t size_before = aig.num_gates();
-    const uint32_t depth_before = depth_view{ aig }.depth();
+    const uint32_t size_before = xag.num_gates();
+    const uint32_t depth_before = depth_view{ xag }.depth();
 
     lut_map_params ps;
     ps.cut_enumeration_ps.cut_size = 4u;
-    ps.cut_enumeration_ps.cut_limit = 8u;
-    ps.verbose = true;
     lut_map_stats st;
-    const xag_network balanced_aig = esop_balancing( aig, ps, &st );
+    const xag_network balanced_xag = esop_balancing( xag, ps, &st );
 
-    const uint32_t size_after = balanced_aig.num_gates();
-    const uint32_t depth_after = depth_view{ balanced_aig }.depth();
+    const uint32_t size_after = balanced_xag.num_gates();
+    const uint32_t depth_after = depth_view{ balanced_xag }.depth();
 
-    auto const cec = benchmark == "hyp" ? true : abc_cec( balanced_aig, benchmark );
+    auto const cec = benchmark == "hyp" ? true : abc_cec( balanced_xag, benchmark );
 
     exp( benchmark, size_before, depth_before, size_after, depth_after, to_seconds( st.time_total ), cec );
   }

@@ -27,6 +27,7 @@
   \file depth_view.hpp
   \brief Implements depth and level for a network
 
+  \author Alessandro Tempia Calvino
   \author Heinz Riener
   \author Mathias Soeken
   \author Siang-Yun (Sonia) Lee

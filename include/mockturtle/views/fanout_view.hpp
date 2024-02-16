@@ -27,6 +27,7 @@
   \file fanout_view.hpp
   \brief Implements fanout for a network
 
+  \author Alessandro Tempia Calvino
   \author Hanyu Wang
   \author Heinz Riener
   \author Mathias Soeken

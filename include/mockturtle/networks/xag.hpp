@@ -623,11 +623,6 @@ public:
 
     // don't check for trivial cases
 
-    // node already in hash table
-    storage::element_type::node_type _hash_obj;
-    _hash_obj.children[0] = child0;
-    _hash_obj.children[1] = child1;
-
     // remember before
     const auto old_child0 = signal{ node.children[0] };
     const auto old_child1 = signal{ node.children[1] };

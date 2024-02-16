@@ -1,5 +1,5 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2022  EPFL
+ * Copyright (C) 2018-2023  EPFL
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -563,12 +563,12 @@ private:
 
 } /* namespace detail */
 
-/*! \brief AIG balancing.
+/*! \brief XAG balancing.
  *
- * This method balance the AIG to reduce the
+ * This method balance the XAG to reduce the
  * depth. Level minimization can be turned off.
  * In this case, balancing tries to reconstruct
- * AND trees such that logic sharing is maximized.
+ * AND and XOR trees such that logic sharing is maximized.
  *
  * **Required network functions:**
  * - `get_node`
