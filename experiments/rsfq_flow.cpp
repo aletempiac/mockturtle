@@ -120,9 +120,9 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
   xag_resyn resyn;
   exact_library_params ps;
   ps.np_classification = true;
-  exact_library<xag_network, xag_resyn> exact_lib( resyn, ps );
+  exact_library<xag_network> exact_lib( resyn, ps );
   ps.np_classification = false;
-  exact_library<xag_network, xag_resyn> rw_lib( resyn, ps );
+  exact_library<xag_network> rw_lib( resyn, ps );
 
   /* MC database */
   future::xag_minmc_resynthesis mc_resyn;
@@ -311,7 +311,7 @@ void rsfq_flow( int opt_iter )
   /* exact XAG database */
   using xag_resyn = xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete>;
   xag_resyn resyn;
-  exact_library<xag_network, xag_resyn> exact_lib( resyn );
+  exact_library<xag_network> exact_lib( resyn );
 
   /* SOP balancing */
   sop_rebalancing<aig_network> sop_balancing;
@@ -324,8 +324,8 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  std::vector<std::string> seq_benchmark_set = { "s1196", "s1238", "s38417" };
-  for ( auto const& benchmark : seq_benchmark_set )
+  // std::vector<std::string> seq_benchmark_set = { "s1196", "s1238", "s38417" };
+  for ( auto const& benchmark : iscas_benchmarks() )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 

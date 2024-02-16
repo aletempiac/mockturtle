@@ -156,7 +156,7 @@ rsfq_view<binding_view<klut_network>> rsfq_mapped_create_from_generic_network( b
   } );
 
   /* get latch gate (buffer) */
-  uint32_t buf_id;
+  uint32_t buf_id = UINT32_MAX;
   for ( auto const& gate : ntk.get_library() )
   {
     if ( gate.num_vars == 1 && kitty::is_const0( kitty::cofactor0( gate.function, 0 ) ) )
@@ -165,6 +165,7 @@ rsfq_view<binding_view<klut_network>> rsfq_mapped_create_from_generic_network( b
       break;
     }
   }
+  assert( buf_id != UINT32_MAX );
 
   topo_view topo{ ntk };
 

@@ -121,9 +121,9 @@ mockturtle::sequential<mockturtle::xag_network> depth_opt( mockturtle::sequentia
   xag_resyn resyn;
   exact_library_params ps;
   ps.np_classification = true;
-  exact_library<sequential<xag_network>, xag_resyn> exact_lib( resyn, ps );
+  exact_library<sequential<xag_network>> exact_lib( resyn, ps );
   ps.np_classification = false;
-  exact_library<sequential<xag_network>, xag_resyn> rw_lib( resyn, ps );
+  exact_library<sequential<xag_network>> rw_lib( resyn, ps );
 
   /* MC database */
   future::xag_minmc_resynthesis mc_resyn;
@@ -230,7 +230,7 @@ void rsfq_flow( int opt_iter )
   /* exact XAG database */
   using xag_resyn = xag_npn_resynthesis<xag_network, xag_network, xag_npn_db_kind::xag_incomplete>;
   xag_resyn resyn;
-  exact_library<sequential<xag_network>, xag_resyn> exact_lib( resyn );
+  exact_library<sequential<xag_network>> exact_lib( resyn );
 
   /* SOP balancing */
   sop_rebalancing<aig_network> sop_balancing;

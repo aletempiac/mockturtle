@@ -114,6 +114,9 @@ struct map_params
   /*! \brief Window size for don't cares calculation. */
   uint32_t window_size{ 12u };
 
+  /*! \brief Buffer PIs. */
+  bool buffer_pis{ true };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -296,7 +299,8 @@ public:
       return res;
 
     /* insert buffers for POs driven by PIs */
-    insert_buffers();
+    if ( ps.buffer_pis )
+      insert_buffers();
 
     /* generate the output network */
     finalize_cover<seq_map_ntk_t>( res, old2new );

@@ -137,6 +137,9 @@ struct emap_params
   /*! \brief Doesn't allow node duplication */
   bool allow_node_duplication{ true };
 
+  /*! \brief Buffer PIs. */
+  bool buffer_pis{ true };
+
   /*! \brief Be verbose. */
   bool verbose{ false };
 };
@@ -819,7 +822,8 @@ public:
       return res;
 
     /* insert buffers for POs driven by PIs */
-    insert_buffers();
+    if ( ps.buffer_pis )
+      insert_buffers();
 
     /* generate the output network */
     finalize_cover_block( res, old2new );
@@ -873,7 +877,8 @@ public:
       return res;
 
     /* insert buffers for POs driven by PIs */
-    insert_buffers();
+    if ( ps.buffer_pis )
+      insert_buffers();
 
     /* generate the output network */
     finalize_cover( res, old2new );
@@ -914,7 +919,8 @@ public:
       return res;
 
     /* insert buffers for POs driven by PIs */
-    insert_buffers();
+    if ( ps.buffer_pis )
+      insert_buffers();
 
     /* generate the output network */
     finalize_cover( res, old2new );
