@@ -400,7 +400,7 @@ private:
     assert( free_set_size == 5 || free_set_size == 4 );
 
     uint32_t size[2] = { 0, 0 };
-    uint64_t prev[2] = { -1, -1 };
+    uint64_t prev[2] = { UINT64_MAX, UINT64_MAX };
     std::array<uint32_t, 64> multiplicity_set[2];
 
     uint32_t shared_var_shift = shared_var - free_set_size;
