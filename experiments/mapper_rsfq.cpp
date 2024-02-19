@@ -74,7 +74,7 @@ typedef mockturtle::xmg_network xmg;
 typedef mockturtle::aig_network aig;
 
 template <typename Ntk>
-std::tuple<mockturtle::binding_view<klut>, mockturtle::emap_stats, int, int, bool> map_with_pb 
+std::tuple<mockturtle::binding_view<klut>, mockturtle::map_stats, int, int, bool> map_with_pb 
 ( 
   const std::string & benchmark, 
   const Ntk & tech_indep_ntk, 
@@ -83,24 +83,24 @@ std::tuple<mockturtle::binding_view<klut>, mockturtle::emap_stats, int, int, boo
   bool area_oriented = false 
 )
 {
-  // mockturtle::map_params ps;
-  // ps.cut_enumeration_ps.minimize_truth_table = true;
-  // ps.cut_enumeration_ps.cut_limit = 24;
-  // ps.buffer_pis = false;
-  // if (area_oriented)
-  // {
-  //     ps.skip_delay_round = true;
-  //     ps.required_time = std::numeric_limits<float>::max();
-  // }
-  // mockturtle::map_stats st;
-  // mockturtle::binding_view<klut> res = map( tech_indep_ntk, tech_lib, ps, &st );
-
-  mockturtle::emap_params ps;
+  mockturtle::map_params ps;
+  ps.cut_enumeration_ps.minimize_truth_table = true;
   ps.cut_enumeration_ps.cut_limit = 24;
   ps.buffer_pis = false;
-  ps.area_oriented_mapping = area_oriented;
-  mockturtle::emap_stats st;
-  mockturtle::binding_view<klut> res = emap_klut( tech_indep_ntk, tech_lib, ps, &st );
+  if (area_oriented)
+  {
+      ps.skip_delay_round = true;
+      ps.required_time = std::numeric_limits<float>::max();
+  }
+  mockturtle::map_stats st;
+  mockturtle::binding_view<klut> res = map( tech_indep_ntk, tech_lib, ps, &st );
+
+  // mockturtle::emap_params ps;
+  // ps.cut_enumeration_ps.cut_limit = 24;
+  // ps.buffer_pis = false;
+  // ps.area_oriented_mapping = area_oriented;
+  // mockturtle::emap_stats st;
+  // mockturtle::binding_view<klut> res = emap_klut( tech_indep_ntk, tech_lib, ps, &st );
   mockturtle::depth_view<mockturtle::binding_view<klut>> dv { res };
 
   std::map<klut::node, int> dff_count;
@@ -231,6 +231,8 @@ int main()
   if ( lorina::read_genlib( inputFile_3_IN, genlib_reader( gates_3_IN ) ) != lorina::return_code::success ) { return 1; }
 
   mockturtle::tech_library_params tps; // tps.verbose = true;
+  tps.load_minimum_size_only = false;
+  tps.remove_dominated_gates = false;
   tech_library<4, mockturtle::classification_type::p_configurations> tech_lib_2_in( gates_2_IN, tps );
   tech_library<4, mockturtle::classification_type::p_configurations> tech_lib_3_in( gates_3_IN, tps );
 
