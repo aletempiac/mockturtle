@@ -180,7 +180,6 @@ void compute_functions( uint32_t cut_size )
       if ( tt.num_vars() != cut_size )
         continue;
 
-      /* TODO: implement semi-canonization */
       // auto res = kitty::exact_n_canonization( tt );
       auto res = kitty::sifting_npn_canonization( tt );
       cache.insert( std::get<0>( res ) );

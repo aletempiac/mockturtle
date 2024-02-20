@@ -692,6 +692,11 @@ public:
     derive_mapping();
   }
 
+  tt_cache const& get_truth_cache()
+  {
+    return truth_tables;
+  }
+
 private:
   void perform_mapping()
   {
