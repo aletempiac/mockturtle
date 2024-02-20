@@ -98,7 +98,7 @@ public:
     init_truth_table( ptt );
 
     /* run ACD trying different bound sets and free sets */
-    return find_decomposition2();
+    return find_decomposition();
   }
 
   int compute_decomposition()
@@ -151,53 +151,10 @@ private:
     best_multiplicity = UINT32_MAX;
     best_free_set = UINT32_MAX;
 
-    /* array of functions to compute the column multiplicity */
-    std::function<uint32_t( STT const& tt )> column_multiplicity_fn[5] = {
-        [this]( STT const& tt ) { return column_multiplicity<1u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity<2u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity<3u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity5<4u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity5<5u>( tt ); } };
-
     /* find AC decompositions with minimal multiplicity */
     for ( uint32_t i = num_vars - 6; i <= 5 && i <= ps.max_free_set_vars; ++i )
     {
-      auto [tt_p, perm, multiplicity] = enumerate_iset_combinations( i, column_multiplicity_fn[i - 1] );
-
-      /* check for feasible solution into "66" with one possible shared variable */
-      if ( multiplicity <= 2 || ( multiplicity <= 4 && i < 5 ) )
-      {
-        best_tt = tt_p;
-        permutations = perm;
-        best_multiplicity = multiplicity;
-        best_free_set = i;
-
-        if ( multiplicity <= 2 || check_shared_set() )
-          return true;
-      }
-    }
-
-    best_multiplicity = UINT32_MAX;
-    return false;
-  }
-
-  bool find_decomposition2()
-  {
-    best_multiplicity = UINT32_MAX;
-    best_free_set = UINT32_MAX;
-
-    /* array of functions to compute the column multiplicity */
-    std::function<uint32_t( STT const& tt )> column_multiplicity_fn[5] = {
-        [this]( STT const& tt ) { return column_multiplicity<1u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity<2u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity<3u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity5<4u>( tt ); },
-        [this]( STT const& tt ) { return column_multiplicity5<5u>( tt ); } };
-
-    /* find AC decompositions with minimal multiplicity */
-    for ( uint32_t i = num_vars - 6; i <= 5 && i <= ps.max_free_set_vars; ++i )
-    {
-      if ( find_decomposition_bs( i, column_multiplicity_fn[i - 1] ) )
+      if ( find_decomposition_bs( i ) )
         return true;
     }
 
@@ -217,81 +174,40 @@ private:
     local_extend_to( start_tt, num_vars );
   }
 
-  template<uint32_t free_set_size>
-  uint32_t column_multiplicity( STT tt )
+  uint32_t column_multiplicity( STT const& tt, uint32_t free_set_size )
   {
-    uint64_t multiplicity_set[4] = { 0u, 0u, 0u, 0u };
-    uint32_t multiplicity = 0;
+    assert( free_set_size <= 5 );
+
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
-    uint64_t constexpr masks_bits[] = { 0x0, 0x3, 0xF, 0x3F };
-    uint64_t constexpr masks_idx[] = { 0x0, 0x0, 0x0, 0x3 };
-
-    /* supports up to 64 values of free set (256 for |FS| == 3)*/
-    static_assert( free_set_size <= 3 );
-
-    /* extract iset functions */
-    auto it = std::begin( tt );
-    for ( auto i = 0u; i < num_blocks; ++i )
-    {
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
-      {
-        multiplicity_set[( *it >> 6 ) & masks_idx[free_set_size]] |= UINT64_C( 1 ) << ( *it & masks_bits[free_set_size] );
-        *it >>= ( 1u << free_set_size );
-      }
-      ++it;
-    }
-
-    multiplicity = __builtin_popcountl( multiplicity_set[0] );
-
-    if constexpr ( free_set_size == 3 )
-    {
-      multiplicity += __builtin_popcountl( multiplicity_set[1] );
-      multiplicity += __builtin_popcountl( multiplicity_set[2] );
-      multiplicity += __builtin_popcountl( multiplicity_set[3] );
-    }
-
-    return multiplicity;
-  }
-
-  template<uint32_t free_set_size>
-  uint32_t column_multiplicity5( STT tt )
-  {
-    uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
-    uint64_t constexpr masks[] = { 0x0, 0x3, 0xF, 0xFF, 0xFFFF, 0xFFFFFFFF };
-
-    static_assert( free_set_size == 5 || free_set_size == 4 );
-
+    uint64_t shift = UINT64_C( 1 ) << free_set_size;
+    uint64_t mask = ( UINT64_C( 1 ) << shift ) - 1;
+    uint32_t cofactors[4];
     uint32_t size = 0;
-    uint64_t prev = -1;
-    std::array<uint32_t, 64> multiplicity_set;
 
     /* extract iset functions */
     auto it = std::begin( tt );
     for ( auto i = 0u; i < num_blocks; ++i )
     {
+      uint64_t sub = *it;
       for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
       {
-        uint32_t fs_fn = static_cast<uint32_t>( *it & masks[free_set_size] );
-        if ( fs_fn != prev )
+        uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
+        uint32_t k;
+        for ( k = 0; k < size; ++k )
         {
-          multiplicity_set[size++] = fs_fn;
-          prev = fs_fn;
+          if ( fs_fn == cofactors[k] )
+            break;
         }
-        *it >>= ( 1u << free_set_size );
+        if ( k == 4 )
+          return 5;
+        if ( k == size )
+          cofactors[size++] = fs_fn;
+        sub >>= shift;
       }
       ++it;
     }
 
-    std::sort( multiplicity_set.begin(), multiplicity_set.begin() + size );
-
-    /* count unique */
-    uint32_t multiplicity = 1;
-    for ( auto i = 1u; i < size; ++i )
-    {
-      multiplicity += multiplicity_set[i] != multiplicity_set[i - 1] ? 1 : 0;
-    }
-
-    return multiplicity;
+    return size;
   }
 
   inline bool combinations_next( uint32_t k, uint32_t* pComb, uint32_t* pInvPerm, STT& tt )
@@ -323,51 +239,7 @@ private:
     return true;
   }
 
-  template<typename Fn>
-  std::tuple<STT, std::array<uint32_t, max_num_vars>, uint32_t> enumerate_iset_combinations( uint32_t free_set_size, Fn&& fn )
-  {
-    STT tt = start_tt;
-
-    /* TT with best cost */
-    STT best_tt = tt;
-    uint32_t best_cost = UINT32_MAX;
-
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
-
-    /* init combinations */
-    uint32_t pComb[16], pInvPerm[16], bestPerm[16];
-    for ( uint32_t i = 0; i < num_vars; ++i )
-    {
-      pComb[i] = pInvPerm[i] = i;
-    }
-
-    /* enumerate combinations */
-    do
-    {
-      uint32_t cost = fn( tt );
-      if ( cost < best_cost )
-      {
-        best_tt = tt;
-        best_cost = cost;
-        for ( uint32_t i = 0; i < num_vars; ++i )
-        {
-          bestPerm[i] = pComb[i];
-        }
-      }
-    } while ( combinations_next( free_set_size, pComb, pInvPerm, tt ) );
-
-    std::array<uint32_t, max_num_vars> res_perm;
-    for ( uint32_t i = 0; i < num_vars; ++i )
-    {
-      res_perm[i] = bestPerm[i];
-    }
-
-    return std::make_tuple( best_tt, res_perm, best_cost );
-  }
-
-  template<typename Fn>
-  bool find_decomposition_bs( uint32_t free_set_size, Fn&& fn )
+  bool find_decomposition_bs( uint32_t free_set_size )
   {
     STT tt = start_tt;
 
@@ -385,7 +257,7 @@ private:
     best_free_set = free_set_size;
     do
     {
-      uint32_t cost = fn( tt );
+      uint32_t cost = column_multiplicity( tt, free_set_size );
       if ( cost == 2 )
       {
         best_tt = tt;
@@ -400,7 +272,7 @@ private:
       {
         /* look for a shared variable */
         best_multiplicity = cost;
-        int res = check_shared_set2( tt );
+        int res = check_shared_set( tt );
 
         if ( res > 0 )
         {
@@ -420,167 +292,55 @@ private:
     return false;
   }
 
-  bool check_shared_var( STT tt, uint32_t free_set_size, uint32_t shared_var, uint32_t multiplicity_limit )
+  bool check_shared_var( STT const& tt, uint32_t free_set_size, uint32_t shared_var )
   {
-    uint64_t multiplicity_set[2][4] = { { 0u, 0u, 0u, 0u }, { 0u, 0u, 0u, 0u } };
-    uint32_t multiplicity0 = 0, multiplicity1 = 0;
+    assert( free_set_size <= 5 );
+
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
-    uint64_t constexpr masks_bits[] = { 0x0, 0x3, 0xF, 0x3F };
-    uint64_t constexpr masks_idx[] = { 0x0, 0x0, 0x0, 0x3 };
-
-    /* supports up to 64 values of free set (256 for |FS| == 3)*/
-    assert( free_set_size <= 3 );
-
+    uint64_t shift = UINT64_C( 1 ) << free_set_size;
+    uint64_t mask = ( UINT64_C( 1 ) << shift ) - 1;
+    uint32_t cofactors[2][4];
+    uint32_t size[2] = { 0, 0 };
     uint32_t shared_var_shift = shared_var - free_set_size;
 
     /* extract iset functions */
-    uint64_t iteration_counter = 0;
+    uint32_t iteration_counter = 0;
     auto it = std::begin( tt );
     for ( auto i = 0u; i < num_blocks; ++i )
     {
+      uint64_t sub = *it;
       for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
       {
-        multiplicity_set[( iteration_counter >> shared_var_shift ) & 1][( *it >> 6 ) & masks_idx[free_set_size]] |= UINT64_C( 1 ) << ( *it & masks_bits[free_set_size] );
-        *it >>= ( 1u << free_set_size );
+        uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
+        uint32_t p = ( iteration_counter >> shared_var_shift ) & 1;
+        uint32_t k;
+        for ( k = 0; k < size[p]; ++k )
+        {
+          if ( fs_fn == cofactors[p][k] )
+            break;
+        }
+        if ( k == 2 )
+          return false;
+        if ( k == size[p] )
+          cofactors[p][size[p]++] = fs_fn;
+        sub >>= shift;
         ++iteration_counter;
       }
       ++it;
     }
-
-    multiplicity0 = __builtin_popcountl( multiplicity_set[0][0] );
-    multiplicity1 = __builtin_popcountl( multiplicity_set[1][0] );
-
-    if ( free_set_size == 3 )
-    {
-      multiplicity0 += __builtin_popcountl( multiplicity_set[0][1] );
-      multiplicity0 += __builtin_popcountl( multiplicity_set[0][2] );
-      multiplicity0 += __builtin_popcountl( multiplicity_set[0][3] );
-
-      multiplicity1 += __builtin_popcountl( multiplicity_set[1][1] );
-      multiplicity1 += __builtin_popcountl( multiplicity_set[1][2] );
-      multiplicity1 += __builtin_popcountl( multiplicity_set[1][3] );
-    }
-
-    if ( multiplicity0 > multiplicity_limit || multiplicity1 > multiplicity_limit )
-      return false;
-
-    best_multiplicity0 = multiplicity0;
-    best_multiplicity1 = multiplicity1;
 
     return true;
   }
 
-  bool check_shared_var5( STT tt, uint32_t free_set_size, uint32_t shared_var, uint32_t multiplicity_limit )
-  {
-    uint32_t const num_blocks = 1u << ( num_vars - 6 );
-    uint64_t constexpr masks[] = { 0x0, 0x3, 0xF, 0xFF, 0xFFFF, 0xFFFFFFFF };
-
-    assert( free_set_size == 5 || free_set_size == 4 );
-
-    uint32_t size[2] = { 0, 0 };
-    uint64_t prev[2] = { UINT64_MAX, UINT64_MAX };
-    std::array<uint32_t, 64> multiplicity_set[2];
-
-    uint32_t shared_var_shift = shared_var - free_set_size;
-
-    /* extract iset functions */
-    uint64_t iteration_counter = 0;
-    auto it = std::begin( tt );
-    for ( auto i = 0u; i < num_blocks; ++i )
-    {
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
-      {
-        uint32_t fs_fn = static_cast<uint32_t>( *it & masks[free_set_size] );
-        uint32_t cofactor = ( iteration_counter >> shared_var_shift ) & 1;
-        if ( fs_fn != prev[cofactor] )
-        {
-          multiplicity_set[cofactor][size[cofactor]++] = fs_fn;
-          prev[cofactor] = fs_fn;
-        }
-        *it >>= ( 1u << free_set_size );
-        ++iteration_counter;
-      }
-      ++it;
-    }
-
-    std::sort( multiplicity_set[0].begin(), multiplicity_set[0].begin() + size[0] );
-
-    /* count unique in 0 cofactor */
-    uint32_t multiplicity = 1;
-    for ( auto i = 1u; i < size[0]; ++i )
-    {
-      multiplicity += multiplicity_set[0][i] != multiplicity_set[0][i - 1] ? 1 : 0;
-    }
-
-    if ( multiplicity > multiplicity_limit )
-      return false;
-
-    best_multiplicity0 = multiplicity;
-
-    std::sort( multiplicity_set[1].begin(), multiplicity_set[1].begin() + size[1] );
-
-    /* count unique in 1 cofactor */
-    multiplicity = 1;
-    for ( auto i = 1u; i < size[1]; ++i )
-    {
-      multiplicity += multiplicity_set[1][i] != multiplicity_set[1][i - 1] ? 1 : 0;
-    }
-
-    best_multiplicity1 = multiplicity;
-
-    return multiplicity <= multiplicity_limit;
-  }
-
-  bool check_shared_set()
+  inline int check_shared_set( STT const& tt )
   {
     /* find one shared set variable */
     for ( uint32_t i = best_free_set; i < num_vars; ++i )
     {
       /* check the multiplicity of cofactors */
-      if ( best_free_set < 4 )
+      if ( check_shared_var( tt, best_free_set, i ) )
       {
-        if ( check_shared_var( best_tt, best_free_set, i, 2 ) )
-        {
-          /* move shared variable as the most significative one */
-          swap_inplace_local( best_tt, i, num_vars - 1 );
-          std::swap( permutations[i], permutations[num_vars - 1] );
-          return true;
-        }
-      }
-      else
-      {
-        if ( check_shared_var5( best_tt, best_free_set, i, 2 ) )
-        {
-          /* move shared variable as the most significative one */
-          swap_inplace_local( best_tt, i, num_vars - 1 );
-          std::swap( permutations[i], permutations[num_vars - 1] );
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  int check_shared_set2( STT const& tt )
-  {
-    /* find one shared set variable */
-    for ( uint32_t i = best_free_set; i < num_vars; ++i )
-    {
-      /* check the multiplicity of cofactors */
-      if ( best_free_set < 4 )
-      {
-        if ( check_shared_var( tt, best_free_set, i, 2 ) )
-        {
-          return i;
-        }
-      }
-      else
-      {
-        if ( check_shared_var5( tt, best_free_set, i, 2 ) )
-        {
-          return i;
-        }
+        return i;
       }
     }
 

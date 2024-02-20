@@ -29,6 +29,7 @@
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
 #include <mockturtle/algorithms/acd66.hpp>
+#include <mockturtle/algorithms/s66.h>
 #include <mockturtle/algorithms/lut_mapper.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
@@ -89,25 +90,41 @@ std::tuple<uint32_t, uint32_t, uint32_t> abc_map( std::string const& tt, std::st
   return std::make_tuple( area, edges, delay );
 }
 
-bool abc_acd( std::string const& tt )
+bool abc_acd( std::string const& tt_string )
 {
-  std::string command = fmt::format( "./cascade/s66dec31112 {}", tt );
+  // std::string command = fmt::format( "./cascade/s66dec31112 {}", tt );
 
-  std::array<char, 128> buffer;
-  std::string result;
-  std::unique_ptr<FILE, decltype( &pclose )> pipe( popen( command.c_str(), "r" ), pclose );
-  if ( !pipe )
-  {
-    throw std::runtime_error( "ABC: popen() failed" );
-  }
-  while ( fgets( buffer.data(), buffer.size(), pipe.get() ) != nullptr )
-  {
-    result += buffer.data();
-  }
+  // std::array<char, 128> buffer;
+  // std::string result;
+  // std::unique_ptr<FILE, decltype( &pclose )> pipe( popen( command.c_str(), "r" ), pclose );
+  // if ( !pipe )
+  // {
+  //   throw std::runtime_error( "ABC: popen() failed" );
+  // }
+  // while ( fgets( buffer.data(), buffer.size(), pipe.get() ) != nullptr )
+  // {
+  //   result += buffer.data();
+  // }
 
   // std::cout << result << std::endl;
 
-  return result[0] == 'S';
+  // return result[0] == 'S';
+  int nVars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( nVars );
+  kitty::create_from_hex_string( tt, tt_string );
+  word Truth[CLU_WRD_MAX] = {0};
+
+  for ( auto i = 0u; i < tt.num_blocks(); ++i )
+  {
+    Truth[i] = tt._bits[i];
+  }
+  word Func0, Func1, Func2;
+  If_Grp_t G1 = {0}, G2 = {0}, R = {0};
+  int nVarsNew = nVars;            // the number of variables afer support minimization
+  int pVarPerm[CLU_VAR_MAX] = {0}; // the remaining variables after support minimization
+  G1 = If_CluCheckTest( 2, 6, Truth, nVars, &R, &G2, &Func0, &Func1, &Func2, &nVarsNew, pVarPerm );
+  return G1.nVars > 0;
 }
 
 bool mockturtle_acd( std::string const& tt_string )
@@ -242,8 +259,8 @@ int main( int argc, char **argv )
       continue;
 
     /* run evaluation */
-    // bool resS = abc_acd( tt );
-    bool resS = false;
+    bool resS = abc_acd( tt );
+    // bool resS = false;
     bool resJ = mockturtle_acd( tt );
 
     if ( resS )
