@@ -40,7 +40,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../networks/klut.hpp"
 #include "kitty/constructors.hpp"
 #include "kitty/detail/constants.hpp"
 #include "kitty/dynamic_truth_table.hpp"
@@ -52,22 +51,6 @@
 namespace mockturtle
 {
 
-/*! \brief Parameters for acd66 */
-struct acd66_params
-{
-  /*! \brief Maximum size of the free set (1 < num < 6). */
-  uint32_t max_free_set_vars{ 5 };
-
-  /*! \brief Number of configurations to test for decomposition. */
-  uint32_t max_evaluations{ 3 };
-};
-
-/*! \brief Statistics for acd66 */
-struct acd66_stats
-{
-  uint32_t num_edges{ 0 };
-};
-
 class acd66_impl
 {
 private:
@@ -77,8 +60,8 @@ private:
   using word = uint64_t;
 
 public:
-  explicit acd66_impl( uint32_t num_vars, acd66_params const& ps, acd66_stats* pst = nullptr )
-      : num_vars( num_vars ), ps( ps ), pst( pst )
+  explicit acd66_impl( uint32_t num_vars )
+      : num_vars( num_vars )
   {
     std::iota( permutations.begin(), permutations.end(), 0 );
   }
@@ -113,12 +96,18 @@ public:
       return 1;
     }
 
-    if ( pst )
+    return 0;
+  }
+
+  uint32_t get_num_edges()
+  {
+    if ( bs_support_size == UINT32_MAX )
     {
-      pst->num_edges = bs_support_size + best_free_set + 1 + ( best_multiplicity > 2 ? 1 : 0 );
+      return num_vars + 1 + ( best_multiplicity > 2 ? 1 : 0 );
     }
 
-    return 0;
+    /* real value after support minimization */
+    return bs_support_size + best_free_set + 1 + ( best_multiplicity > 2 ? 1 : 0 );
   }
 
   /* contains a 1 for BS variables */
@@ -152,7 +141,7 @@ private:
     best_free_set = UINT32_MAX;
 
     /* find AC decompositions with minimal multiplicity */
-    for ( uint32_t i = num_vars - 6; i <= 5 && i <= ps.max_free_set_vars; ++i )
+    for ( uint32_t i = num_vars - 6; i <= 5; ++i )
     {
       if ( find_decomposition_bs( i ) )
         return true;
@@ -949,8 +938,6 @@ private:
   uint32_t bs_support[6];
 
   uint32_t num_vars;
-  acd66_params const& ps;
-  acd66_stats* pst;
   std::array<uint32_t, max_num_vars> permutations;
 };
 

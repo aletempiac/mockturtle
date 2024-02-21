@@ -141,9 +141,7 @@ bool mockturtle_acd( std::string const& tt_string )
   for ( uint32_t i = 0; i < tt.num_blocks(); ++i )
     words[i] = tt._bits[i];
 
-  acd66_params ps;
-  acd66_stats st;
-  acd66_impl acd( tt.num_vars(), ps, &st );
+  acd66_impl acd( tt.num_vars() );
 
   bool res = acd.run( words );
 
