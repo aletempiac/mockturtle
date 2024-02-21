@@ -23,14 +23,16 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <chrono>
 #include <string>
 #include <vector>
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
 #include <mockturtle/algorithms/acd66.hpp>
-#include <mockturtle/algorithms/s66.h>
+#include <mockturtle/algorithms/acd666.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
+#include <mockturtle/algorithms/s66.h>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
@@ -113,16 +115,16 @@ bool abc_acd( std::string const& tt_string )
 
   kitty::dynamic_truth_table tt( nVars );
   kitty::create_from_hex_string( tt, tt_string );
-  word Truth[CLU_WRD_MAX] = {0};
+  word Truth[CLU_WRD_MAX] = { 0 };
 
   for ( auto i = 0u; i < tt.num_blocks(); ++i )
   {
     Truth[i] = tt._bits[i];
   }
   word Func0, Func1, Func2;
-  If_Grp_t G1 = {0}, G2 = {0}, R = {0};
-  int nVarsNew = nVars;            // the number of variables afer support minimization
-  int pVarPerm[CLU_VAR_MAX] = {0}; // the remaining variables after support minimization
+  If_Grp_t G1 = { 0 }, G2 = { 0 }, R = { 0 };
+  int nVarsNew = nVars;              // the number of variables afer support minimization
+  int pVarPerm[CLU_VAR_MAX] = { 0 }; // the remaining variables after support minimization
   G1 = If_CluCheckTest( 2, 6, Truth, nVars, &R, &G2, &Func0, &Func1, &Func2, &nVarsNew, pVarPerm );
   return G1.nVars > 0;
 }
@@ -136,12 +138,43 @@ bool mockturtle_acd( std::string const& tt_string )
   kitty::dynamic_truth_table tt( num_vars );
   kitty::create_from_hex_string( tt, tt_string );
 
-  uint64_t words[32];
+  uint64_t words[1024];
 
   for ( uint32_t i = 0; i < tt.num_blocks(); ++i )
     words[i] = tt._bits[i];
 
-  acd66_impl acd( tt.num_vars() );
+  acd66_impl acd( tt.num_vars(), false );
+
+  bool res = acd.run( words );
+
+  if ( !res )
+    return false;
+
+  int correct = acd.compute_decomposition();
+
+  if ( correct == 1 )
+  {
+    std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  }
+
+  return true;
+}
+
+bool mockturtle_acd666( std::string const& tt_string )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  uint64_t words[1024];
+
+  for ( uint32_t i = 0; i < tt.num_blocks(); ++i )
+    words[i] = tt._bits[i];
+
+  acd666_impl acd( tt.num_vars(), false );
 
   bool res = acd.run( words );
 
@@ -216,11 +249,11 @@ void compute_functions( uint32_t cut_size )
   out.close();
 }
 
-int main( int argc, char **argv )
+int main( int argc, char** argv )
 {
   if ( argc != 2 )
     return -1;
-  
+
   uint32_t cut_size = atoi( argv[1] );
 
   // compute_functions( cut_size );
@@ -241,9 +274,13 @@ int main( int argc, char **argv )
 
   std::ofstream out( "cuts_" + std::to_string( cut_size ) + "_fail.txt" );
 
+  using clock = typename std::chrono::steady_clock;
+  using time_point = typename clock::time_point;
+
+  time_point time_begin = clock::now();
+
   /* compute */
-  uint32_t successS = 0, successJ = 0;
-  uint32_t failJsuccessS = 0, failSsuccessJ = 0;
+  uint32_t successS = 0, successJ = 0, successJ2 = 0;
   uint32_t visit = 0;
   while ( in.good() )
   {
@@ -257,31 +294,27 @@ int main( int argc, char **argv )
       continue;
 
     /* run evaluation */
-    bool resS = abc_acd( tt );
-    // bool resS = false;
+    // bool resS = abc_acd( tt );
+    bool resS = false;
     bool resJ = mockturtle_acd( tt );
+    bool resJ2 = mockturtle_acd666( tt );
 
     if ( resS )
       ++successS;
     if ( resJ )
       ++successJ;
-    if ( resS && !resJ )
-    {
-      ++failJsuccessS;
-      out << tt << "\n";
-    }
-    if ( !resS && resJ )
-      ++failSsuccessJ;
+    if ( resJ2 )
+      ++successJ2;
   }
 
   std::cout << "\n";
 
   /* print stats */
   std::cout << fmt::format( "[i] Run a total of {} truth tables on {} variables\n", num_lines, cut_size );
-  std::cout << fmt::format( "[i] Success of -S 66 = {} \t {:>5.2f}%\n", successS, ( ( double )successS ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -J 66 = {} \t {:>5.2f}%\n", successJ, ( ( double )successJ ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -S 66 when -J 66 fails = {} \t {:>5.2f}%\n", failJsuccessS, ( ( double )failJsuccessS ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -J 66 when -S 66 fails = {} \t {:>5.2f}%\n", failSsuccessJ, ( ( double )failSsuccessJ ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -S 66  = {} \t {:>5.2f}%\n", successS, ( (double)successS ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -J 666 = {} \t {:>5.2f}%\n", successJ2, ( (double)successJ2 ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
 
   in.close();
   out.close();
