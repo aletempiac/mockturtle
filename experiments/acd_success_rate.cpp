@@ -256,7 +256,7 @@ int main( int argc, char** argv )
 
   uint32_t cut_size = atoi( argv[1] );
 
-  // compute_functions( cut_size );
+  compute_functions( cut_size );
 
   /* read file */
   std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
