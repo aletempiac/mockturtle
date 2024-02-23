@@ -32,6 +32,7 @@
 #include <mockturtle/traits.hpp>
 #include <mockturtle/algorithms/aig_balancing.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
+#include <mockturtle/io/blif_reader.hpp>
 #include <mockturtle/io/write_aiger.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
@@ -41,11 +42,41 @@
 
 using namespace mockturtle;
 
-std::tuple<uint32_t, uint32_t, uint32_t> abc_map( aig_network const& aig )
+std::pair<uint32_t, uint32_t> compute_edges_for_s66()
+{
+  klut_network klut;
+  read_blif( "/tmp/tmp.blif", blif_reader( klut ) );
+
+  /* compute edges */
+  uint32_t num_luts = 0;
+  uint32_t num_edges = 0;
+  klut.foreach_gate( [&]( auto const& n ) {
+    num_edges += klut.fanin_size( n );
+    ++num_luts;
+    if ( klut.fanin_size( n ) > 6 )
+    {
+       ++num_edges;
+       ++num_luts;
+    }
+  } );
+
+  return std::make_pair( num_luts, num_edges );
+}
+
+std::tuple<uint32_t, uint32_t, uint32_t> abc_map( aig_network const& aig, bool use_choices )
 {
   write_aiger( aig, "/tmp/tmp.aig" );
-  std::string command = fmt::format( "abc -q \"read_lut lut1.lib; read /tmp/tmp.aig; if -J 666; ps\"" );
-  // std::string command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -z -Z 6 -K 11; ps\"" );
+  // std::string command = fmt::format( "abc -q \"read_lut lut1.lib; read /tmp/tmp.aig; if -J 666; ps\"" );
+  std::string command;
+
+  if ( use_choices )
+  {
+    command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -s -S 66 -K 8; w /tmp/tmp.blif; ps\"" );
+  }
+  else
+  {
+    command = fmt::format( "abc -q \"read /tmp/tmp.aig; if -s -S 66 -K 8; w /tmp/tmp.blif; ps\"" );
+  }
 
   std::array<char, 128> buffer;
   std::string result;
@@ -107,18 +138,14 @@ int main()
     fmt::print( "[i] processing {}\n", benchmark );
 
     aig_network aig;
-    if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
-    {
-      continue;
-    }
-    // if ( lorina::read_aiger( "lms/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    // if ( lorina::read_aiger( benchmark_path( benchmark ), aiger_reader( aig ) ) != lorina::return_code::success )
     // {
     //   continue;
     // }
-
-    /* skip very large designs */
-    // if ( benchmark == "hyp" )
-    //   continue;
+    if ( lorina::read_aiger( "lms/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
+    {
+      continue;
+    }
 
     /* balancing */
     // aig_balance( aig, { false } );
@@ -129,8 +156,12 @@ int main()
     /* METHOD 1: map using ABC */
     stopwatch<>::duration time_abc{ 0 };
     auto [area_abc, edges_abc, delay_abc] = call_with_stopwatch( time_abc, [&]() {
-      return abc_map( aig );
+      return abc_map( aig, benchmark != "hyp" );
     } );
+
+    auto correction = compute_edges_for_s66();
+    area_abc = correction.first;
+    edges_abc = correction.second;
 
     exp( benchmark, size_before, depth_before, area_abc, edges_abc, delay_abc, to_seconds( time_abc ) );
   }
