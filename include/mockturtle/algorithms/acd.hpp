@@ -58,7 +58,7 @@ struct acd_params
   uint32_t lut_size{ 6 };
 
   /*! \brief Maximum size of the free set (1 < num < 6). */
-  uint32_t max_free_set_vars{ 4 };
+  uint32_t max_free_set_vars{ 5 };
 
   /*! \brief Perform only support reducing (2-level) decompositions. */
   bool support_reducing_only{ true };
@@ -84,7 +84,7 @@ struct acd_result
   std::vector<uint32_t> support;
 };
 
-class acd
+class acd_impl
 {
 private:
   struct encoding_column
@@ -96,12 +96,12 @@ private:
   };
 
 private:
-  static constexpr uint32_t max_num_vars = 10;
+  static constexpr uint32_t max_num_vars = 11;
   using STT = kitty::static_truth_table<max_num_vars>;
   using word = uint64_t;
 
 public:
-  explicit acd( uint32_t num_vars, acd_params const& ps, acd_stats* pst = nullptr )
+  explicit acd_impl( uint32_t num_vars, acd_params const& ps, acd_stats* pst = nullptr )
       : num_vars( num_vars ), ps( ps ), pst( pst )
   {
     std::iota( permutations.begin(), permutations.end(), 0 );
@@ -237,7 +237,7 @@ private:
       return false;
 
     /* try without the delay profile */
-    if ( best_multiplicity == UINT32_MAX && ps.try_no_late_arrival )
+    if ( best_multiplicity == UINT32_MAX )
     {
       delay_profile = 0;
       if ( ps.support_reducing_only )

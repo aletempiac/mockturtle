@@ -29,6 +29,7 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
+#include <mockturtle/algorithms/acd.hpp>
 #include <mockturtle/algorithms/acd66.hpp>
 #include <mockturtle/algorithms/acd666.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
@@ -129,7 +130,7 @@ bool abc_acd( std::string const& tt_string )
   return G1.nVars > 0;
 }
 
-bool mockturtle_acd( std::string const& tt_string )
+bool mockturtle_acd66( std::string const& tt_string )
 {
   using namespace mockturtle;
 
@@ -184,6 +185,38 @@ bool mockturtle_acd666( std::string const& tt_string )
   int correct = acd.compute_decomposition();
 
   if ( correct == 1 )
+  {
+    std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  }
+
+  return true;
+}
+
+bool mockturtle_acd_generic( std::string const& tt_string )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  uint64_t words[1024];
+
+  for ( uint32_t i = 0; i < tt.num_blocks(); ++i )
+    words[i] = tt._bits[i];
+
+  acd_params ps;
+  acd_impl acd( num_vars, ps );
+
+  int res = acd.run( words, 0 );
+
+  if ( res < 0 )
+    return false;
+
+  int correct = acd.compute_decomposition();
+
+  if ( correct == -1 )
   {
     std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
   }
@@ -256,7 +289,7 @@ int main( int argc, char** argv )
 
   uint32_t cut_size = atoi( argv[1] );
 
-  compute_functions( cut_size );
+  // compute_functions( cut_size );
 
   /* read file */
   std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
@@ -280,7 +313,7 @@ int main( int argc, char** argv )
   time_point time_begin = clock::now();
 
   /* compute */
-  uint32_t successS = 0, successJ = 0, successJ2 = 0;
+  uint32_t successS = 0, successJ = 0, successJ2 = 0, successG = 0;
   uint32_t visit = 0;
   while ( in.good() )
   {
@@ -296,8 +329,9 @@ int main( int argc, char** argv )
     /* run evaluation */
     // bool resS = abc_acd( tt );
     bool resS = false;
-    bool resJ = mockturtle_acd( tt );
+    bool resJ = mockturtle_acd66( tt );
     bool resJ2 = mockturtle_acd666( tt );
+    bool resG = mockturtle_acd_generic( tt );
 
     if ( resS )
       ++successS;
@@ -305,6 +339,8 @@ int main( int argc, char** argv )
       ++successJ;
     if ( resJ2 )
       ++successJ2;
+    if ( resG )
+      ++successG;
   }
 
   std::cout << "\n";
@@ -314,6 +350,7 @@ int main( int argc, char** argv )
   std::cout << fmt::format( "[i] Success of -S 66  = {} \t {:>5.2f}%\n", successS, ( (double)successS ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -J 666 = {} \t {:>5.2f}%\n", successJ2, ( (double)successJ2 ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}%\n", successG, ( (double)successG ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
 
   in.close();
