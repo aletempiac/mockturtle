@@ -58,7 +58,7 @@ struct acd_params
   uint32_t lut_size{ 6 };
 
   /*! \brief Maximum size of the free set (1 < num < 6). */
-  uint32_t max_free_set_vars{ 5 };
+  uint32_t max_free_set_vars{ 4 };
 
   /*! \brief Perform only support reducing (2-level) decompositions. */
   bool support_reducing_only{ true };
@@ -117,6 +117,12 @@ public:
     }
 
     uint32_t late_arriving = __builtin_popcount( delay_profile );
+
+    /* relax maximum number of free set variables if a function has more variables */
+    if ( num_vars > ps.max_free_set_vars + ps.lut_size )
+    {
+      ps.max_free_set_vars = num_vars - ps.lut_size;
+    }
 
     /* return a high cost if too many late arriving variables */
     if ( late_arriving > ps.lut_size - 1 || late_arriving > ps.max_free_set_vars )
@@ -1387,7 +1393,7 @@ private:
   std::vector<std::array<uint32_t, 2>> support_minimization_encodings;
 
   uint32_t num_vars;
-  acd_params const& ps;
+  acd_params ps;
   acd_stats* pst;
   std::array<uint32_t, max_num_vars> permutations;
 };
