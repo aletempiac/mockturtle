@@ -24,6 +24,7 @@
  */
 
 #include <chrono>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -130,7 +131,7 @@ bool abc_acd( std::string const& tt_string )
   return G1.nVars > 0;
 }
 
-bool mockturtle_acd66( std::string const& tt_string )
+bool mockturtle_acd66( std::string const& tt_string, uint32_t delay_profile )
 {
   using namespace mockturtle;
 
@@ -146,9 +147,9 @@ bool mockturtle_acd66( std::string const& tt_string )
 
   acd66_impl acd( tt.num_vars(), false );
 
-  bool res = acd.run( words );
+  int res = acd.run( words, delay_profile );
 
-  if ( !res )
+  if ( res == 0 )
     return false;
 
   int correct = acd.compute_decomposition();
@@ -192,7 +193,7 @@ bool mockturtle_acd666( std::string const& tt_string )
   return true;
 }
 
-bool mockturtle_acd_generic( std::string const& tt_string )
+bool mockturtle_acd_generic( std::string const& tt_string, uint32_t delay_profile )
 {
   using namespace mockturtle;
 
@@ -209,7 +210,7 @@ bool mockturtle_acd_generic( std::string const& tt_string )
   acd_params ps;
   acd_impl acd( num_vars, ps );
 
-  int res = acd.run( words, 0 );
+  int res = acd.run( words, delay_profile );
 
   if ( res < 0 )
     return false;
@@ -282,15 +283,8 @@ void compute_functions( uint32_t cut_size )
   out.close();
 }
 
-int main( int argc, char** argv )
+void compute_success_rate( uint32_t cut_size )
 {
-  if ( argc != 2 )
-    return -1;
-
-  uint32_t cut_size = atoi( argv[1] );
-
-  // compute_functions( cut_size );
-
   /* read file */
   std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
 
@@ -329,9 +323,9 @@ int main( int argc, char** argv )
     /* run evaluation */
     // bool resS = abc_acd( tt );
     bool resS = false;
-    bool resJ = mockturtle_acd66( tt );
+    bool resJ = mockturtle_acd66( tt, 0 );
     bool resJ2 = mockturtle_acd666( tt );
-    bool resG = mockturtle_acd_generic( tt );
+    bool resG = mockturtle_acd_generic( tt, 0 );
 
     if ( resS )
       ++successS;
@@ -355,6 +349,95 @@ int main( int argc, char** argv )
 
   in.close();
   out.close();
+}
+
+void compute_success_rate_delay( uint32_t cut_size, uint32_t late_vars = 2 )
+{
+  /* read file */
+  std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
+
+  /* count the number of lines */
+  uint32_t num_lines = 0;
+  std::string line;
+  while ( std::getline( in, line ) )
+  {
+    ++num_lines;
+  }
+
+  in.close();
+  in.open( "cuts_" + std::to_string( cut_size ) + ".txt" );
+
+  std::ofstream out( "cuts_" + std::to_string( cut_size ) + "_fail.txt" );
+
+  using clock = typename std::chrono::steady_clock;
+  using time_point = typename clock::time_point;
+
+  time_point time_begin = clock::now();
+  std::default_random_engine::result_type seed{ 1 };
+  std::uniform_int_distribution<uint32_t> dist( 0u, cut_size - 1 );
+
+  /* compute */
+  uint32_t successJ = 0, successG = 0;
+  uint32_t visit = 0;
+  while ( in.good() )
+  {
+    std::cout << fmt::format( "[i] Progress {:8d} / {}\r", visit, num_lines );
+    std::string tt;
+    in >> tt;
+
+    ++visit;
+
+    if ( tt.size() < 16 )
+      continue;
+    
+    /* generate random delay profile with late variables */
+    uint32_t delay_profile = 0;
+    for ( uint32_t i = 0; i < late_vars; ++i )
+    {
+      std::default_random_engine gen( seed++ );
+      uint32_t var = dist( gen );
+
+      while ( ( delay_profile >> var ) & 1 )
+      {
+        std::default_random_engine gen2( seed++ );
+        var = dist( gen2 );
+      }
+
+      delay_profile |= 1u << var;
+    }
+
+    /* run evaluation */
+    bool resJ = mockturtle_acd66( tt, delay_profile );
+    bool resG = mockturtle_acd_generic( tt, delay_profile );
+
+    if ( resJ )
+      ++successJ;
+    if ( resG )
+      ++successG;
+  }
+
+  std::cout << "\n";
+
+  /* print stats */
+  std::cout << fmt::format( "[i] Run a total of {} truth tables on {} variables\n", num_lines, cut_size );
+  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}%\n", successG, ( (double)successG ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
+
+  in.close();
+  out.close();
+}
+
+int main( int argc, char** argv )
+{
+  if ( argc != 2 )
+    return -1;
+
+  uint32_t cut_size = atoi( argv[1] );
+
+  // compute_functions( cut_size );
+  // compute_success_rate( cut_size );
+  compute_success_rate_delay( cut_size, 1 );
 
   return 0;
 }
