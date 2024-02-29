@@ -152,12 +152,12 @@ bool mockturtle_acd66( std::string const& tt_string, uint32_t delay_profile )
   if ( res == 0 )
     return false;
 
-  int correct = acd.compute_decomposition();
+  // int correct = acd.compute_decomposition();
 
-  if ( correct == 1 )
-  {
-    std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
-  }
+  // if ( correct == 1 )
+  // {
+  //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  // }
 
   return true;
 }
@@ -215,12 +215,12 @@ bool mockturtle_acd_generic( std::string const& tt_string, uint32_t delay_profil
   if ( res < 0 )
     return false;
 
-  int correct = acd.compute_decomposition();
+  // int correct = acd.compute_decomposition();
 
-  if ( correct == -1 )
-  {
-    std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
-  }
+  // if ( correct == -1 )
+  // {
+  //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  // }
 
   return true;
 }
@@ -335,6 +335,8 @@ void compute_success_rate( uint32_t cut_size )
       ++successJ2;
     if ( resG )
       ++successG;
+    else
+      out << tt << "\n";
   }
 
   std::cout << "\n";
@@ -351,7 +353,7 @@ void compute_success_rate( uint32_t cut_size )
   out.close();
 }
 
-void compute_success_rate_delay( uint32_t cut_size, uint32_t late_vars = 2 )
+void compute_success_rate_delay( uint32_t cut_size, uint32_t late_vars = 2, uint32_t const repeat = 10 )
 {
   /* read file */
   std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
@@ -391,37 +393,40 @@ void compute_success_rate_delay( uint32_t cut_size, uint32_t late_vars = 2 )
       continue;
     
     /* generate random delay profile with late variables */
-    uint32_t delay_profile = 0;
-    for ( uint32_t i = 0; i < late_vars; ++i )
+    for ( uint32_t i = 0; i < repeat; ++i )
     {
-      std::default_random_engine gen( seed++ );
-      uint32_t var = dist( gen );
-
-      while ( ( delay_profile >> var ) & 1 )
+      uint32_t delay_profile = 0;
+      for ( uint32_t i = 0; i < late_vars; ++i )
       {
-        std::default_random_engine gen2( seed++ );
-        var = dist( gen2 );
+        std::default_random_engine gen( seed++ );
+        uint32_t var = dist( gen );
+
+        while ( ( delay_profile >> var ) & 1 )
+        {
+          std::default_random_engine gen2( seed++ );
+          var = dist( gen2 );
+        }
+
+        delay_profile |= 1u << var;
       }
 
-      delay_profile |= 1u << var;
+      /* run evaluation */
+      bool resJ = mockturtle_acd66( tt, delay_profile );
+      bool resG = mockturtle_acd_generic( tt, delay_profile );
+
+      if ( resJ )
+        ++successJ;
+      if ( resG )
+        ++successG;
     }
-
-    /* run evaluation */
-    bool resJ = mockturtle_acd66( tt, delay_profile );
-    bool resG = mockturtle_acd_generic( tt, delay_profile );
-
-    if ( resJ )
-      ++successJ;
-    if ( resG )
-      ++successG;
   }
 
   std::cout << "\n";
 
   /* print stats */
   std::cout << fmt::format( "[i] Run a total of {} truth tables on {} variables\n", num_lines, cut_size );
-  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}%\n", successG, ( (double)successG ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 / repeat );
+  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}%\n", successG, ( (double)successG ) / num_lines * 100 / repeat );
   std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
 
   in.close();
@@ -437,7 +442,9 @@ int main( int argc, char** argv )
 
   // compute_functions( cut_size );
   // compute_success_rate( cut_size );
-  compute_success_rate_delay( cut_size, 1 );
+  compute_success_rate_delay( cut_size, 2, 10 );
+
+  // mockturtle_acd_generic( "fec29098717bca486407caf0a1894f231451361e885343ed5062cfb56f9a50ca", 0 );
 
   return 0;
 }
