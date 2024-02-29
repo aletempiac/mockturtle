@@ -60,11 +60,14 @@ struct acd_params
   /*! \brief Maximum size of the free set (1 < num < 6). */
   uint32_t max_free_set_vars{ 4 };
 
+  /*! \brief Maximum multiplicity value allowed (2 <= num < 16). */
+  uint32_t max_multiplicity{ 16 };
+
   /*! \brief Perform only support reducing (2-level) decompositions. */
   bool support_reducing_only{ true };
 
   /*! \brief Use the first feasible decomposition found. */
-  bool use_first{ true };
+  bool use_first{ false };
 
   /*! \brief If decomposition with delay profile fails, try without. */
   bool try_no_late_arrival{ false };
@@ -122,6 +125,10 @@ public:
     if ( num_vars > ps.max_free_set_vars + ps.lut_size )
     {
       ps.max_free_set_vars = num_vars - ps.lut_size;
+    }
+    if ( late_arriving > ps.max_free_set_vars )
+    {
+      ps.max_free_set_vars = late_arriving;
     }
 
     /* return a high cost if too many late arriving variables */
@@ -204,7 +211,7 @@ private:
     /* perform only support reducing decomposition */
     if ( ps.support_reducing_only )
     {
-      start = std::max( 4u, num_vars - ps.lut_size );
+      start = std::max( start, num_vars - ps.lut_size );
     }
 
     /* array of functions to compute the column multiplicity */
@@ -224,7 +231,7 @@ private:
       uint32_t additional_cost = ( num_vars - i > ps.lut_size ) ? 128 : 0;
 
       /* check for feasible solution that improves the cost */
-      if ( multiplicity <= ( 1 << ( ps.lut_size - i ) ) && multiplicity + additional_cost < best_cost && multiplicity <= 16 )
+      if ( multiplicity <= ( 1 << ( ps.lut_size - i ) ) && multiplicity + additional_cost < best_cost && ( multiplicity <= ps.max_multiplicity || multiplicity == 16 ) )
       {
         best_tt = tt_p;
         permutations = perm;
@@ -232,10 +239,12 @@ private:
         best_cost = multiplicity + additional_cost;
         best_free_set = i;
 
-        if ( ps.use_first )
+        if ( !ps.use_first )
         {
-          break;
+          continue;
         }
+
+        break;
       }
     }
 
@@ -259,7 +268,7 @@ private:
         uint32_t additional_cost = ( num_vars - i > ps.lut_size ) ? 128 : 0;
 
         /* check for feasible solution that improves the cost */
-        if ( multiplicity <= ( 1 << ( ps.lut_size - i ) ) && multiplicity + additional_cost < best_cost && multiplicity <= 16 )
+        if ( multiplicity <= ( 1 << ( ps.lut_size - i ) ) && multiplicity + additional_cost < best_cost && ( multiplicity <= ps.max_multiplicity || multiplicity == 16 ) )
         {
           best_tt = tt_p;
           permutations = perm;
@@ -267,10 +276,12 @@ private:
           best_cost = multiplicity + additional_cost;
           best_free_set = i;
 
-          if ( ps.use_first )
+          if ( !ps.use_first )
           {
-            break;
+            continue;
           }
+
+          break;
         }
       }
     }
