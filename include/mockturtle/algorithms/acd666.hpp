@@ -141,8 +141,10 @@ private:
     best_multiplicity = UINT32_MAX;
     best_free_set = UINT32_MAX;
 
+    uint32_t max_free_set = num_vars == 11 ? 5 : 4;
+
     /* find ACD "66" for different number of variables in the free set */
-    for ( uint32_t i = num_vars - 6; i <= 5; ++i )
+    for ( uint32_t i = num_vars - 6; i <= max_free_set; ++i )
     {
       if ( find_decomposition_bs( start_tt, num_vars, i ) )
       {
