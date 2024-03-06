@@ -62,9 +62,11 @@
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/networks/xag.hpp>
 #include <mockturtle/networks/xmg.hpp>
+#include <mockturtle/utils/name_utils.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/binding_view.hpp>
 #include <mockturtle/views/depth_view.hpp>
+#include <mockturtle/views/names_view.hpp>
 
 #include <experiments.hpp>
 
@@ -148,7 +150,7 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
 
   {
     resubstitution_params ps;
-    ps.max_inserts = 2;
+    ps.max_inserts = 1;
     ps.max_pis = 8;
     ps.preserve_depth = true;
 
@@ -179,7 +181,7 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
 
   {
     resubstitution_params ps;
-    ps.max_inserts = 2;
+    ps.max_inserts = 1;
     ps.max_pis = 8;
     ps.preserve_depth = true;
 
@@ -192,7 +194,7 @@ mockturtle::xag_network depth_opt( mockturtle::xag_network const& xag_start, boo
   /* ESOP balancing */
   {
     lut_map_params ps;
-    ps.cut_enumeration_ps.cut_size = 4;
+    ps.cut_enumeration_ps.cut_size = 6;
     xag_network balanced_xag = esop_balancing( xag );
     if ( depth_view( balanced_xag ).depth() < depth_view( xag ).depth() )
       xag = balanced_xag;
@@ -289,7 +291,7 @@ void rsfq_flow( int opt_iter )
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
+  std::ifstream in( "../experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -297,7 +299,7 @@ void rsfq_flow( int opt_iter )
   }
 
   super_lib super_data;
-  std::ifstream in_super( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.super" );
+  std::ifstream in_super( "../experiments/cell_libraries/suny_rsfq_cell_library.super" );
 
   if ( lorina::read_super( in_super, super_reader( super_data ) ) != lorina::return_code::success )
   {
@@ -324,8 +326,8 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  // std::vector<std::string> seq_benchmark_set = { "s1196", "s1238", "s38417" };
-  for ( auto const& benchmark : iscas_benchmarks() )
+  std::vector<std::string> benchmark_set = { "c499", "c880", "c1908", "c3540", "c5315", "c7552", "sin", "cavlc", "dec", "int2float", "priority_opt" };
+  for ( auto const& benchmark : benchmark_set )
   {
     fmt::print( "[i] processing {}\n", benchmark );
 
@@ -334,7 +336,7 @@ void rsfq_flow( int opt_iter )
     // if ( benchmark != "dec" )
     //   continue;
 
-    xag_network aig;
+    names_view<xag_network> aig;
     // if ( lorina::read_aiger( "rsfq_opt/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     // {
     //   continue;
@@ -380,6 +382,12 @@ void rsfq_flow( int opt_iter )
       xag = cleanup_dangling( xag_opt );
     }
 
+    /* write XAGs */
+    names_view xag_names{ xag };
+    restore_network_name( aig, xag_names );
+    restore_pio_names_by_order( aig, xag_names );
+    write_verilog( xag_names, "rsfq_synthesis_out/" + benchmark + ".v" );
+
     /* Technology mapping */
     map_params ps;
     ps.cut_enumeration_ps.minimize_truth_table = true;
@@ -388,7 +396,7 @@ void rsfq_flow( int opt_iter )
     // ps.required_time = 200;
     // ps.verbose = true;
     map_stats st;
-    xag_balance( xag, { true } );
+    // xag_balance( xag, { false } );
     binding_view<klut_network> res = map( xag, tech_lib, ps, &st );
 
     // write_verilog( res, benchmark + ".v" );
@@ -417,8 +425,8 @@ void rsfq_flow( int opt_iter )
 
     clock::time_point time_end = clock::now();
 
-    // const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
-    const auto cec = true;
+    const auto cec = benchmark == "hyp" ? true : abc_cec( retime_res, benchmark );
+    // const auto cec = true;
 
     std::cout << "Area after retime and splitters: " << area_final << " check: " << rsfq_check_buffering( retime_res );
     std::cout << " cec: " << cec << "\n";

@@ -63,9 +63,11 @@
 #include <mockturtle/networks/sequential.hpp>
 #include <mockturtle/networks/xag.hpp>
 #include <mockturtle/networks/xmg.hpp>
+#include <mockturtle/utils/name_utils.hpp>
 #include <mockturtle/utils/tech_library.hpp>
 #include <mockturtle/views/binding_view.hpp>
 #include <mockturtle/views/depth_view.hpp>
+#include <mockturtle/views/names_view.hpp>
 
 #include <experiments.hpp>
 
@@ -169,7 +171,7 @@ mockturtle::sequential<mockturtle::xag_network> depth_opt( mockturtle::sequentia
   /* ESOP balancing */
   {
     lut_map_params ps;
-    ps.cut_enumeration_ps.cut_size = 4;
+    ps.cut_enumeration_ps.cut_size = 6;
     sequential<xag_network> balanced_xag = esop_balancing( xag );
     if ( depth_view( balanced_xag ).depth() < depth_view( xag ).depth() )
       xag = balanced_xag;
@@ -208,7 +210,7 @@ void rsfq_flow( int opt_iter )
 
   /* library to map to technology */
   std::vector<gate> gates;
-  std::ifstream in( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
+  std::ifstream in( "../experiments/cell_libraries/suny_rsfq_cell_library.genlib" );
 
   if ( lorina::read_genlib( in, genlib_reader( gates ) ) != lorina::return_code::success )
   {
@@ -216,7 +218,7 @@ void rsfq_flow( int opt_iter )
   }
 
   super_lib super_data;
-  std::ifstream in_super( "/Users/tempia/Documents/phd/libraries/aletempiac_merge/mockturtle/experiments/cell_libraries/suny_rsfq_cell_library.super" );
+  std::ifstream in_super( "../experiments/cell_libraries/suny_rsfq_cell_library.super" );
 
   if ( lorina::read_super( in_super, super_reader( super_data ) ) != lorina::return_code::success )
   {
@@ -243,7 +245,7 @@ void rsfq_flow( int opt_iter )
   generic_network net;
 
   /* flow */
-  std::vector<std::string> seq_benchmark_set = { "s1238s", "s38417s" };
+  std::vector<std::string> seq_benchmark_set = { "s1196_2", "s1238_2", "s38417_2" };
   for ( auto const& benchmark : seq_benchmark_set )
   {
     fmt::print( "[i] processing {}\n", benchmark );
@@ -253,7 +255,7 @@ void rsfq_flow( int opt_iter )
     // if ( benchmark != "dec" )
     //   continue;
 
-    sequential<xag_network> aig;
+    names_view<sequential<xag_network>> aig;
     // if ( lorina::read_aiger( "rsfq_opt/" + benchmark + ".aig", aiger_reader( aig ) ) != lorina::return_code::success )
     // {
     //   continue;
@@ -291,6 +293,11 @@ void rsfq_flow( int opt_iter )
       xag = cleanup_dangling( xag_opt );
     }
 
+    names_view xag_names{ xag };
+    restore_network_name( aig, xag_names );
+    restore_pio_names_by_order( aig, xag_names );
+    write_verilog( xag_names, "rsfq_synthesis_out/" + benchmark + ".v" );
+
     const uint32_t size_after = xag.num_gates();
     const uint32_t depth_after = depth_view( xag ).depth();
     const uint32_t ff_after = xag.num_registers();
@@ -327,11 +334,11 @@ void rsfq_flow( int opt_iter )
     /* splitter insertion */
     double area_final = res.compute_area();
     double area_splitters = 0;
-    // res.foreach_node( [&]( auto const& n ) {
-    //   if ( !res.is_constant( n ) )
-    //     area_splitters += splitter_jj * ( res.fanout_size( n ) - 1 );
-    // } );
-    // area_final += area_splitters;
+    res.foreach_node( [&]( auto const& n ) {
+      if ( !res.is_constant( n ) )
+        area_splitters += splitter_jj * ( res.fanout_size( n ) - 1 );
+    } );
+    area_final += area_splitters;
 
     clock::time_point time_end = clock::now();
     fmt::print( "RSFQ stats : area = {}\t delay = {}\t dff = {}\t s_area = {}\n", area_final, res_test.compute_worst_delay(), dffs, area_splitters );
