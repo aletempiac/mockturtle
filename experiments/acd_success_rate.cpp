@@ -35,6 +35,7 @@
 #include <mockturtle/algorithms/acd666.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
 #include <mockturtle/algorithms/s66.h>
+#include <mockturtle/algorithms/spfd_utils.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
 #include <mockturtle/networks/klut.hpp>
@@ -193,7 +194,7 @@ bool mockturtle_acd666( std::string const& tt_string )
   return true;
 }
 
-bool mockturtle_acd_generic( std::string const& tt_string, uint32_t delay_profile )
+int32_t mockturtle_acd_generic( std::string const& tt_string, uint32_t delay_profile )
 {
   using namespace mockturtle;
 
@@ -208,20 +209,53 @@ bool mockturtle_acd_generic( std::string const& tt_string, uint32_t delay_profil
     words[i] = tt._bits[i];
 
   acd_params ps;
-  acd_impl acd( num_vars, ps );
+  acd_stats st;
+  acd_impl acd( num_vars, ps, &st );
 
   int res = acd.run( words, delay_profile );
 
   if ( res < 0 )
-    return false;
+    return -1;
 
-  // int correct = acd.compute_decomposition();
+  // if ( !acd.shannon_decomposable() )
+  //   return -1;
+
+  int correct = acd.compute_decomposition();
+
+  unsigned char dec[92];
+  acd.get_decomposition( dec );
+
+  /* simulate and check decomposition */
+  // klut_network ntk = acd.get_klut();
+  // default_simulator<kitty::dynamic_truth_table> sim( num_vars );
+  // auto sim_tt = simulate<kitty::dynamic_truth_table>( ntk, sim )[0];
+  // if ( sim_tt != tt )
+  // {
+  //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  //   std::cout << fmt::format( "[e] obtained  decomposition    {}\n", kitty::to_hex( sim_tt ) );
+  // }
 
   // if ( correct == -1 )
   // {
   //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
   // }
 
+  return st.num_luts;
+}
+
+bool acd_andrea( std::string const& tt_string )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  lut_resynthesis_t<6, 10> acd;
+  auto ll_tt = acd.decompose( tt, 20 );
+
+  if ( ll_tt && acd.num_luts() > 3 )
+    return false;
   return true;
 }
 
@@ -307,8 +341,9 @@ void compute_success_rate( uint32_t cut_size )
   time_point time_begin = clock::now();
 
   /* compute */
-  uint32_t successS = 0, successJ = 0, successJ2 = 0, successG = 0;
+  uint32_t successS = 0, successJ = 0, successJ2 = 0, successG = 0, successA = 0;
   uint32_t visit = 0;
+  uint32_t num_luts_acd = 0;
   while ( in.good() )
   {
     std::cout << fmt::format( "[i] Progress {:8d} / {}\r", visit, num_lines );
@@ -325,7 +360,11 @@ void compute_success_rate( uint32_t cut_size )
     bool resS = false;
     bool resJ = mockturtle_acd66( tt, 0 );
     bool resJ2 = mockturtle_acd666( tt );
-    bool resG = mockturtle_acd_generic( tt, 0 );
+    int resG = mockturtle_acd_generic( tt, 0 );
+    bool resA = false;
+
+    if ( resG > 0 )
+      num_luts_acd += resG;
 
     if ( resS )
       ++successS;
@@ -333,8 +372,10 @@ void compute_success_rate( uint32_t cut_size )
       ++successJ;
     if ( resJ2 )
       ++successJ2;
-    if ( resG )
+    if ( resG > 0 )
       ++successG;
+    if ( resA )
+      ++successA;
     else
       out << tt << "\n";
   }
@@ -346,7 +387,8 @@ void compute_success_rate( uint32_t cut_size )
   std::cout << fmt::format( "[i] Success of -S 66  = {} \t {:>5.2f}%\n", successS, ( (double)successS ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -J 666 = {} \t {:>5.2f}%\n", successJ2, ( (double)successJ2 ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}%\n", successG, ( (double)successG ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}% \t {:>5.2f} luts\n", successG, ( (double)successG ) / num_lines * 100, ( ( double ) num_luts_acd ) / num_lines );
+  std::cout << fmt::format( "[i] Success of -A 6   = {} \t {:>5.2f}%\n", successA, ( (double)successA ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
 
   in.close();
@@ -441,10 +483,10 @@ int main( int argc, char** argv )
   uint32_t cut_size = atoi( argv[1] );
 
   // compute_functions( cut_size );
-  // compute_success_rate( cut_size );
-  compute_success_rate_delay( cut_size, 2, 10 );
+  compute_success_rate( cut_size );
+  // compute_success_rate_delay( cut_size, 3, 10 );
 
-  // mockturtle_acd_generic( "fec29098717bca486407caf0a1894f231451361e885343ed5062cfb56f9a50ca", 0 );
+  // mockturtle_acd_generic( "00000000000000000000000000000000000000000000000000000000000000000000000000000000001717ffffffffff001717ffffffffff0000000000000000", 81 );
 
   return 0;
 }
