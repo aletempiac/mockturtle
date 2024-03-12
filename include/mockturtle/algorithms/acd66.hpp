@@ -60,8 +60,8 @@ private:
   using word = uint64_t;
 
 public:
-  explicit acd66_impl( uint32_t const num_vars, bool const verify = false )
-      : num_vars( num_vars ), verify( verify )
+  explicit acd66_impl( uint32_t const num_vars, bool multiple_shared_set = false, bool const verify = false )
+      : num_vars( num_vars ), multiple_ss( multiple_shared_set ), verify( verify )
   {
     std::iota( permutations.begin(), permutations.end(), 0 );
   }
@@ -173,8 +173,16 @@ private:
     /* find ACD "66" for different number of variables in the free set */
     for ( uint32_t i = num_vars - 6; i <= max_free_set; ++i )
     {
-      if ( find_decomposition_bs_multi_ss( i ) )
-        return true;
+      if ( multiple_ss )
+      {
+        if ( find_decomposition_bs_multi_ss( i ) )
+          return true;
+      }
+      else
+      {
+        if ( find_decomposition_bs( i ) )
+          return true;
+      }
     }
 
     best_multiplicity = UINT32_MAX;
@@ -304,6 +312,35 @@ private:
       std::swap( pInvPerm[pComb[j - 1] + 1], pInvPerm[var_old] );
       std::swap( pComb[j], pComb[pos_new] );
       swap_inplace_local( tt, j, pos_new );
+    }
+
+    return true;
+  }
+
+  inline bool combinations_next_shared( uint32_t k, uint32_t* pComb, uint32_t* pInvPerm, uint32_t* vars, uint32_t size )
+  {
+    uint32_t i;
+
+    for ( i = k - 1; pComb[i] == size - k + i; --i )
+    {
+      if ( i == 0 )
+        return false;
+    }
+
+    /* move vars */
+    uint32_t var_old = pComb[i];
+    uint32_t pos_new = pInvPerm[var_old + 1];
+    std::swap( pInvPerm[var_old + 1], pInvPerm[var_old] );
+    std::swap( pComb[i], pComb[pos_new] );
+    std::swap( vars[i], vars[pos_new] );
+
+    for ( uint32_t j = i + 1; j < k; j++ )
+    {
+      var_old = pComb[j];
+      pos_new = pInvPerm[pComb[j - 1] + 1];
+      std::swap( pInvPerm[pComb[j - 1] + 1], pInvPerm[var_old] );
+      std::swap( pComb[j], pComb[pos_new] );
+      std::swap( vars[j], vars[pos_new] );
     }
 
     return true;
@@ -484,7 +521,10 @@ private:
         return true;
       }
 
-      uint32_t ss_vars_needed = cost <= 4 ? 1 : cost <= 8 ? 2 : cost <= 16 ? 3 : cost <= 32 ? 4 : 5;
+      uint32_t ss_vars_needed = cost <= 4 ? 1 : cost <= 8 ? 2
+                                            : cost <= 16  ? 3
+                                            : cost <= 32  ? 4
+                                                          : 5;
       if ( ss_vars_needed + free_set_size < 6 )
       {
         /* look for a shared variable */
@@ -647,7 +687,7 @@ private:
     return true;
   }
 
-  inline int check_shared_set_multi( STT const& tt, uint32_t target_num_ss, uint32_t *res_shared )
+  inline int check_shared_set_multi( STT const& tt, uint32_t target_num_ss, uint32_t* res_shared )
   {
     uint32_t ss_vars[10];
     uint32_t num_ss = 0;
@@ -683,17 +723,31 @@ private:
     if ( num_ss < target_num_ss )
       return -1;
 
-    /* TODO: change with search for a subset */
-
-    /* check for combined shared set */
-    uint32_t max_vars_ss = std::min( num_ss, 6 - best_free_set - 1 );
-    if ( check_shared_var_combined( tt, best_free_set, ss_vars, max_vars_ss ) )
+    /* init combinations */
+    uint32_t pComb[10], pInvPerm[10];
+    for ( uint32_t i = 0; i < 10; ++i )
     {
-      for ( uint32_t i = 0; i < max_vars_ss; ++i )
+      pComb[i] = pInvPerm[i] = i;
+    }
+
+    /* search for a feasible shared set */
+    uint32_t max_vars_ss = std::min( num_ss, 6 - best_free_set - 1 );
+    for ( uint32_t i = target_num_ss; i <= max_vars_ss; ++i )
+    {
+      do
       {
-        *res_shared++ = ss_vars[i];
-      }
-      return max_vars_ss;
+        /* check for combined shared set */
+        if ( check_shared_var_combined( tt, best_free_set, ss_vars, i ) )
+        {
+          /* sort vars */
+          std::sort( ss_vars, ss_vars + i );
+          for ( uint32_t j = 0; j < i; ++j )
+          {
+            *res_shared++ = ss_vars[j];
+          }
+          return i;
+        }
+      } while ( combinations_next_shared( i, pComb, pInvPerm, ss_vars, num_ss ) );
     }
 
     return -1;
@@ -802,7 +856,7 @@ private:
     uint32_t const next_group = 1 << ( num_vars - best_free_set - num_shared_vars );
 
     uint64_t fs_fun[32] = { 0 };
-    
+
     uint32_t group_index = 0;
     uint32_t set_index = 0;
     fs_fun[0] = best_tt._bits[0] & mask;
@@ -1331,6 +1385,7 @@ private:
   uint32_t bs_support[6];
 
   uint32_t const num_vars;
+  bool const multiple_ss;
   bool const verify;
   std::array<uint32_t, max_num_vars> permutations;
 };
