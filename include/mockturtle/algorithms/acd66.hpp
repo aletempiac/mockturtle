@@ -1246,7 +1246,7 @@ private:
 
     /* write top LUT */
     /* write fanin size */
-    uint32_t support_size = best_free_set + 1 + ( best_multiplicity > 2 ? 1 : 0 );
+    uint32_t support_size = best_free_set + 1 + num_shared_vars;
     *pArray = support_size;
     pArray++;
     ++bytes;
@@ -1263,9 +1263,9 @@ private:
     pArray++;
     ++bytes;
 
-    if ( best_multiplicity > 2 )
+    for ( uint32_t i = 0; i < num_shared_vars; ++i )
     {
-      *pArray = (unsigned char)permutations[num_vars - 1];
+      *pArray = (unsigned char)permutations[num_vars - num_shared_vars + i];
       pArray++;
       ++bytes;
     }
