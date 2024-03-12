@@ -1588,7 +1588,7 @@ If_Grp_t If_CluCheck( void * p, int nLutSize, word * pTruth0, int nVars, int iVa
         }
 
         // perform checking
-        if ( 1 )
+        if ( 0 )
         {
             If_CluCheckGroup( pTruth, nVars, &G1 );
             If_CluVerify( pTruth, nVars, &G1, &R, Truth, pF );
@@ -1939,7 +1939,7 @@ If_Grp_t If_CluCheckTest( int Size, int nLutSize, word * Truth, int nLeaves,
 
         // derive the first group
         if ( Length == 2 )
-            G1 = If_CluCheck( NULL, nLutSize, Truth, nLeaves, 0, 0, nLutLeaf, nLutRoot, pR, pFunc0, pFunc1, NULL, 1 );
+            G1 = If_CluCheck( NULL, nLutSize, Truth, nLeaves, 0, 0, nLutLeaf, nLutRoot, pR, pFunc0, pFunc1, NULL, 0 );
         else
             G1 = If_CluCheck3( NULL, nLutSize, Truth, nLeaves, nLutLeaf, nLutLeaf2, nLutRoot, pR, pG2, pFunc0, pFunc1, pFunc2 );
         return G1;
