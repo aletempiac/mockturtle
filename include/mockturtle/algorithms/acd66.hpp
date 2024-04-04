@@ -131,11 +131,11 @@ public:
   {
     if ( bs_support_size == UINT32_MAX )
     {
-      return num_vars + 1 + ( best_multiplicity > 2 ? 1 : 0 );
+      return num_vars + 1 + num_shared_vars;
     }
 
     /* real value after support minimization */
-    return bs_support_size + best_free_set + 1 + ( best_multiplicity > 2 ? 1 : 0 );
+    return bs_support_size + best_free_set + 1 + num_shared_vars;
   }
 
   /* contains a 1 for FS variables */
@@ -1032,7 +1032,7 @@ private:
     if ( support_vars2 > support_vars1 )
     {
       f = isets0[0] | isets1[1];
-      std::swap( fs_fun[3], fs_fun[4] );
+      std::swap( fs_fun[2], fs_fun[3] );
       bs_support_size = support_vars1;
     }
 

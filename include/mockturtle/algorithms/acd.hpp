@@ -128,7 +128,8 @@ public:
     }
     if ( late_arriving > ps.max_free_set_vars )
     {
-      ps.max_free_set_vars = late_arriving;
+      return -1;
+      // ps.max_free_set_vars = late_arriving;
     }
 
     /* return a high cost if too many late arriving variables */
@@ -199,6 +200,15 @@ public:
     get_decomposition_abc( decompArray );
   }
 
+  std::vector<acd_result> const& get_acd_result()
+  {
+    if ( best_free_set > num_vars )
+      return;
+
+    generate_decomposition();
+    return dec_result;
+  }
+
 private:
   bool find_decomposition( unsigned& delay_profile, uint32_t late_arriving )
   {
@@ -239,7 +249,7 @@ private:
         best_cost = multiplicity + additional_cost;
         best_free_set = i;
 
-        if ( !ps.use_first )
+        if ( !ps.use_first && multiplicity > 2 )
         {
           continue;
         }
@@ -479,6 +489,11 @@ private:
       return enumerate_iset_combinations2( free_set_size, offset );
     }
 
+    /* bail early combination */
+    uint32_t bail_early = 2;
+    if ( best_multiplicity < UINT32_MAX )
+      bail_early = ( best_multiplicity >> 1 ) + ( best_multiplicity & 1 );
+
     /* init combinations */
     uint32_t pComb[16], pInvPerm[16], bestPerm[16];
     for ( uint32_t i = 0; i < num_vars; ++i )
@@ -498,6 +513,9 @@ private:
         {
           bestPerm[i] = pComb[i];
         }
+
+        if ( best_cost <= bail_early )
+          break;
       }
     } while ( combinations_offset_next( free_set_size, offset, pComb, pInvPerm, tt ) );
 
@@ -634,9 +652,6 @@ private:
       uint32_t k = 0;
       for ( uint32_t j = 0; j < num_vars - best_free_set; ++j )
       {
-        if ( !kitty::has_var( tt, j ) )
-          continue;
-
         if ( !kitty::has_var( tt, care, j ) )
         {
           /* fix truth table */
@@ -790,7 +805,14 @@ private:
         }
       }
       support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
-      generate_support_minimization_encodings_rec<false>( 0, 0, 0, count );
+      generate_support_minimization_encodings_rec<false, true>( 0, 0, 0, count );
+    }
+    else if ( best_multiplicity > 8 )
+    {
+      /* combinations are 2^(mu - 1) */
+      num_combs = 1u << ( best_multiplicity - 1 );
+      support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
+      generate_support_minimization_encodings_rec<false, false>( 0, 0, 0, count );
     }
     else
     {
@@ -800,18 +822,18 @@ private:
         num_combs = ( num_combs << 1 ) + num_combs;
       }
       support_minimization_encodings = std::vector<std::array<uint32_t, 2>>( num_combs );
-      generate_support_minimization_encodings_rec<true>( 0, 0, 0, count );
+      generate_support_minimization_encodings_rec<true, false>( 0, 0, 0, count );
     }
 
     assert( count == num_combs );
   }
 
-  template<bool enable_dcset>
+  template<bool enable_dcset, bool equal_size_partition>
   void generate_support_minimization_encodings_rec( uint32_t onset, uint32_t offset, uint32_t var, uint32_t& count )
   {
     if ( var == best_multiplicity )
     {
-      if constexpr ( !enable_dcset )
+      if constexpr ( equal_size_partition )
       {
         /* sets must be equally populated */
         if ( __builtin_popcount( onset ) != __builtin_popcount( offset ) )
@@ -829,12 +851,12 @@ private:
     /* var in DCSET */
     if constexpr ( enable_dcset )
     {
-      generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+      generate_support_minimization_encodings_rec<enable_dcset, equal_size_partition>( onset, offset, var + 1, count );
     }
 
     /* move var in ONSET */
     onset |= 1 << var;
-    generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+    generate_support_minimization_encodings_rec<enable_dcset, equal_size_partition>( onset, offset, var + 1, count );
     onset &= ~( 1 << var );
 
     /* remove symmetries */
@@ -845,7 +867,7 @@ private:
 
     /* move var in OFFSET */
     offset |= 1 << var;
-    generate_support_minimization_encodings_rec<enable_dcset>( onset, offset, var + 1, count );
+    generate_support_minimization_encodings_rec<enable_dcset, equal_size_partition>( onset, offset, var + 1, count );
     offset &= ~( 1 << var );
   }
 
@@ -938,6 +960,10 @@ private:
     /* improve solution with local search */
     while ( covering_improve( matrix, solution ) )
       ;
+    
+    /* try to increase the encoding length */
+    // if ( covering_increase_length( matrix, solution ) )
+    //   std::cout << "[i] stat\n";
 
     /* compute best bound sets */
     uint32_t num_luts = 1 + solution[5];
@@ -1044,6 +1070,13 @@ private:
       for ( uint32_t j = 0; j < iset_support; ++j )
       {
         cost += has_var_support( tt, care, iset_support, j ) ? 1 : 0;
+        // if ( !has_var_support( tt, care, iset_support, j ) )
+        // {
+        //   /* adjust truth table and care set */
+        //   adjust_truth_table_on_dc_support( tt, care, iset_support, j );
+        //   continue;
+        // }
+        // ++cost;
       }
 
       /* discard solutions with support over LUT size */
@@ -1188,7 +1221,7 @@ private:
     return res;
   }
 
-  bool covering_improve( std::vector<encoding_column>& matrix, std::array<uint32_t, 6>& solution )
+  bool covering_improve( std::vector<encoding_column> const& matrix, std::array<uint32_t, 6>& solution )
   {
     /* performs one iteration of local search */
     uint32_t best_cost = 0, local_cost = 0;
@@ -1235,6 +1268,99 @@ private:
     return improved;
   }
 
+  bool covering_increase_length( std::vector<encoding_column> const& matrix, std::array<uint32_t, 6>& solution )
+  {
+    /* count the number of solutions with cost > 0 */
+    uint32_t best_cost = 0, local_cost = 0;
+    uint32_t replaceable_columns = 0;
+    uint32_t num_elements = solution[5];
+
+    for ( uint32_t i = 0; i < num_elements; ++i )
+    {
+      replaceable_columns += !!matrix[solution[i]].cost;
+    }
+
+    /* not possible to increase the encoding length */
+    if ( replaceable_columns == 1 || ps.lut_size - best_free_set - num_elements == 0 )
+      return false;
+    
+    /* extract shared set BS candidates */
+    std::vector<uint32_t> ss_candidates;
+    for ( uint32_t i = 0; i < matrix.size(); ++i )
+    {
+      if ( matrix[i].cost == 0 )
+        ss_candidates.push_back( i );
+    }
+
+    // if ( ss_candidates.size() < 2 )
+    //   return false;
+    
+    /* find a column and try to replace it using two shared set variables */
+    uint64_t column0, column1;
+    uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
+    bool improved = false;
+
+    uint32_t i = 0;
+    while ( replaceable_columns > 1 && ps.lut_size - best_free_set - num_elements > 0 )
+    {
+      /* find a column */
+      while ( i < num_elements && matrix[solution[i]].cost == 0 )
+        ++i;
+
+      if ( i == num_elements )
+        break;
+
+      /* remove the column */
+      column0 = 0;
+      column1 = 0;
+      for ( uint32_t j = 0; j < num_elements; ++j )
+      {
+        if ( j == i )
+          continue;
+
+        column0 |= matrix[solution[j]].column[0];
+        column1 |= matrix[solution[j]].column[1];
+      }
+
+      /* find two buffers */
+      if ( covering_increase_length_find_ss( matrix, solution, ss_candidates, column0, column1, i ) )
+      {
+        ++num_elements;
+        --replaceable_columns;
+        improved = true;
+      }
+
+      ++i;
+    }
+
+    return improved;
+  }
+
+  inline bool covering_increase_length_find_ss( std::vector<encoding_column> const& matrix, std::array<uint32_t, 6>& solution, std::vector<uint32_t> const& ss_candidates, uint64_t column0, uint64_t column1, uint32_t i )
+  {
+    uint32_t combinations = ( best_multiplicity * ( best_multiplicity - 1 ) ) / 2;
+
+    for ( uint32_t j = 0; j < ss_candidates.size() - 1; ++j )
+    {
+      for ( uint32_t k = j + 1; k < ss_candidates.size(); ++k )
+      {
+        uint64_t test_column0 = matrix[ss_candidates[j]].column[0] | matrix[ss_candidates[k]].column[0];
+        uint64_t test_column1 = matrix[ss_candidates[j]].column[1] | matrix[ss_candidates[k]].column[1];
+
+        if ( __builtin_popcount( column0 | test_column0 ) + __builtin_popcount( column1 | test_column1 ) != combinations )
+          continue;
+        
+        /* perform the substitution */
+        solution[i] = ss_candidates[j];
+        solution[solution[5]] = ss_candidates[k];
+        ++solution[5];
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   void adjust_truth_table_on_dc( STT& tt, STT& care, uint32_t var_index )
   {
     assert( var_index < tt.num_vars() );
@@ -1249,7 +1375,8 @@ private:
         uint64_t new_bits = *it_tt & *it_care;
         *it_tt = ( ( new_bits | ( new_bits >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index] ) |
                  ( ( new_bits | ( new_bits << ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections[var_index] );
-        *it_care = *it_care | ( *it_care >> ( uint64_t( 1 ) << var_index ) );
+        *it_care = ( *it_care | ( *it_care >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index];
+        *it_care = *it_care | ( *it_care << ( uint64_t( 1 ) << var_index ) );
 
         ++it_tt;
         ++it_care;
@@ -1331,6 +1458,43 @@ private:
     }
 
     return false;
+  }
+
+  void adjust_truth_table_on_dc_support( STT& tt, STT& care, uint32_t real_num_vars, uint32_t var_index )
+  {
+    assert( var_index < real_num_vars );
+    assert( tt.num_vars() == care.num_vars() );
+
+    const uint32_t num_blocks = real_num_vars <= 6 ? 1 : ( 1 << ( real_num_vars - 6 ) );
+    if ( real_num_vars <= 6 || var_index < 6 )
+    {
+      auto it_tt = std::begin( tt._bits );
+      auto it_care = std::begin( care._bits );
+      while ( it_tt != std::begin( tt._bits ) + num_blocks )
+      {
+        uint64_t new_bits = *it_tt & *it_care;
+        *it_tt = ( ( new_bits | ( new_bits >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index] ) |
+                 ( ( new_bits | ( new_bits << ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections[var_index] );
+        *it_care = ( *it_care | ( *it_care >> ( uint64_t( 1 ) << var_index ) ) ) & kitty::detail::projections_neg[var_index];
+        *it_care = *it_care | ( *it_care << ( uint64_t( 1 ) << var_index ) );
+
+        ++it_tt;
+        ++it_care;
+      }
+      return;
+    }
+
+    const auto step = 1 << ( var_index - 6 );
+    for ( auto i = 0u; i < static_cast<uint32_t>( num_blocks ); i += 2 * step )
+    {
+      for ( auto j = 0; j < step; ++j )
+      {
+        tt._bits[i + j] = ( tt._bits[i + j] & care._bits[i + j] ) | ( tt._bits[i + j + step] & care._bits[i + j + step] );
+        tt._bits[i + j + step] = tt._bits[i + j];
+        care._bits[i + j] = care._bits[i + j] | care._bits[i + j + step];
+        care._bits[i + j + step] = care._bits[i + j];
+      }
+    }
   }
 
   /* Decomposition format for ABC
