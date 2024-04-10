@@ -24,8 +24,8 @@
  */
 
 /*!
-  \file acd66.hpp
-  \brief Ashenhurst-Curtis decomposition for "66" cascade
+  \file acdXX.hpp
+  \brief Ashenhurst-Curtis decomposition for "XX" cascade
 
   \author Alessandro Tempia Calvino
 */
@@ -51,7 +51,14 @@
 namespace mockturtle
 {
 
-class acd66_impl
+struct acdXX_params
+{
+  uint32_t lut_size = 6;
+  uint32_t max_shared_vars = 1;
+  bool verify = false;
+};
+
+class acdXX_impl
 {
 private:
   static constexpr uint32_t max_num_vars = 11;
@@ -60,22 +67,25 @@ private:
   using word = uint64_t;
 
 public:
-  explicit acd66_impl( uint32_t const num_vars, bool multiple_shared_set = false, bool const verify = false )
-      : num_vars( num_vars ), multiple_ss( multiple_shared_set ), verify( verify )
+  explicit acdXX_impl( uint32_t const num_vars, acdXX_params const& ps = {} )
+      : num_vars( num_vars ), ps( ps )
   {
     std::iota( permutations.begin(), permutations.end(), 0 );
   }
 
-  /*! \brief Runs ACD 66 */
+  /*! \brief Runs ACD XX */
   bool run( word* ptt )
   {
-    assert( num_vars > 6 );
+    assert( num_vars > 4 );
 
     /* truth table is too large for the settings */
-    if ( num_vars > max_num_vars || num_vars > 11 )
+    if ( num_vars > max_num_vars || num_vars >= 2 * ps.lut_size )
     {
       return false;
     }
+
+    /* saturate the maximum number of shared variables */
+    ps.max_shared_vars = std::min( ps.max_shared_vars, ps.lut_size - 2 );
 
     /* convert to static TT */
     init_truth_table( ptt );
@@ -84,22 +94,25 @@ public:
     return find_decomposition();
   }
 
-  /*! \brief Runs ACD 66 */
+  /*! \brief Runs ACD XX */
   int run( word* ptt, unsigned delay_profile )
   {
-    assert( num_vars > 6 );
+    assert( num_vars > 4 );
 
     /* truth table is too large for the settings */
-    if ( num_vars > max_num_vars || num_vars > 11 )
+    if ( num_vars > max_num_vars || num_vars >= 2 * ps.lut_size )
     {
-      return false;
+      return 0;
     }
 
     uint32_t late_arriving = __builtin_popcount( delay_profile );
 
     /* too many late arriving variables */
-    if ( late_arriving > 5 )
+    if ( late_arriving >= ps.lut_size )
       return 0;
+
+    /* saturate the maximum number of shared variables */
+    ps.max_shared_vars = std::min( ps.max_shared_vars, ps.lut_size - 2 );
 
     /* convert to static TT */
     init_truth_table( ptt );
@@ -119,7 +132,7 @@ public:
 
     compute_decomposition_impl();
 
-    if ( verify && !verify_impl() )
+    if ( ps.verify && !verify_impl() )
     {
       return 1;
     }
@@ -169,15 +182,15 @@ private:
     best_free_set = UINT32_MAX;
 
     /* use multiple shared set variables */
-    if ( multiple_ss )
+    if ( ps.max_shared_vars > 1 )
     {
-      return find_decomposition_bs_multi_ss( num_vars - 6 );
+      return find_decomposition_bs_multi_ss( num_vars - ps.lut_size );
     }
 
-    uint32_t max_free_set = num_vars == 11 ? 5 : 4;
+    uint32_t max_free_set = num_vars == ( 2 * ps.lut_size - 1 ) ? ps.lut_size - 1 : ps.lut_size - 1 - ps.max_shared_vars;
 
-    /* find ACD "66" for different number of variables in the free set */
-    for ( uint32_t i = num_vars - 6; i <= max_free_set; ++i )
+    /* find ACD "XX" for different number of variables in the free set */
+    for ( uint32_t i = num_vars - ps.lut_size; i <= max_free_set; ++i )
     {
       if ( find_decomposition_bs( i ) )
         return true;
@@ -193,12 +206,12 @@ private:
     best_free_set = UINT32_MAX;
 
     /* use multiple shared set variables */
-    if ( multiple_ss )
+    if ( ps.max_shared_vars > 1 )
     {
-      return find_decomposition_bs_offset_multi_ss( std::max( num_vars - 6, offset ), offset );
+      return find_decomposition_bs_offset_multi_ss( std::max( num_vars - ps.lut_size, offset ), offset );
     }
 
-    uint32_t max_free_set = ( num_vars == 11 || offset == 5 ) ? 5 : 4;
+    uint32_t max_free_set = ( num_vars == ( 2 * ps.lut_size - 1 ) || ( offset == ps.lut_size - 1 ) ) ? ps.lut_size - 1 : ps.lut_size - 1 - ps.max_shared_vars;
 
     /* find ACD "66" for different number of variables in the free set */
     for ( uint32_t i = std::max( num_vars - 6, offset ); i <= max_free_set; ++i )
@@ -230,7 +243,8 @@ private:
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
     uint64_t const shift = UINT64_C( 1 ) << free_set_size;
     uint64_t const mask = ( UINT64_C( 1 ) << shift ) - 1;
-    uint32_t const limit = free_set_size < 5 ? 4 : 2;
+    uint32_t const limit = ( ps.max_shared_vars == 0 || free_set_size == ( ps.lut_size - 1 ) ) ? 2 : 4;
+    uint32_t const inner_loop_max = ( num_vars < 6 ? ( 1 << num_vars ) : 64 ) >> free_set_size;
     uint32_t cofactors[4];
     uint32_t size = 0;
 
@@ -238,7 +252,7 @@ private:
     for ( auto i = 0u; i < num_blocks; ++i )
     {
       uint64_t sub = tt._bits[i];
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
+      for ( auto j = 0; j < inner_loop_max; ++j )
       {
         uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
         uint32_t k;
@@ -265,6 +279,7 @@ private:
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
     uint64_t const shift = UINT64_C( 1 ) << free_set_size;
     uint64_t const mask = ( UINT64_C( 1 ) << shift ) - 1;
+    uint32_t const inner_loop_max = ( num_vars < 6 ? ( 1 << num_vars ) : 64 ) >> free_set_size;
     uint32_t cofactors[32];
     uint32_t size = 0;
 
@@ -272,7 +287,7 @@ private:
     for ( auto i = 0u; i < num_blocks; ++i )
     {
       uint64_t sub = tt._bits[i];
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
+      for ( auto j = 0; j < inner_loop_max; ++j )
       {
         uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
         uint32_t k;
@@ -282,7 +297,7 @@ private:
             break;
         }
         if ( k == limit )
-          return limit + 1;
+          return 64;
         if ( k == size )
           cofactors[size++] = fs_fn;
         sub >>= shift;
@@ -352,11 +367,11 @@ private:
   {
     STT tt = start_tt;
 
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
+    /* works up to 11 input truth tables */
+    assert( num_vars <= 11 );
 
     /* init combinations */
-    uint32_t pComb[16], pInvPerm[16];
+    uint32_t pComb[11], pInvPerm[11];
     for ( uint32_t i = 0; i < num_vars; ++i )
     {
       pComb[i] = pInvPerm[i] = i;
@@ -377,7 +392,7 @@ private:
         }
         return true;
       }
-      else if ( cost <= 4 && free_set_size < 5 )
+      else if ( ps.max_shared_vars > 0 && cost <= 4 && free_set_size < 5 )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -406,8 +421,8 @@ private:
   {
     STT tt = best_tt;
 
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
+    /* works up to 11 input truth tables */
+    assert( num_vars <= 11 );
     best_free_set = free_set_size;
 
     /* special case */
@@ -420,7 +435,7 @@ private:
         best_multiplicity = cost;
         return true;
       }
-      else if ( cost <= 4 && free_set_size < 5 )
+      else if ( ps.max_shared_vars > 0 && cost <= 4 && free_set_size < 5 )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -440,7 +455,7 @@ private:
     }
 
     /* init combinations */
-    uint32_t pComb[16], pInvPerm[16];
+    uint32_t pComb[11], pInvPerm[11];
     for ( uint32_t i = 0; i < num_vars; ++i )
     {
       pComb[i] = pInvPerm[i] = i;
@@ -464,7 +479,7 @@ private:
         }
         return true;
       }
-      else if ( cost <= 4 && free_set_size < 5 )
+      else if ( ps.max_shared_vars > 0 && cost <= 4 && free_set_size < 5 )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -497,21 +512,23 @@ private:
   {
     STT tt = start_tt;
 
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
+    /* works up to 11 input truth tables */
+    assert( num_vars <= 11 );
 
     /* init combinations */
-    uint32_t pComb[16], pInvPerm[16], shared_set[4];
+    uint32_t pComb[11], pInvPerm[11], shared_set[4];
     for ( uint32_t i = 0; i < num_vars; ++i )
     {
       pComb[i] = pInvPerm[i] = i;
     }
 
+    uint32_t limit = std::min( 1 << ( ps.lut_size - free_set_size ), 1 << ( ps.max_shared_vars + 1 ) );
+
     /* enumerate combinations */
     best_free_set = free_set_size;
     do
     {
-      uint32_t cost = column_multiplicity2( tt, free_set_size, 1 << ( 6 - free_set_size ) );
+      uint32_t cost = column_multiplicity2( tt, free_set_size, limit );
       if ( cost <= 2 )
       {
         best_tt = tt;
@@ -527,7 +544,7 @@ private:
                                             : cost <= 16  ? 3
                                             : cost <= 32  ? 4
                                                           : 5;
-      if ( ss_vars_needed + free_set_size < 6 )
+      if ( ss_vars_needed + free_set_size < ps.lut_size )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -559,15 +576,17 @@ private:
   {
     STT tt = best_tt;
 
-    /* works up to 16 input truth tables */
-    assert( num_vars <= 16 );
+    /* works up to 11 input truth tables */
+    assert( num_vars <= 11 );
     best_free_set = free_set_size;
     uint32_t shared_set[4];
+
+    uint32_t limit = std::min( 1 << ( ps.lut_size - free_set_size ), 1 << ( ps.max_shared_vars + 1 ) );
 
     /* special case */
     if ( free_set_size == offset )
     {
-      uint32_t cost = column_multiplicity2( tt, free_set_size, 1 << ( 6 - free_set_size ) );
+      uint32_t cost = column_multiplicity2( tt, free_set_size, limit );
       if ( cost == 2 )
       {
         best_tt = tt;
@@ -603,7 +622,7 @@ private:
     }
 
     /* init combinations */
-    uint32_t pComb[16], pInvPerm[16];
+    uint32_t pComb[11], pInvPerm[11];
     for ( uint32_t i = 0; i < num_vars; ++i )
     {
       pComb[i] = pInvPerm[i] = i;
@@ -612,7 +631,7 @@ private:
     /* enumerate combinations */
     do
     {
-      uint32_t cost = column_multiplicity2( tt, free_set_size, 1 << ( 6 - free_set_size ) );
+      uint32_t cost = column_multiplicity2( tt, free_set_size, limit );
       if ( cost == 2 )
       {
         best_tt = tt;
@@ -672,6 +691,7 @@ private:
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
     uint64_t const shift = UINT64_C( 1 ) << free_set_size;
     uint64_t const mask = ( UINT64_C( 1 ) << shift ) - 1;
+    uint32_t const inner_loop_max = ( num_vars < 6 ? ( 1 << num_vars ) : 64 ) >> free_set_size;
     uint32_t cofactors[2][4];
     uint32_t size[2] = { 0, 0 };
     uint32_t shared_var_shift = shared_var - free_set_size;
@@ -681,7 +701,7 @@ private:
     for ( auto i = 0u; i < num_blocks; ++i )
     {
       uint64_t sub = tt._bits[i];
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
+      for ( auto j = 0; j < inner_loop_max; ++j )
       {
         uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
         uint32_t p = ( iteration_counter >> shared_var_shift ) & 1;
@@ -726,6 +746,7 @@ private:
     uint32_t const num_blocks = ( num_vars > 6 ) ? ( 1u << ( num_vars - 6 ) ) : 1;
     uint64_t const shift = UINT64_C( 1 ) << free_set_size;
     uint64_t const mask = ( UINT64_C( 1 ) << shift ) - 1;
+    uint32_t const inner_loop_max = ( num_vars < 6 ? ( 1 << num_vars ) : 64 ) >> free_set_size;
     uint32_t cofactors[16][2];
     uint32_t size[16] = { 0 };
 
@@ -734,7 +755,7 @@ private:
     for ( auto i = 0u; i < num_blocks; ++i )
     {
       uint64_t sub = tt._bits[i];
-      for ( auto j = 0; j < ( 64 >> free_set_size ); ++j )
+      for ( auto j = 0; j < inner_loop_max; ++j )
       {
         uint32_t fs_fn = static_cast<uint32_t>( sub & mask );
         uint32_t p = 0;
@@ -765,9 +786,10 @@ private:
   {
     /* init combinations */
     uint32_t pComb[6], pInvPerm[6];
+    uint32_t max_shared_vars = std::min( ps.lut_size - best_free_set - 1, ps.max_shared_vars );
 
     /* search for a feasible shared set */
-    for ( uint32_t i = target_num_ss; i < 6 - best_free_set; ++i )
+    for ( uint32_t i = target_num_ss; i <= max_shared_vars; ++i )
     {
       for ( uint32_t i = 0; i < 6; ++i )
       {
@@ -807,6 +829,7 @@ private:
     uint64_t const mask = ( UINT64_C( 1 ) << shift ) - 1;
     uint32_t const num_groups = 1 << num_shared_vars;
     uint32_t const next_group = 1 << ( num_vars - best_free_set - num_shared_vars );
+    uint32_t const inner_loop_max = ( num_vars < 6 ? ( 1 << num_vars ) : 64 ) >> best_free_set;
 
     uint64_t fs_fun[32] = { 0 };
     uint64_t dc_mask = ( ( UINT64_C( 1 ) << next_group ) - 1 );
@@ -818,7 +841,7 @@ private:
     for ( auto i = 0u; i < num_blocks; ++i )
     {
       uint64_t cof = best_tt._bits[i];
-      for ( auto j = 0; j < ( 64 >> best_free_set ); ++j )
+      for ( auto j = 0; j < inner_loop_max; ++j )
       {
         uint64_t val = cof & mask;
         /* move to next block */
@@ -847,7 +870,7 @@ private:
         cof >>= shift;
         ++set_index;
       }
-      offset = ( offset + ( 64 >> best_free_set ) ) & 0x3F;
+      offset = ( offset + inner_loop_max ) & 0x3F;
     }
 
     if ( set_dc )
@@ -961,10 +984,15 @@ private:
       std::swap( var_index1, var_index2 );
     }
 
-    assert( num_vars > 6 );
-    const uint32_t num_blocks = 1 << ( num_vars - 6 );
+    const uint32_t num_blocks = num_vars <= 6 ? 1 : 1 << ( num_vars - 6 );
 
-    if ( var_index2 <= 5 )
+    if ( num_vars <= 6 )
+    {
+      const auto& pmask = kitty::detail::ppermutation_masks[var_index1][var_index2];
+      const auto shift = ( 1 << var_index2 ) - ( 1 << var_index1 );
+      tt._bits[0] = ( tt._bits[0] & pmask[0] ) | ( ( tt._bits[0] & pmask[1] ) << shift ) | ( ( tt._bits[0] & pmask[2] ) >> shift );
+    }
+    else if ( var_index2 <= 5 )
     {
       const auto& pmask = kitty::detail::ppermutation_masks[var_index1][var_index2];
       const auto shift = ( 1 << var_index2 ) - ( 1 << var_index1 );
@@ -1197,7 +1225,7 @@ private:
   {
     kitty::dynamic_truth_table tt( num_vars );
 
-    std::copy( std::begin( stt._bits ), std::begin( stt._bits ) + ( 1 << ( num_vars - 6 ) ), std::begin( tt ) );
+    std::copy( std::begin( stt._bits ), std::begin( stt._bits ) + ( 1 << ( num_vars > 6 ? num_vars - 6 : 0 ) ), std::begin( tt ) );
     kitty::print_hex( tt );
     std::cout << "\n";
   }
@@ -1215,8 +1243,7 @@ private:
   uint32_t bs_support[6];
 
   uint32_t const num_vars;
-  bool const multiple_ss;
-  bool const verify;
+  acdXX_params ps;
   std::array<uint32_t, max_num_vars> permutations;
 };
 
