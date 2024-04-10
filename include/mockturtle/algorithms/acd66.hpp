@@ -1205,8 +1205,6 @@ private:
 private:
   uint32_t best_multiplicity{ UINT32_MAX };
   uint32_t best_free_set{ UINT32_MAX };
-  uint32_t best_multiplicity0{ UINT32_MAX };
-  uint32_t best_multiplicity1{ UINT32_MAX };
   uint32_t bs_support_size{ UINT32_MAX };
   uint32_t num_shared_vars{ 0 };
   STT best_tt;
