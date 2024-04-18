@@ -42,6 +42,11 @@ namespace abc {
   extern int Gia_ObjId( Gia_Man_t * p, Gia_Obj_t * pObj );
   extern Gia_Man_t * Gia_ManDup( Gia_Man_t * p );
 
+  extern int Gia_ManHasMapping( Gia_Man_t * p );
+  extern int Gia_ObjIsLut( Gia_Man_t * p, int Id );
+  extern int Gia_ObjLutSize( Gia_Man_t * p, int Id );
+  extern int *Gia_ObjLutFanins( Gia_Man_t * p, int Id );
+
   extern Abc_Frame_t * Abc_FrameGetGlobalFrame();
   extern void Abc_FrameUpdateGia( Abc_Frame_t * p, Gia_Man_t * pNew );
   extern Gia_Man_t * Abc_FrameGetGia( Abc_Frame_t * p );
@@ -218,6 +223,43 @@ public:
   auto num_gates() const { return abc::Gia_ManAndNum(gia_); }
   auto num_levels() const { return abc::Gia_ManLevelNum(gia_); }
   auto size() const { return abc::Gia_ManObjNum(gia_); }
+
+  uint32_t luts() const
+  {
+    if ( !abc::Gia_ManHasMapping( gia_ ) )
+      return 0;
+
+    uint32_t nluts = 0;
+    for ( int i = 1; i < abc::Gia_ManObjNum( gia_ ); i++ )
+      if ( abc::Gia_ObjIsLut( gia_, i ) )
+        ++nluts;
+
+    return nluts;
+  }
+
+  uint32_t lut_levels() const
+  {
+    if ( !abc::Gia_ManHasMapping( gia_ ) )
+      return 0;
+
+    uint32_t LevelMax = 0;
+    std::vector<uint32_t> pLevels( abc::Gia_ManObjNum( gia_ ), 0 );
+    for ( int i = 1; i < abc::Gia_ManObjNum( gia_ ); i++ )
+    {
+      if ( !abc::Gia_ObjIsLut( gia_, i ) )
+        continue;
+      
+      int iFan;
+      for ( int j = 0; j < abc::Gia_ObjLutSize( gia_, i ) && ( ( iFan = abc::Gia_ObjLutFanins( gia_, i )[j] ), 1 ); j++ )
+      {
+        pLevels[i] = std::max( pLevels[i], pLevels[iFan] );
+      }
+      pLevels[i]++;
+      LevelMax = std::max( LevelMax, pLevels[i] );
+    }
+
+    return LevelMax;
+  }
 
   bool load_rc() {
     abc::Abc_Frame_t * abc = abc::Abc_FrameGetGlobalFrame();

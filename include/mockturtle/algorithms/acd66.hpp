@@ -552,6 +552,7 @@ private:
       }
     } while ( combinations_next( free_set_size, 0, pComb, pInvPerm, tt ) );
 
+    best_multiplicity = UINT32_MAX;
     return false;
   }
 
@@ -599,6 +600,8 @@ private:
           return true;
         }
       }
+
+      best_multiplicity = UINT32_MAX;
       return false;
     }
 
@@ -662,6 +665,7 @@ private:
       }
     } while ( combinations_next( free_set_size, offset, pComb, pInvPerm, tt ) );
 
+    best_multiplicity = UINT32_MAX;
     return false;
   }
 
@@ -1082,7 +1086,7 @@ private:
     ++bytes;
 
     /* write support */
-    for ( uint32_t i = best_free_set; i < best_free_set; ++i )
+    for ( uint32_t i = 0; i < best_free_set; ++i )
     {
       *pArray = (unsigned char)permutations[i];
       pArray++;

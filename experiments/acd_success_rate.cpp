@@ -30,14 +30,18 @@
 
 #include <fmt/format.h>
 #include <lorina/aiger.hpp>
+#include <mockturtle/algorithms/node_resynthesis/exact.hpp>
 #include <mockturtle/algorithms/acd.hpp>
 #include <mockturtle/algorithms/acd66.hpp>
 #include <mockturtle/algorithms/acd666.hpp>
+#include <mockturtle/algorithms/acdXX.hpp>
 #include <mockturtle/algorithms/lut_mapper.hpp>
+#include <mockturtle/algorithms/klut_to_graph.hpp>
 #include <mockturtle/algorithms/s66.h>
 #include <mockturtle/algorithms/spfd_utils.hpp>
 #include <mockturtle/io/aiger_reader.hpp>
 #include <mockturtle/networks/aig.hpp>
+#include <mockturtle/networks/gia.hpp>
 #include <mockturtle/networks/klut.hpp>
 #include <mockturtle/utils/truth_table_cache.hpp>
 
@@ -95,6 +99,98 @@ std::tuple<uint32_t, uint32_t, uint32_t> abc_map( std::string const& tt, std::st
   return std::make_tuple( area, edges, delay );
 }
 
+template<typename Resyn>
+bool mockturtle_dsd( std::string const& tt_string, Resyn&& resyn )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  klut_network klut;
+  std::vector<klut_network::node> children;
+  for ( uint32_t i = 0; i < num_vars; ++i )
+  {
+    children.push_back( klut.create_pi() );
+  }
+  klut.create_po( klut.create_node( children, tt ) );
+
+  /* decompose to AIG using DSD */
+  aig_network aig = node_resynthesis<aig_network>( klut, resyn );
+
+  /* LUT mapping */
+  lut_map_params ps;
+  ps.cut_enumeration_ps.cut_size = 4;
+  klut_network res = lut_map( aig, ps );
+
+  return res.num_gates() == 2;
+}
+
+bool mockturtle_exact( std::string const& tt_string )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  exact_resynthesis resyn{ 4 };
+  klut_network klut;
+  std::vector<klut_network::node> children;
+  for ( uint32_t i = 0; i < num_vars; ++i )
+  {
+    children.push_back( klut.create_pi() );
+  }
+
+  resyn( klut, tt, children.begin(), children.end(), [&]( auto f ) {
+    klut.create_po( f );
+  } );
+
+  return klut.num_gates() == 2;
+}
+
+#ifdef ENABLE_ABC
+bool abc_lutpack( std::string const& tt_string )
+{
+  using namespace mockturtle;
+  aig_network aig;
+
+  gia_network gia( 200 );
+  gia.create_po( gia.get_constant( false ) );
+  // aig_to_gia( gia, aig );
+
+  // gia.load_rc();
+  std::string command = fmt::format( "read_truth {}; lutpack -f -S 3 -L 1 -N 6; &get -nm", tt_string );
+
+  try
+  {
+    gia.run_opt_script( command );
+  }
+  catch (...)
+  {
+    return false;
+  }
+
+  return gia.luts() > 1;
+  // return gia.lut_levels() == 2;
+}
+#else
+bool abc_dsd( std::string const& tt_string )
+{
+  (void)tt_string;
+  return false;
+}
+
+bool abc_lutpack( std::string const& tt_string )
+{
+  (void)tt_string;
+  return false;
+}
+#endif
+
 bool abc_acd( std::string const& tt_string )
 {
   // std::string command = fmt::format( "./cascade/s66dec31112 {}", tt );
@@ -128,7 +224,7 @@ bool abc_acd( std::string const& tt_string )
   If_Grp_t G1 = { 0 }, G2 = { 0 }, R = { 0 };
   int nVarsNew = nVars;              // the number of variables afer support minimization
   int pVarPerm[CLU_VAR_MAX] = { 0 }; // the remaining variables after support minimization
-  G1 = If_CluCheckTest( 2, 6, Truth, nVars, &R, &G2, &Func0, &Func1, &Func2, &nVarsNew, pVarPerm );
+  G1 = If_CluCheckTest( 2, 4, Truth, nVars, &R, &G2, &Func0, &Func1, &Func2, &nVarsNew, pVarPerm );
   return G1.nVars > 0;
 }
 
@@ -159,6 +255,44 @@ bool mockturtle_acd66( std::string const& tt_string, uint32_t delay_profile )
   // {
   //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
   // }
+
+  return true;
+}
+
+bool mockturtle_acdXX( std::string const& tt_string, uint32_t lut_size, uint32_t *num_edges = nullptr )
+{
+  using namespace mockturtle;
+
+  uint32_t num_vars = std::log2( 4 * tt_string.size() );
+
+  kitty::dynamic_truth_table tt( num_vars );
+  kitty::create_from_hex_string( tt, tt_string );
+
+  uint64_t words[1024];
+
+  for ( uint32_t i = 0; i < tt.num_blocks(); ++i )
+    words[i] = tt._bits[i];
+
+  acdXX_params ps;
+  ps.lut_size = lut_size;
+  ps.max_shared_vars = 4;
+  ps.verify = false;
+  acdXX_impl acd( tt.num_vars(), ps );
+
+  int res = acd.run( words );
+
+  if ( res == 0 )
+    return false;
+
+  // int correct = acd.compute_decomposition();
+
+  // if ( correct == 1 )
+  // {
+  //   std::cout << fmt::format( "[e] incorrect decomposition of {}\n", tt_string );
+  // }
+
+  // if ( num_edges )
+  //   *num_edges += acd.get_num_edges();
 
   return true;
 }
@@ -259,10 +393,10 @@ bool acd_andrea( std::string const& tt_string )
   kitty::dynamic_truth_table tt( num_vars );
   kitty::create_from_hex_string( tt, tt_string );
 
-  lut_resynthesis_t<6, 10> acd;
-  auto ll_tt = acd.decompose( tt, 20 );
+  lut_resynthesis_t<4, 11> acd;
+  auto ll_tt = acd.decompose( tt, 3, 0 );
 
-  if ( ll_tt && acd.num_luts() > 2 )
+  if ( !ll_tt || acd.num_luts() > 2 )
     return false;
   return true;
 }
@@ -304,9 +438,16 @@ void compute_functions( uint32_t cut_size )
       if ( tt.num_vars() != cut_size )
         continue;
 
-      // auto res = kitty::exact_n_canonization( tt );
-      auto res = kitty::sifting_npn_canonization( tt );
-      cache.insert( std::get<0>( res ) );
+      if ( cut_size <= 6 )
+      {
+        auto res = kitty::exact_npn_canonization( tt );
+        cache.insert( std::get<0>( res ) );
+      }
+      else
+      {
+        auto res = kitty::sifting_npn_canonization( tt );
+        cache.insert( std::get<0>( res ) );
+      }
     }
   }
 
@@ -327,6 +468,13 @@ void compute_functions( uint32_t cut_size )
 
 void compute_success_rate( uint32_t cut_size )
 {
+  using namespace mockturtle;
+
+  // xag_npn_resynthesis<aig_network, aig_network, xag_npn_db_kind::aig_complete> fallback_npn;
+  // // shannon_resynthesis<aig_network, decltype( fallback_npn )> fallback_shannon( 4, &fallback_npn );
+  // shannon_resynthesis<aig_network> fallback_shannon;
+  // dsd_resynthesis<aig_network, decltype( fallback_shannon )> resyn( fallback_shannon );
+
   /* read file */
   std::ifstream in( "cuts_" + std::to_string( cut_size ) + ".txt" );
 
@@ -341,7 +489,7 @@ void compute_success_rate( uint32_t cut_size )
   in.close();
   in.open( "cuts_" + std::to_string( cut_size ) + ".txt" );
 
-  std::ofstream out( "cuts_" + std::to_string( cut_size ) + "_fail.txt" );
+  // std::ofstream out( "cuts_" + std::to_string( cut_size ) + "_fail.txt" );
 
   using clock = typename std::chrono::steady_clock;
   using time_point = typename clock::time_point;
@@ -349,33 +497,53 @@ void compute_success_rate( uint32_t cut_size )
   time_point time_begin = clock::now();
 
   /* compute */
-  uint32_t successS = 0, successJ = 0, successJ2 = 0, successG = 0, successA = 0;
+  uint32_t successS = 0, successJ = 0, successJ2 = 0, successG = 0, successA = 0, successL = 0, successD = 0;
+  uint32_t successExact = 0;
   uint32_t visit = 0;
+  uint32_t print = 0;
   uint32_t num_luts_acd = 0;
+  uint32_t num_edges = 0;
   while ( in.good() )
   {
-    // std::cout << fmt::format( "[i] Progress {:8d} / {}\r", visit, num_lines );
+    // if ( print++ > 2000 )
+    // {
+    //   std::cout << fmt::format( "[i] Progress {:8d} / {}\r", visit, num_lines );
+    //   std::flush( std::cout );
+    //   print = 0;
+    // }
     std::string tt;
     in >> tt;
 
     ++visit;
 
-    if ( tt.size() < 16 )
+    if ( tt.size() < 1 )
       continue;
 
     /* run evaluation */
+    // bool resD = mockturtle_dsd( tt, resyn );
+    bool resD = false;
+    // bool resL = abc_lutpack( tt );
+    bool resL = false;
     // bool resS = abc_acd( tt );
     bool resS = false;
     bool resJ = false;
-    // bool resJ2 = mockturtle_acd66( tt, 0 );
-    bool resJ2 = false;
-    int resG = mockturtle_acd_generic( tt, 0 );
-    // int resG = false;
+    bool resJ2 = mockturtle_acd66( tt, 0 );
+    // bool resJ = mockturtle_acdXX( tt, 6 );
+    // bool resJ2 = false;
+    // int resG = mockturtle_acd_generic( tt, 0 );
+    int resG = false;
+    // bool resA = acd_andrea( tt );
     bool resA = false;
+    // bool resExact = mockturtle_exact( tt );
+    bool resExact = false;
 
     if ( resG > 0 )
       num_luts_acd += resG;
 
+    if ( resD )
+      ++successD;
+    if ( resL )
+      ++successL;
     if ( resS )
       ++successS;
     if ( resJ )
@@ -388,21 +556,28 @@ void compute_success_rate( uint32_t cut_size )
       ++successG;
     if ( resA )
       ++successA;
+    if ( resExact )
+      ++successExact;
   }
 
   std::cout << "\n";
 
+  double time_end = std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count();
+
   /* print stats */
   std::cout << fmt::format( "[i] Run a total of {} truth tables on {} variables\n", num_lines, cut_size );
+  std::cout << fmt::format( "[i] Success of DSD    = {} \t {:>5.2f}%\n", successD, ( (double)successD ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of lp     = {} \t {:>5.2f}%\n", successL, ( (double)successL ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -S 66  = {} \t {:>5.2f}%\n", successS, ( (double)successS ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}%\n", successJ, ( (double)successJ ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Success of -J 66  = {} \t {:>5.2f}% \t {} edges\n", successJ, ( (double)successJ ) / num_lines * 100, num_edges );
   std::cout << fmt::format( "[i] Success of -J 666 = {} \t {:>5.2f}%\n", successJ2, ( (double)successJ2 ) / num_lines * 100 );
   std::cout << fmt::format( "[i] Success of -Z 6   = {} \t {:>5.2f}% \t {} luts\n", successG, ( (double)successG ) / num_lines * 100, num_luts_acd );
   std::cout << fmt::format( "[i] Success of -A 6   = {} \t {:>5.2f}%\n", successA, ( (double)successA ) / num_lines * 100 );
-  std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", std::chrono::duration_cast<std::chrono::duration<double>>( clock::now() - time_begin ).count() );
+  std::cout << fmt::format( "[i] Success of Exact  = {} \t {:>5.2f}%\n", successExact, ( (double)successExact ) / num_lines * 100 );
+  std::cout << fmt::format( "[i] Time = {:>5.2f} s\n", time_end );
 
   in.close();
-  out.close();
+  // out.close();
 }
 
 void compute_success_rate_delay( uint32_t cut_size, uint32_t late_vars = 2, uint32_t const repeat = 10 )
@@ -498,6 +673,7 @@ int main( int argc, char** argv )
 
   // mockturtle_acd66( "003f4cd9c000264cffffb3b300004c4c", 0 );
   // mockturtle_acd_generic( "00000000000000000000000000000000000000000000000000000000000000000000000000000000001717ffffffffff001717ffffffffff0000000000000000", 81 );
+  // mockturtle_acdXX( "fff8f800", 4 );
 
   return 0;
 }

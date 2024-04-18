@@ -88,14 +88,17 @@ static inline int      Abc_MinInt( int a, int b )             { return a < b ?  
 static inline int  Abc_TtWordNum( int nVars )     { return nVars <= 6 ? 1 : 1 << (nVars-6); }
 static inline int  Abc_TtHexDigitNum( int nVars ) { return nVars <= 2 ? 1 : 1 << (nVars-2); }
 
-
+static inline int Abc_Tt6HasVar( word t, int iVar )
+{
+    return ((t >> (1<<iVar)) & Truths6Neg[iVar]) != (t & Truths6Neg[iVar]);
+}
 
 static inline int Abc_TtHasVar( word * t, int nVars, int iVar )
 {
     assert( iVar < nVars );
-    assert( nVars > 6 );
-    //if ( nVars <= 6 )
-    //    return Abc_Tt6HasVar( t[0], iVar );
+    // assert( nVars > 6 );
+    if ( nVars <= 6 )
+       return Abc_Tt6HasVar( t[0], iVar );
     if ( iVar < 6 )
     {
         int i, Shift = (1 << iVar);
@@ -1874,11 +1877,11 @@ static inline int Abc_TtMinBase( word * pTruth, int * pVars, int nVars, int nVar
 If_Grp_t If_CluCheckTest( int Size, int nLutSize, word * Truth, int nLeaves, 
                           If_Grp_t * pR, If_Grp_t * pG2, word * pFunc0, word * pFunc1, word * pFunc2, int * pnVarsNew, int * pVarPerm )
 {
-        char * pStr = Size == 2 ? (char *)"66" : (Size == 3 ? (char *)"666" : NULL);
+        char * pStr = Size == 2 ? (char *) "66" : (Size == 3 ? (char *)"666" : NULL);
         int i, nLutLeaf2, nLutRoot;
         int nLutLeaf, nRootLeaf;
         If_Grp_t G1 = {0};
-        assert( nLeaves > 6 );
+        // assert( nLeaves > 6 );
 
         ////////////////////////////////////////////////////////////
         // perform support minimization
@@ -1895,10 +1898,10 @@ If_Grp_t If_CluCheckTest( int Size, int nLutSize, word * Truth, int nLeaves,
         }
         // return the number of variables after minimization
         *pnVarsNew = nLeaves;
-        if ( nLeaves <= 6 ) {
-            printf( "The support does not exceed the LUT size. Decomposition is not performed.\n" );
-            return G1;
-        }
+        // if ( nLeaves <= 6 ) {
+        //     printf( "The support does not exceed the LUT size. Decomposition is not performed.\n" );
+        //     return G1;
+        // }
         // after support minimization, the number of input variables may be reduced from nLeavesOld to nLeaves
         // while the indexes of the remaining nLeaves variables are listed in the array pVarPerm[]
         ////////////////////////////////////////////////////////////

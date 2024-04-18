@@ -164,11 +164,11 @@ std::tuple<uint32_t, uint32_t, float> abc_map( aig_network const& aig, bool use_
 
   if ( use_choices )
   {
-    command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -Z 6 -K 8; st; dch -f; if -K 6; ps\"" );
+    command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -Z 6 -K 8; ps\"" );
   }
   else
   {
-    command = fmt::format( "abc -q \"read /tmp/tmp.aig; if -Z 6 -K 8; st; if -K 6; ps\"" );
+    command = fmt::format( "abc -q \"read /tmp/tmp.aig; if -Z 6 -K 8; ps\"" );
   }
 
   std::array<char, 128> buffer;
