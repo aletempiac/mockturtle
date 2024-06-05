@@ -125,7 +125,7 @@ int main( int argc, char** argv )
   /* METHOD 1: map using ABC */
   stopwatch<>::duration time_abc{ 0 };
   auto [area_abc, edges_abc, delay_abc] = call_with_stopwatch( time_abc, [&]() {
-    return abc_opt( klut, "mfs2; &get -nm; &satlut -d -N 64 -C 5000; &put; lutpack" );
+    return abc_opt( klut, "mfs2 -W 4; &get -nm; &satlut -d -N 64 -C 5000; &put; lutpack -S 3" );
   } );
 
   return 0;
