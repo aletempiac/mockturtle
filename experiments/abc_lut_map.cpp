@@ -164,11 +164,11 @@ std::tuple<uint32_t, uint32_t, float> abc_map( aig_network const& aig, bool use_
 
   if ( use_choices )
   {
-    command = fmt::format( "abc -q \"read /tmp/tmp.aig; dch; if -Z 6 -K 8; ps\"" );
+    command = fmt::format( "abc -q \"&r /tmp/tmp.aig; &dch; &if -J 66 -K 10 -az; &ps\"" );
   }
   else
   {
-    command = fmt::format( "abc -q \"read /tmp/tmp.aig; if -Z 6 -K 8; ps\"" );
+    command = fmt::format( "abc -q \"&r /tmp/tmp.aig; &if -J 66 -K 10 -az; &ps\"" );
   }
 
   std::array<char, 128> buffer;
@@ -189,7 +189,8 @@ std::tuple<uint32_t, uint32_t, float> abc_map( aig_network const& aig, bool use_
   uint32_t area = 0, edges = 0;
   float delay = 0;
 
-  std::size_t pos = result.find( "nd" );
+  // std::size_t pos = result.find( "nd" );
+  std::size_t pos = result.find( "lut" );
 
   if ( pos != std::string::npos )
   {
